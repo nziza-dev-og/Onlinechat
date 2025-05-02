@@ -3,7 +3,7 @@
 'use server'; // Indicate this runs on the server or can be called from server components/actions
 
 import { doc, setDoc, serverTimestamp, Timestamp, getDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { db } from '@/lib/firebase'; // Import db which might be undefined if init failed
 import type { UserProfile } from '@/types';
 import type { UserCredential, User as FirebaseUser } from 'firebase/auth';
 import { updateProfile as updateAuthProfile } from 'firebase/auth';
@@ -25,6 +25,14 @@ export const createOrUpdateUserProfile = async (
         console.error("No user provided to createOrUpdateUserProfile.");
         throw new Error("Invalid user data.");
     }
+
+    // Check if db is initialized BEFORE using it
+    if (!db) {
+        const dbErrorMsg = "Database service (db) is not initialized in createOrUpdateUserProfile. This usually means Firebase failed to initialize, often due to missing or incorrect environment variables (like NEXT_PUBLIC_FIREBASE_API_KEY). Check the server logs and your .env.local file.";
+        console.error("🔴 createOrUpdateUserProfile Error:", dbErrorMsg);
+        throw new Error(dbErrorMsg);
+    }
+
 
     const userRef = doc(db, 'users', user.uid);
     let isNewUser = false;
@@ -104,10 +112,13 @@ export const updateUserProfileDocument = async (uid: string, data: Partial<UserP
         console.error("No UID provided to updateUserProfileDocument.");
         throw new Error("User ID is required.");
     }
-    if (!db) {
-        console.error("Firestore instance (db) is not available in updateUserProfileDocument.");
-        throw new Error("Database service not initialized.");
-    }
+     // Check if db is initialized BEFORE using it
+     if (!db) {
+        const dbErrorMsg = "Database service (db) is not initialized in updateUserProfileDocument. This usually means Firebase failed to initialize, often due to missing or incorrect environment variables (like NEXT_PUBLIC_FIREBASE_API_KEY). Check the server logs and your .env.local file.";
+        console.error("🔴 updateUserProfileDocument Error:", dbErrorMsg);
+        // Throw a specific error if db is not available
+        throw new Error(dbErrorMsg);
+     }
     if (Object.keys(data).length === 0) {
         console.warn("updateUserProfileDocument called with empty data.");
         return; // No changes to make
@@ -127,7 +138,8 @@ export const updateUserProfileDocument = async (uid: string, data: Partial<UserP
         console.error(`Firestore Error Code: ${errorCode}, Message: ${errorMessage}`);
         // Include data being sent for debugging
         console.error(`Data attempted to write: ${JSON.stringify(data)}`);
-        // Re-throw a more specific error or the original
+        // Re-throw a more specific error that includes the original Firestore message and code
         throw new Error(`Failed to update profile document: ${errorMessage} (Code: ${errorCode})`);
     }
 };
+
