@@ -1,4 +1,5 @@
 
+
 'use server'; // Indicate this runs on the server or can be called from server components/actions
 
 import { doc, setDoc, serverTimestamp, Timestamp, getDoc } from 'firebase/firestore';
@@ -78,10 +79,14 @@ export const createOrUpdateUserProfile = async (
         await setDoc(userRef, firestoreData, { merge: true });
         console.log("Firestore user profile updated/created:", firestoreData);
 
-    } catch (error) {
+    } catch (error: any) {
         console.error("Error in createOrUpdateUserProfile:", error);
+        // Provide more context about the error if possible
+        const errorMessage = error.message || 'Unknown error in createOrUpdateUserProfile';
+        const errorCode = error.code;
+        console.error(`Error Code: ${errorCode}, Message: ${errorMessage}`);
         // Re-throw the error to be handled by the caller (e.g., show a toast)
-        throw new Error("Failed to update user profile.");
+        throw new Error(`Failed to update user profile: ${errorMessage} (Code: ${errorCode})`);
     }
 };
 
@@ -126,4 +131,3 @@ export const updateUserProfileDocument = async (uid: string, data: Partial<UserP
         throw new Error(`Failed to update profile document: ${errorMessage} (Code: ${errorCode})`);
     }
 };
-
