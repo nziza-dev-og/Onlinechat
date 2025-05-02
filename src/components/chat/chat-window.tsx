@@ -431,4 +431,3 @@ export function ChatWindow() {
     </div>
   );
 }
-```

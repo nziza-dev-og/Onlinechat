@@ -109,4 +109,3 @@ export const updateUserProfileDocument = async (uid: string, data: Partial<UserP
         throw new Error("Failed to update profile document.");
     }
 };
-```
