@@ -57,22 +57,35 @@ export function ChatWindow() {
   // Update user presence (lastSeen) when the component mounts and user is available
   useEffect(() => {
     const updateUserPresence = async () => {
-      if (user) {
+      if (user?.uid) { // Check for user and user.uid specifically
         try {
           console.log(`Attempting to update presence for user ${user.uid}...`);
-          // Pass a plain Date object which Firestore converts to Timestamp
+          // Pass only the necessary fields to the service function
           await updateUserProfileDocument(user.uid, { lastSeen: new Date() });
           console.log("Successfully updated user presence for", user.uid);
         } catch (error: any) {
           // Log the detailed error message from the service function
-          console.error(`Error updating user presence for ${user.uid}:`, error.message);
-          // Optional: Show a less technical toast to the user
-          toast({
-            title: "Presence Error",
-            description: `Could not update your online status. Details: ${error.message}`,
-            variant: "destructive",
-          });
+          // Check if the error message indicates a server component issue
+          if (error.message && error.message.includes("Cannot access _delegate on the server")) {
+              console.warn(`Presence update skipped for ${user.uid}: Likely running in a server context where direct client SDK access is restricted.`);
+              // Optionally inform the user, or just log as a warning
+              // toast({
+              //   title: "Presence Update Skipped",
+              //   description: "Could not update online status due to server context.",
+              //   variant: "default",
+              // });
+          } else {
+              // Log other errors normally
+              console.error(`Error updating user presence for ${user.uid}:`, error.message, error);
+              toast({
+                title: "Presence Error",
+                description: `Could not update your online status. Details: ${error.message}`,
+                variant: "destructive",
+              });
+          }
         }
+      } else {
+          console.log("User or user UID is not available, skipping presence update.");
       }
     };
     updateUserPresence();

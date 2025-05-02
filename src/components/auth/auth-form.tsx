@@ -12,6 +12,7 @@ import {
   signInWithPopup,
   AuthError, // Import AuthError for better type checking
   UserCredential, // Import UserCredential
+  updateProfile as updateAuthProfile, // Import Firebase Auth update function
 } from 'firebase/auth';
 import { auth, storage } from '@/lib/firebase'; // Import storage
 import { Button } from '@/components/ui/button';
@@ -23,7 +24,7 @@ import { useToast } from "@/hooks/use-toast";
 import { LogIn, UserPlus, Chrome, ImagePlus, Upload } from 'lucide-react';
 import { getStorage, ref, uploadString, getDownloadURL } from "firebase/storage"; // Firebase Storage
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { createOrUpdateUserProfile } from '@/lib/user-profile.service'; // Import the service
+import { createOrUpdateUserProfile, type UserProfileInput } from '@/lib/user-profile.service'; // Import the service and the new input type
 
 // Extend schema for sign up to include optional display name and photo URL
 const signUpSchema = z.object({
@@ -187,10 +188,13 @@ export function AuthForm() {
   const handleEmailPasswordAuth = async (data: SignUpFormData | SignInFormData) => {
     setIsSubmitting(true);
     const isSignUp = activeTab === 'signup';
-    let photoURL: string | null = null; // Keep track of the photo URL
+    let finalPhotoURL: string | null = null; // Keep track of the photo URL
+    let finalDisplayName: string | null = null;
 
     try {
       let userCredential: UserCredential;
+      let userId: string;
+      let userEmail: string | null;
 
       if (isSignUp) {
         // --- Sign Up Logic ---
@@ -200,24 +204,45 @@ export function AuthForm() {
         // 1. Create user in Firebase Auth
         userCredential = await createUserWithEmailAndPassword(auth, signUpData.email, signUpData.password);
         const user = userCredential.user;
-        console.log("User created in Auth:", user.uid);
+        userId = user.uid;
+        userEmail = user.email;
+        console.log("User created in Auth:", userId);
 
-         // 2. Upload photo if provided
+        // 2. Upload photo if provided
         if (signUpData.photoFile && user) {
-             photoURL = await uploadPhoto(signUpData.photoFile, user.uid);
-             // If upload failed, photoURL will be null, proceed without it but maybe log/warn
-             if (!photoURL) {
-                console.warn("Photo upload failed, proceeding without profile picture.");
+             finalPhotoURL = await uploadPhoto(signUpData.photoFile, user.uid);
+             if (!finalPhotoURL) {
+                console.warn("Photo upload failed during sign up, proceeding without profile picture.");
              }
         }
+        finalDisplayName = signUpData.displayName || null;
 
-        // 3. Update profile (Auth and Firestore) using the service
-        const profileDetails = {
-            displayName: signUpData.displayName || null, // Pass null if empty string
-            photoURL: photoURL // Pass the potentially uploaded URL or null
+        // 3. Update Firebase Auth Profile (displayName, photoURL) - Happens Client-Side
+        const authProfileUpdates: { displayName?: string | null; photoURL?: string | null } = {};
+        if (finalDisplayName !== user.displayName) authProfileUpdates.displayName = finalDisplayName;
+        if (finalPhotoURL !== user.photoURL) authProfileUpdates.photoURL = finalPhotoURL;
+
+        if (Object.keys(authProfileUpdates).length > 0) {
+            try {
+                await updateAuthProfile(user, authProfileUpdates);
+                console.log("Firebase Auth profile updated:", authProfileUpdates);
+            } catch (authUpdateError: any) {
+                 console.error("Error updating Firebase Auth profile during sign up:", authUpdateError);
+                 // Proceed with Firestore profile creation even if Auth update fails, but log it.
+                 toast({ title: "Auth Profile Update Warning", description: `Could not update Auth display name/photo: ${authUpdateError.message}`, variant: "default" });
+            }
+        }
+
+        // 4. Prepare data for Firestore profile creation/update (using primitives)
+        const profileData: UserProfileInput = {
+            uid: userId,
+            email: userEmail,
+            displayName: finalDisplayName,
+            photoURL: finalPhotoURL
         };
-        console.log("Creating/Updating profile with:", profileDetails);
-        await createOrUpdateUserProfile(userCredential, profileDetails);
+
+        console.log("Creating/Updating Firestore profile with:", profileData);
+        await createOrUpdateUserProfile(profileData);
         toast({ title: 'Account created successfully!' });
 
       } else {
@@ -225,11 +250,23 @@ export function AuthForm() {
         const signInData = data as SignInFormData;
         console.log("Attempting sign in with:", signInData.email);
         userCredential = await signInWithEmailAndPassword(auth, signInData.email, signInData.password);
-        console.log("User signed in:", userCredential.user.uid);
+        const user = userCredential.user;
+        userId = user.uid;
+        userEmail = user.email;
+        console.log("User signed in:", userId);
+
+        // Prepare data for Firestore profile update (only uid and email needed for lastSeen update)
+        const profileData: UserProfileInput = {
+            uid: userId,
+            email: userEmail,
+            // Use existing Auth data as potential source if needed, but service focuses on lastSeen here
+            displayName: user.displayName,
+            photoURL: user.photoURL,
+        };
 
         // Update lastSeen in Firestore on successful sign-in using the service
-        // No displayName/photoURL needed here, service defaults to existing Auth user data
-        await createOrUpdateUserProfile(userCredential);
+        console.log("Updating Firestore profile (lastSeen) for:", profileData.uid);
+        await createOrUpdateUserProfile(profileData); // Service handles adding/merging lastSeen
         toast({ title: 'Signed in successfully!' });
       }
 
@@ -261,12 +298,17 @@ export function AuthForm() {
       const user = userCredential.user;
       console.log("Signed in with Google:", user.uid, user.displayName, user.photoURL);
 
-      // Update profile using Google's info (displayName, photoURL) + update lastSeen via service
-      const profileDetails = {
-          displayName: user.displayName || null,
-          photoURL: user.photoURL || null
+      // Prepare data for Firestore profile update (using primitives)
+      const profileData: UserProfileInput = {
+          uid: user.uid,
+          email: user.email,
+          displayName: user.displayName || null, // Get data from Google user object
+          photoURL: user.photoURL || null     // Get data from Google user object
       };
-      await createOrUpdateUserProfile(userCredential, profileDetails);
+
+      // Update profile using Google's info + update lastSeen via service
+      console.log("Creating/Updating Firestore profile via Google Sign-In:", profileData);
+      await createOrUpdateUserProfile(profileData);
       toast({ title: 'Signed in with Google successfully!' });
       // AuthProvider listener handles redirect/UI update
     } catch (error: any) {
