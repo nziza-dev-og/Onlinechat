@@ -50,7 +50,7 @@ export default function ProfilePage() {
   const [isSaving, setIsSaving] = React.useState(false);
   const [photoPreview, setPhotoPreview] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
-  const { toast } = useToast(); // Moved useToast hook call to the top level
+  const { toast } = useToast();
 
   const form = useForm<ProfileFormData>({
     resolver: zodResolver(profileSchema),
@@ -61,13 +61,13 @@ export default function ProfilePage() {
   });
 
   // Upload photo helper
-  // NOTE: This function now uses the 'toast' from the component's scope.
   const uploadPhoto = async (file: File, uid: string): Promise<string | null> => {
     if (!file) return null;
-    // Removed internal toast call: const toast = useToast().toast;
 
-    const fileName = `profile_${uid}_${Date.now()}.${file.name.split('.').pop()}`;
-    const storageRef = ref(storage, `profilePictures/${uid}/${fileName}`);
+    // Generate a unique file name to avoid overwrites and caching issues
+    const fileExtension = file.name.split('.').pop();
+    const uniqueFileName = `profile_${uid}_${Date.now()}${fileExtension ? '.' + fileExtension : ''}`;
+    const storageRef = ref(storage, `profilePictures/${uid}/${uniqueFileName}`);
 
     try {
        const reader = new FileReader();
@@ -84,7 +84,6 @@ export default function ProfilePage() {
       return downloadURL;
     } catch (error: any) {
       console.error("Error uploading photo:", error);
-      // Use the toast function obtained from the component's scope
       toast({
         title: "Photo Upload Failed",
         description: `Could not upload profile picture: ${error.message || 'Unknown error'}`,
@@ -108,6 +107,12 @@ export default function ProfilePage() {
 
     setLoadingProfile(true);
     const fetchProfile = async () => {
+      if (!db) {
+          console.error("Firestore (db) not available in ProfilePage useEffect");
+          setLoadingProfile(false);
+          toast({ title: "Error", description: "Database connection failed.", variant: "destructive" });
+          return;
+      }
       const userDocRef = doc(db, 'users', user.uid);
       try {
         const docSnap = await getDoc(userDocRef);
@@ -117,9 +122,8 @@ export default function ProfilePage() {
           form.reset({ displayName: data.displayName || '' }); // Pre-fill form
           setPhotoPreview(data.photoURL); // Set initial preview
         } else {
-          console.log("No such profile document!");
-          // Maybe create a default profile doc here if needed?
-          // For now, use auth data as fallback
+          console.log("No such profile document! Using auth data as fallback.");
+          // Use auth data as fallback
            setProfileData({
                uid: user.uid,
                email: user.email,
@@ -129,6 +133,8 @@ export default function ProfilePage() {
            });
            form.reset({ displayName: user.displayName || '' });
            setPhotoPreview(user.photoURL);
+           // Consider creating the profile document here if it's missing
+           // await createOrUpdateUserProfile({ uid: user.uid, email: user.email, displayName: user.displayName, photoURL: user.photoURL });
         }
       } catch (error) {
         console.error("Error fetching user profile:", error);
@@ -195,12 +201,13 @@ export default function ProfilePage() {
 
         // 2. Prepare update data for Firebase Auth
          const authUpdateData: { displayName?: string | null; photoURL?: string | null } = {};
-         // Only include fields if they actually changed
+         // Only include fields if they actually changed OR if they are being set for the first time
          const newDisplayName = data.displayName?.trim(); // Trim whitespace
          if (newDisplayName !== undefined && newDisplayName !== (profileData.displayName ?? user.displayName)) {
             authUpdateData.displayName = newDisplayName || null; // Use null if empty string after trim
          }
-         if (newPhotoURL !== undefined && newPhotoURL !== (profileData.photoURL ?? user.photoURL)) {
+         // Always update photoURL in Auth if a new one was successfully uploaded
+         if (newPhotoURL !== undefined) {
              authUpdateData.photoURL = newPhotoURL;
          }
 
@@ -211,19 +218,22 @@ export default function ProfilePage() {
              console.log("Firebase Auth profile updated:", authUpdateData);
          }
 
-        // 4. Update Firestore document
-        // Pass only changed values to the service function
-        const firestoreUpdateData: Partial<UserProfile> = {};
+        // 4. Update Firestore document using the Server Action
+        // Prepare data specifically for the Firestore update service
+        const firestoreUpdateData: { displayName?: string | null; photoURL?: string | null } = {};
          if ('displayName' in authUpdateData) {
              firestoreUpdateData.displayName = authUpdateData.displayName;
          }
-         if ('photoURL' in authUpdateData) {
-             firestoreUpdateData.photoURL = authUpdateData.photoURL;
+         // Ensure photoURL update is included if it was changed/uploaded
+         if (newPhotoURL !== undefined) {
+             firestoreUpdateData.photoURL = newPhotoURL;
          }
 
+         // Only call the update service if there's actually data to update
          if (Object.keys(firestoreUpdateData).length > 0) {
+            console.log("Calling updateUserProfileDocument with:", firestoreUpdateData);
             await updateUserProfileDocument(user.uid, firestoreUpdateData);
-            console.log("Firestore profile updated:", firestoreUpdateData);
+            console.log("Firestore profile updated via server action:", firestoreUpdateData);
 
             // Optimistically update local state for immediate feedback
             setProfileData(prev => prev ? { ...prev, ...firestoreUpdateData } : null);
@@ -243,10 +253,14 @@ export default function ProfilePage() {
 
 
      } catch (error: any) {
-         console.error("Error updating profile:", error);
+         console.error("Error during profile update onSubmit:", error);
+          // Check if the error came from the server action
+         const errorMessage = error.message || 'Unknown error during profile update';
+         console.error(`Detailed error: ${errorMessage}`); // Log the raw error message
+
          toast({
            title: 'Update Failed',
-           description: `Could not update profile: ${error.message || 'Unknown error'}`,
+           description: `Could not update profile: ${errorMessage}`,
            variant: 'destructive',
          });
      } finally {
@@ -415,7 +429,7 @@ export default function ProfilePage() {
                         <Button type="button" variant="outline" onClick={handleCancelEdit} disabled={isSaving}>
                              Cancel
                         </Button>
-                        <Button type="submit" disabled={isSaving || !form.formState.isValid}>
+                        <Button type="submit" disabled={isSaving || !form.formState.isDirty}> {/* Disable save if nothing changed */}
                              {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                              Save Changes
                         </Button>
