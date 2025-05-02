@@ -24,6 +24,20 @@ export function ChatMessage({ message }: ChatMessageProps) {
   const { user } = useAuth();
   const isSender = user?.uid === message.uid;
 
+  // Function to safely format timestamp
+  const formatTimestamp = (timestamp: any): string => {
+    if (timestamp && typeof timestamp.toDate === 'function') {
+      try {
+        return format(timestamp.toDate(), 'p'); // 'p' for short time format like 1:30 PM
+      } catch (error) {
+        console.error("Error formatting timestamp:", error, timestamp);
+        return 'Invalid date'; // Fallback for invalid date objects
+      }
+    }
+    return ''; // Return empty string if timestamp is null, undefined, or invalid
+  };
+
+
   return (
     <div className={cn("flex items-end gap-2 my-2", isSender ? "justify-end" : "justify-start")}>
       {!isSender && (
@@ -44,12 +58,12 @@ export function ChatMessage({ message }: ChatMessageProps) {
            <p className="text-xs font-medium text-muted-foreground mb-1">{message.displayName}</p>
         )}
         <p className="text-sm break-words whitespace-pre-wrap">{message.text}</p>
-        <p className={cn(
+         <p className={cn(
             "text-xs mt-1 opacity-70", // Use opacity for subtlety
             isSender ? "text-right" : "text-left"
            )}>
-          {message.timestamp ? format(message.timestamp.toDate(), 'p') : ''}
-        </p>
+            {formatTimestamp(message.timestamp)}
+          </p>
       </div>
        {isSender && (
         <Avatar className="h-8 w-8 flex-shrink-0">

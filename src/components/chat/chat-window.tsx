@@ -3,7 +3,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { db } from '@/lib/firebase';
-import { collection, query, orderBy, onSnapshot, limit, where, addDoc, serverTimestamp, doc, getDoc, setDoc } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, limit, where, addDoc, serverTimestamp, doc, getDoc, setDoc, Timestamp } from 'firebase/firestore';
 import type { Message, UserProfile } from '@/types'; // Import UserProfile
 import { ChatMessage } from './chat-message';
 import { ChatInput } from './chat-input';
@@ -16,6 +16,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Input } from '@/components/ui/input'; // Import Input for search
 import { Separator } from '@/components/ui/separator'; // Import Separator
 import { cn } from '@/lib/utils'; // Import cn for conditional classes
+import { useToast } from "@/hooks/use-toast"; // Import useToast
 
 // Helper function to create a unique chat ID between two users
 const getChatId = (uid1: string, uid2: string): string => {
@@ -26,7 +27,7 @@ const getChatId = (uid1: string, uid2: string): string => {
 const getInitials = (name: string | null): string => {
     if (!name) return '';
     const nameParts = name.split(' ');
-    if (nameParts.length > 1) {
+    if (nameParts.length > 1 && nameParts[0].length > 0 && nameParts[1].length > 0) {
       return `${nameParts[0][0]}${nameParts[1][0]}`.toUpperCase();
     } else if (nameParts.length === 1 && nameParts[0].length > 0) {
       return nameParts[0][0].toUpperCase();
@@ -43,10 +44,12 @@ export function ChatWindow() {
   const [selectedChatPartner, setSelectedChatPartner] = useState<UserProfile | null>(null);
   const [chatId, setChatId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState(''); // State for search term
+  const { toast } = useToast(); // Get toast function
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const { user, signOut } = useAuth();
+  const isInitialMessagesLoad = useRef(true); // Ref to track initial message load for notifications
 
 
   // Fetch users from Firestore 'users' collection
@@ -67,6 +70,11 @@ export function ChatWindow() {
         console.error("Error fetching users:", error);
         setLoadingUsers(false);
          // Optionally show an error toast
+         toast({
+            title: "Error",
+            description: "Could not fetch user list.",
+            variant: "destructive",
+          });
     });
 
     // Update current user's lastSeen on mount and periodically (optional)
@@ -85,7 +93,7 @@ export function ChatWindow() {
 
     // Cleanup subscription on unmount
     return () => unsubscribeUsers();
-  }, [user]); // Re-run when user logs in/out
+  }, [user, toast]); // Re-run when user logs in/out
 
 
   // Fetch messages when a chat partner is selected
@@ -94,46 +102,90 @@ export function ChatWindow() {
         setMessages([]); // Clear messages if no chat is selected
         setLoadingMessages(false);
         setChatId(null);
+        isInitialMessagesLoad.current = true; // Reset initial load flag
         return;
     }
 
     setLoadingMessages(true);
+    isInitialMessagesLoad.current = true; // Set flag for initial load
     const currentChatId = getChatId(user.uid, selectedChatPartner.uid);
     setChatId(currentChatId); // Store the current chat ID
 
     const messagesQuery = query(
       collection(db, 'chats', currentChatId, 'messages'),
-      orderBy('timestamp', 'asc'),
+      orderBy('timestamp', 'desc'), // Order by desc initially to easily check latest
       limit(50)
     );
 
     const unsubscribeMessages = onSnapshot(messagesQuery, (querySnapshot) => {
       const fetchedMessages: Message[] = [];
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        if (data.timestamp && typeof data.timestamp.toDate === 'function') {
-           fetchedMessages.push({ ...data, id: doc.id } as Message);
-        } else {
-          console.warn("Message missing or invalid timestamp:", doc.id, data);
-           fetchedMessages.push({ ...data, id: doc.id, timestamp: null } as any);
-        }
+      let newMessagesCount = 0; // Count new messages for notification logic
+
+      querySnapshot.docChanges().forEach((change) => {
+          if (change.type === "added") {
+              const data = change.doc.data();
+              const message = { ...data, id: change.doc.id } as Message;
+
+               // Basic validation for timestamp
+              if (!message.timestamp || typeof message.timestamp.toDate !== 'function') {
+                  console.warn("Message missing or invalid timestamp:", change.doc.id, data);
+                   // Assign a default or handle appropriately
+                   message.timestamp = Timestamp.now(); // Or null, depending on requirements
+              }
+
+
+              // Check if message is new *after* initial load and not from current user
+              if (!isInitialMessagesLoad.current && message.uid !== user.uid) {
+                   newMessagesCount++;
+                   // Show notification if document is hidden (user is likely in another tab/window)
+                   if (document.hidden) {
+                        toast({
+                            title: `New message from ${message.displayName || 'User'}`,
+                            description: message.text.substring(0, 50) + (message.text.length > 50 ? '...' : ''),
+                            // Optional: Add action to switch to chat?
+                        });
+                   }
+              }
+              fetchedMessages.push(message);
+          }
       });
-      setMessages(fetchedMessages.filter(msg => msg.timestamp !== null));
+
+
+       // Combine new messages with existing ones and sort correctly
+       setMessages(prevMessages => {
+           const messageMap = new Map(prevMessages.map(m => [m.id, m]));
+           fetchedMessages.forEach(m => messageMap.set(m.id, m));
+           return Array.from(messageMap.values()).sort((a, b) => a.timestamp.toMillis() - b.timestamp.toMillis());
+       });
+
+
       setLoadingMessages(false);
 
-       // Scroll to bottom after messages load or update
-      setTimeout(() => scrollToBottom(), 100); // Add a small delay
+      // Scroll to bottom only if new messages were added or it's the initial load
+      if (newMessagesCount > 0 || isInitialMessagesLoad.current) {
+           // Scroll to bottom after messages load or update
+           setTimeout(() => scrollToBottom(), 100); // Add a small delay
+      }
+
+      // After processing the first snapshot, mark initial load as complete
+      isInitialMessagesLoad.current = false;
+
 
     }, (error) => {
         console.error("Error fetching messages:", error);
         setLoadingMessages(false);
-        // Optionally show an error toast
+        isInitialMessagesLoad.current = false; // Ensure flag is reset on error too
+        toast({
+            title: "Error",
+            description: "Could not fetch messages.",
+            variant: "destructive",
+        });
     });
 
     // Cleanup message subscription on chat change or unmount
     return () => unsubscribeMessages();
 
-  }, [user, selectedChatPartner]); // Re-run when chat partner changes
+  }, [user, selectedChatPartner, toast]); // Re-run when chat partner changes
 
 
    // Auto-scrolling effect
@@ -146,6 +198,10 @@ export function ChatWindow() {
 
   const handleSelectUser = (partner: UserProfile) => {
     setSelectedChatPartner(partner);
+    // Reset message loading state immediately for better UX
+    setMessages([]);
+    setLoadingMessages(true);
+    isInitialMessagesLoad.current = true; // Reset flag when switching chats
   };
 
    // Filter users based on search term
@@ -244,25 +300,28 @@ export function ChatWindow() {
                  </header>
 
                 {/* Message List */}
-                <ScrollArea className="flex-1 p-4" ref={scrollAreaRef}>
-                    <div ref={viewportRef} className="h-full space-y-2">
-                    {loadingMessages && (
-                        <div className="space-y-4 p-4">
-                            <Skeleton className="h-16 w-3/4" />
-                            <Skeleton className="h-16 w-3/4 ml-auto" />
-                            <Skeleton className="h-16 w-2/3" />
-                        </div>
-                    )}
-                    {!loadingMessages && messages.length === 0 && (
-                        <div className="flex items-center justify-center h-full">
-                        <p className="text-muted-foreground">Start chatting with {selectedChatPartner.displayName || selectedChatPartner.email}!</p>
-                        </div>
-                    )}
-                    {!loadingMessages && messages.map((msg) => (
-                        <ChatMessage key={msg.id} message={msg} />
-                    ))}
+                <ScrollArea className="flex-1" ref={scrollAreaRef}>
+                    {/* Wrap content in a div that can be targeted for scroll height */}
+                    <div ref={viewportRef} className="h-full p-4 space-y-2">
+                        {loadingMessages && messages.length === 0 && ( // Show skeletons only if messages are truly empty initially
+                            <div className="space-y-4 p-4">
+                                <Skeleton className="h-16 w-3/4" />
+                                <Skeleton className="h-16 w-3/4 ml-auto" />
+                                <Skeleton className="h-16 w-2/3" />
+                            </div>
+                        )}
+                        {!loadingMessages && messages.length === 0 && (
+                            <div className="flex items-center justify-center h-full">
+                            <p className="text-muted-foreground">Start chatting with {selectedChatPartner.displayName || selectedChatPartner.email}!</p>
+                            </div>
+                        )}
+                        {/* Always render messages if they exist, even while loading new ones */}
+                        {messages.length > 0 && messages.map((msg) => (
+                            <ChatMessage key={msg.id} message={msg} />
+                        ))}
                     </div>
                 </ScrollArea>
+
 
                 {/* Chat Input */}
                 <ChatInput chatId={chatId} />
