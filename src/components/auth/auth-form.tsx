@@ -1,3 +1,4 @@
+
 "use client";
 
 import * as React from 'react';
@@ -9,6 +10,7 @@ import {
   signInWithEmailAndPassword,
   GoogleAuthProvider,
   signInWithPopup,
+  AuthError, // Import AuthError for better type checking
 } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
@@ -26,6 +28,30 @@ const formSchema = z.object({
 
 type FormData = z.infer<typeof formSchema>;
 
+// Helper function to get a user-friendly error message
+const getFirebaseAuthErrorMessage = (error: AuthError): string => {
+  switch (error.code) {
+    case 'auth/user-not-found':
+    case 'auth/wrong-password':
+      return 'Invalid email or password.';
+    case 'auth/email-already-in-use':
+      return 'This email address is already in use.';
+    case 'auth/weak-password':
+      return 'Password is too weak. Please choose a stronger password.';
+    case 'auth/invalid-email':
+      return 'Invalid email address format.';
+    case 'auth/popup-closed-by-user':
+        return 'Sign-in popup closed before completion. Please try again.';
+    case 'auth/cancelled-popup-request':
+        return 'Multiple sign-in attempts detected. Please close other popups and try again.';
+    case 'auth/popup-blocked':
+        return 'Sign-in popup was blocked by the browser. Please allow popups for this site.';
+    // Add more specific Firebase error codes as needed
+    default:
+      return error.message || 'An unknown authentication error occurred.';
+  }
+};
+
 export function AuthForm() {
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = React.useState(false);
@@ -36,7 +62,10 @@ export function AuthForm() {
       email: '',
       password: '',
     },
+    // Reset form errors when switching tabs
+    shouldUnregister: false,
   });
+
 
   const handleEmailPasswordAuth = async (data: FormData, isSignUp: boolean) => {
     setIsSubmitting(true);
@@ -50,10 +79,10 @@ export function AuthForm() {
       }
       // User state will be updated by the AuthProvider listener
     } catch (error: any) {
-      console.error('Authentication error:', error);
+      console.error('Email/Password Auth Error:', error); // Log the full error
       toast({
         title: 'Authentication Failed',
-        description: error.message || 'An unknown error occurred.',
+        description: getFirebaseAuthErrorMessage(error),
         variant: 'destructive',
       });
     } finally {
@@ -69,10 +98,10 @@ export function AuthForm() {
       toast({ title: 'Signed in with Google successfully!' });
       // User state will be updated by the AuthProvider listener
     } catch (error: any) {
-      console.error('Google sign-in error:', error);
+      console.error('Google Sign-In Error:', error); // Log the full error object
       toast({
         title: 'Google Sign-In Failed',
-        description: error.message || 'An unknown error occurred.',
+        description: getFirebaseAuthErrorMessage(error), // Use the helper function
         variant: 'destructive',
       });
     } finally {
@@ -80,9 +109,14 @@ export function AuthForm() {
     }
   };
 
+  // Reset form when tab changes
+  const handleTabChange = (value: string) => {
+      form.reset(); // Reset form fields and errors
+  }
+
   return (
     <div className="flex items-center justify-center min-h-screen bg-secondary">
-      <Tabs defaultValue="signin" className="w-[400px]">
+      <Tabs defaultValue="signin" className="w-[400px]" onValueChange={handleTabChange}>
         <TabsList className="grid w-full grid-cols-2">
           <TabsTrigger value="signin">Sign In</TabsTrigger>
           <TabsTrigger value="signup">Sign Up</TabsTrigger>
@@ -93,6 +127,7 @@ export function AuthForm() {
               <CardTitle>Sign In</CardTitle>
               <CardDescription>Enter your credentials to access your account.</CardDescription>
             </CardHeader>
+            {/* Use a unique key to force re-render and state reset if needed, or rely on onValueChange */}
             <form onSubmit={form.handleSubmit((data) => handleEmailPasswordAuth(data, false))}>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
@@ -113,6 +148,7 @@ export function AuthForm() {
                   <Input
                     id="password-signin"
                     type="password"
+                    placeholder="******"
                     {...form.register('password')}
                     disabled={isSubmitting}
                   />
@@ -122,7 +158,7 @@ export function AuthForm() {
                 </div>
               </CardContent>
               <CardFooter className="flex flex-col gap-4">
-                <Button type="submit" className="w-full" disabled={isSubmitting}>
+                <Button type="submit" className="w-full" disabled={isSubmitting || !form.formState.isValid}>
                   <LogIn className="mr-2 h-4 w-4" /> {isSubmitting ? 'Signing In...' : 'Sign In'}
                 </Button>
                 <Button variant="outline" className="w-full" onClick={handleGoogleSignIn} disabled={isSubmitting}>
@@ -138,6 +174,7 @@ export function AuthForm() {
               <CardTitle>Sign Up</CardTitle>
               <CardDescription>Create a new account.</CardDescription>
             </CardHeader>
+             {/* Use a unique key to force re-render and state reset if needed, or rely on onValueChange */}
              <form onSubmit={form.handleSubmit((data) => handleEmailPasswordAuth(data, true))}>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
@@ -146,8 +183,8 @@ export function AuthForm() {
                     id="email-signup"
                     type="email"
                     placeholder="m@example.com"
-                    {...form.register('email')} // Re-register for the signup form instance
-                     disabled={isSubmitting}
+                    {...form.register('email')}
+                    disabled={isSubmitting}
                   />
                    {form.formState.errors.email && (
                     <p className="text-sm text-destructive">{form.formState.errors.email.message}</p>
@@ -158,7 +195,8 @@ export function AuthForm() {
                   <Input
                     id="password-signup"
                     type="password"
-                     {...form.register('password')} // Re-register for the signup form instance
+                    placeholder="******"
+                    {...form.register('password')}
                     disabled={isSubmitting}
                   />
                   {form.formState.errors.password && (
@@ -167,7 +205,7 @@ export function AuthForm() {
                 </div>
               </CardContent>
               <CardFooter className="flex flex-col gap-4">
-                 <Button type="submit" className="w-full" disabled={isSubmitting}>
+                 <Button type="submit" className="w-full" disabled={isSubmitting || !form.formState.isValid}>
                    <UserPlus className="mr-2 h-4 w-4" /> {isSubmitting ? 'Signing Up...' : 'Sign Up'}
                  </Button>
                   <Button variant="outline" className="w-full" onClick={handleGoogleSignIn} disabled={isSubmitting}>
