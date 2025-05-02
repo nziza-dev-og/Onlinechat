@@ -57,67 +57,110 @@ export function ChatWindow() {
   // Update user presence (lastSeen) when the component mounts and user is available
   useEffect(() => {
     const updateUserPresence = async () => {
-        if (user?.uid) {
-            try {
-                console.log(`Attempting to update presence for user ${user.uid}...`);
-                await updateUserProfileDocument(user.uid, { lastSeen: new Date() });
-                console.log("Successfully updated user presence for", user.uid);
-            } catch (error: any) {
-                // Log the detailed error message from the service function
-                 console.error(`Error updating user presence for ${user.uid}:`, error.message, error);
-                // Check if the error message indicates a server component issue or db not ready
-                if (error.message && (error.message.includes("Cannot access _delegate on the server") || error.message.includes("Database service (db) is not initialized"))) {
-                    console.warn(`Presence update skipped for ${user.uid}: DB service potentially not ready or running in incompatible context.`);
-                    // Don't show toast for this specific, potentially expected issue during init/SSR
-                } else {
-                    // Show toast for other unexpected errors
-                    toast({
-                        title: "Presence Error",
-                        description: `Could not update your online status. Details: ${error.message}`,
-                        variant: "destructive",
-                    });
-                }
-            }
-        } else {
-            console.log("User or user UID is not available, skipping presence update.");
+      if (user?.uid) {
+        try {
+          console.log(`Attempting to update presence for user ${user.uid}...`);
+          // Ensure db is available before calling the service
+          if (!db) {
+             console.warn(`Presence update skipped for ${user.uid}: DB service not ready.`);
+             return;
+          }
+          await updateUserProfileDocument(user.uid, { lastSeen: new Date() });
+          console.log("Successfully updated user presence for", user.uid);
+        } catch (error: any) {
+          // Log the detailed error from the service function
+          console.error(`Error updating user presence for ${user.uid}:`, error.message, error);
+          // Check if the error message indicates a server component issue or db not ready
+          if (error.message && (error.message.includes("Cannot access _delegate on the server") || error.message.includes("Database service (db) is not initialized"))) {
+              console.warn(`Presence update skipped for ${user.uid}: DB service potentially not ready or running in incompatible context.`);
+              // Don't show toast for this specific, potentially expected issue during init/SSR
+          } else if (error.message && error.message.includes("Failed to update profile document")) {
+              // Don't show toast for the expected error when db is not ready client-side initially
+              console.warn(`Presence update likely skipped for ${user.uid}: Underlying Firestore error (e.g., DB not ready).`);
+          }
+           else {
+              // Show toast for other unexpected errors
+              toast({
+                  title: "Presence Error",
+                  description: `Could not update your online status. Details: ${error.message}`,
+                  variant: "destructive",
+              });
+          }
         }
+      } else {
+        console.log("User or user UID is not available, skipping presence update.");
+      }
     };
-    // Delay the initial presence update slightly to allow Firebase services to fully initialize
+
+    // Delay the initial presence update slightly to allow Firebase services to fully initialize client-side
     const timeoutId = setTimeout(updateUserPresence, 1500);
 
-    // Cleanup timeout if component unmounts before execution
-    return () => clearTimeout(timeoutId);
+    // Set up interval for periodic presence updates (e.g., every 5 minutes)
+    const intervalId = setInterval(updateUserPresence, 5 * 60 * 1000); // 5 minutes
+
+    // Cleanup timeout and interval on unmount
+    return () => {
+      clearTimeout(timeoutId);
+      clearInterval(intervalId);
+    };
   }, [user, toast]); // Depend on user and toast
 
 
   // Fetch users from Firestore 'users' collection
   useEffect(() => {
-    if (!user || !db) { // Also check if db is initialized
-        setUsers([]); // Clear user list if logged out or db not ready
-        setLoadingUsers(false); // Stop loading
+    console.log("User fetching effect triggered.");
+    if (!user) {
+        console.log("User fetching skipped: No authenticated user.");
+        setUsers([]);
+        setLoadingUsers(false);
+        return;
+    }
+    if (!db) {
+        console.log("User fetching skipped: Firestore DB service not ready yet.");
+        setUsers([]); // Clear users if db is not ready
+        setLoadingUsers(true); // Indicate loading until db is ready
+        // Optionally, add a retry mechanism or wait for db initialization elsewhere
         return;
     }
 
     setLoadingUsers(true);
-    // Query users collection, excluding the current user. This fetches all known user profiles in Firestore.
+    console.log(`Setting up Firestore listener for 'users' collection, excluding UID: ${user.uid}`);
     const usersQuery = query(collection(db, 'users'), where('uid', '!=', user.uid));
 
-    console.log("Setting up listener for Firestore 'users' collection...");
     const unsubscribeUsers = onSnapshot(usersQuery, (snapshot) => {
-      console.log(`Received ${snapshot.docs.length} user documents from Firestore.`);
+      console.log(`Firestore 'users' snapshot received. Docs count: ${snapshot.docs.length}`);
+      if (snapshot.empty) {
+          console.log("No user documents found (excluding self).");
+      }
       const fetchedUsers: UserProfile[] = snapshot.docs.map(doc => {
-          return doc.data() as UserProfile;
-      });
+          const data = doc.data();
+           // Basic validation/logging for each document's structure
+           if (!data.uid || typeof data.uid !== 'string') {
+                console.warn("Fetched user document missing or invalid UID:", doc.id, data);
+           }
+           // Add more checks if needed (e.g., for displayName, email)
+          return {
+              uid: data.uid ?? doc.id, // Fallback UID to doc ID if missing, though unlikely
+              displayName: data.displayName ?? null,
+              email: data.email ?? null,
+              photoURL: data.photoURL ?? null,
+              lastSeen: data.lastSeen ?? undefined, // Keep as undefined if missing
+              createdAt: data.createdAt ?? undefined,
+          } as UserProfile; // Assert type after potential fallbacks/checks
+      }).filter(u => u.uid); // Ensure users without a valid UID are filtered out
+
       // Sort users alphabetically by displayName (or email as fallback)
       fetchedUsers.sort((a, b) => {
           const nameA = a.displayName || a.email || '';
           const nameB = b.displayName || b.email || '';
           return nameA.localeCompare(nameB);
       });
+
+      console.log(`Mapped and sorted ${fetchedUsers.length} users.`, fetchedUsers.map(u => u.uid)); // Log UIDs
       setUsers(fetchedUsers);
       setLoadingUsers(false);
     }, (error) => {
-        console.error("Error fetching users from Firestore:", error);
+        console.error("Error fetching users from Firestore:", error.code, error.message, error);
         setLoadingUsers(false);
          toast({
             title: "Error Fetching Users",
@@ -132,7 +175,7 @@ export function ChatWindow() {
         console.log("Unsubscribing from Firestore 'users' listener.");
         unsubscribeUsers();
     };
-  }, [user, toast]); // Re-run when user logs in/out or db becomes available
+  }, [user, toast]); // Re-run when user logs in/out
 
 
   // Fetch messages when a chat partner is selected
@@ -149,7 +192,7 @@ export function ChatWindow() {
         setLoadingMessages(false);
         setChatId(null);
         isInitialMessagesLoad.current = true; // Reset initial load flag
-        console.log("No chat partner selected or DB not ready, clearing messages.");
+        // console.log("No chat partner selected or DB not ready, clearing messages.");
         return; // Exit early
     }
 
@@ -188,7 +231,7 @@ export function ChatWindow() {
               // Check if message is new *after* initial load and *not* from current user
               if (!isInitialMessagesLoad.current && message.uid !== user?.uid) {
                    // Only show notification if the document (tab/window) is currently hidden
-                   if (document.hidden) {
+                   if (typeof document !== 'undefined' && document.hidden) {
                         console.log("Document hidden, showing toast notification for new message.");
                         toast({
                             title: `New message from ${message.displayName || 'User'}`,
@@ -230,7 +273,7 @@ export function ChatWindow() {
 
       // Scroll to bottom logic: Trigger on initial load or when new messages arrive
       if (newMessagesReceived || isInitialMessagesLoad.current) {
-           console.log("Scrolling to bottom due to initial load or new messages.");
+           // console.log("Scrolling to bottom due to initial load or new messages.");
            // Use setTimeout to ensure DOM has updated before scrolling
            setTimeout(() => scrollToBottom(), 100);
       }
@@ -355,7 +398,9 @@ export function ChatWindow() {
                  {/* Empty State (No Users or No Search Results) */}
                  {!loadingUsers && filteredUsers.length === 0 && (
                     <p className="p-4 text-sm text-center text-muted-foreground">
-                        {searchTerm ? "No users found matching search." : (users.length === 0 ? "No other users available." : "No other users available.")}
+                        {/* Provide more context on why the list might be empty */}
+                        {searchTerm ? "No users found matching search." : (users.length === 0 ? "No other users found." : "No other users available.")}
+                        {users.length === 0 && !searchTerm && " If you just signed up, others may appear soon."}
                     </p>
                  )}
                  {/* User Buttons */}
