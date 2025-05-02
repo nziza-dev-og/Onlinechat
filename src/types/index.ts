@@ -1,3 +1,4 @@
+
 import type { User as FirebaseUser } from 'firebase/auth';
 import type { Timestamp } from 'firebase/firestore';
 
@@ -21,4 +22,5 @@ export interface UserProfile {
     email: string | null;
     photoURL: string | null;
     lastSeen?: Timestamp; // Optional: Track user presence
+    createdAt?: Timestamp; // Optional: Track when the profile was created
 }
