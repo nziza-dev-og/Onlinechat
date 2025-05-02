@@ -11,8 +11,10 @@ import {
   GoogleAuthProvider,
   signInWithPopup,
   AuthError, // Import AuthError for better type checking
+  UserCredential, // Import UserCredential
 } from 'firebase/auth';
-import { auth } from '@/lib/firebase';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore'; // Import Firestore functions
+import { auth, db } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -20,6 +22,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { LogIn, UserPlus, Chrome } from 'lucide-react'; // Use Chrome icon for Google
+import type { UserProfile } from '@/types'; // Import UserProfile type
 
 const formSchema = z.object({
   email: z.string().email({ message: 'Invalid email address.' }),
@@ -48,9 +51,37 @@ const getFirebaseAuthErrorMessage = (error: AuthError): string => {
         return 'Sign-in popup was blocked by the browser. Please allow popups for this site.';
     // Add more specific Firebase error codes as needed
     default:
+      // Check for network errors specifically
+      if (error.code === 'auth/network-request-failed') {
+        return 'Network error. Please check your internet connection and try again.';
+      }
       return error.message || 'An unknown authentication error occurred.';
   }
 };
+
+// Function to update user profile in Firestore
+const updateUserProfile = async (userCred: UserCredential) => {
+    const user = userCred.user;
+    if (!user) return;
+
+    const userRef = doc(db, 'users', user.uid);
+    const userData: UserProfile = {
+        uid: user.uid,
+        displayName: user.displayName,
+        email: user.email,
+        photoURL: user.photoURL,
+        lastSeen: serverTimestamp(), // Update last seen time
+    };
+
+    try {
+        // Use setDoc with merge: true to create or update the document
+        await setDoc(userRef, userData, { merge: true });
+    } catch (error) {
+        console.error("Error updating user profile in Firestore:", error);
+        // Optionally handle Firestore update error (e.g., show a toast)
+    }
+};
+
 
 export function AuthForm() {
   const { toast } = useToast();
@@ -70,13 +101,15 @@ export function AuthForm() {
   const handleEmailPasswordAuth = async (data: FormData, isSignUp: boolean) => {
     setIsSubmitting(true);
     try {
+      let userCredential: UserCredential;
       if (isSignUp) {
-        await createUserWithEmailAndPassword(auth, data.email, data.password);
+        userCredential = await createUserWithEmailAndPassword(auth, data.email, data.password);
         toast({ title: 'Account created successfully!' });
       } else {
-        await signInWithEmailAndPassword(auth, data.email, data.password);
+        userCredential = await signInWithEmailAndPassword(auth, data.email, data.password);
         toast({ title: 'Signed in successfully!' });
       }
+      await updateUserProfile(userCredential); // Save/Update user profile in Firestore
       // User state will be updated by the AuthProvider listener
     } catch (error: any) {
       console.error('Email/Password Auth Error:', error); // Log the full error
@@ -94,8 +127,9 @@ export function AuthForm() {
     setIsSubmitting(true);
     const provider = new GoogleAuthProvider();
     try {
-      await signInWithPopup(auth, provider);
+      const userCredential = await signInWithPopup(auth, provider);
       toast({ title: 'Signed in with Google successfully!' });
+      await updateUserProfile(userCredential); // Save/Update user profile in Firestore
       // User state will be updated by the AuthProvider listener
     } catch (error: any) {
       console.error('Google Sign-In Error:', error); // Log the full error object

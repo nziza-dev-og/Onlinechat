@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState } from 'react';
@@ -8,20 +9,27 @@ import { Button } from '@/components/ui/button';
 import { Send } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 
-export function ChatInput() {
+interface ChatInputProps {
+  chatId: string | null; // ID of the chat document
+}
+
+export function ChatInput({ chatId }: ChatInputProps) {
   const [message, setMessage] = useState('');
   const { user } = useAuth();
   const [isSending, setIsSending] = useState(false);
 
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !message.trim() || isSending) return;
+    if (!user || !chatId || !message.trim() || isSending) return;
 
     setIsSending(true);
     const { uid, displayName, photoURL } = user;
 
     try {
-      await addDoc(collection(db, 'messages'), {
+       // Reference the 'messages' subcollection within the specific chat document
+      const messagesRef = collection(db, 'chats', chatId, 'messages');
+
+      await addDoc(messagesRef, {
         text: message,
         timestamp: serverTimestamp(),
         uid,
@@ -35,7 +43,6 @@ export function ChatInput() {
     } finally {
         setIsSending(false);
     }
-
   };
 
   return (
@@ -44,12 +51,12 @@ export function ChatInput() {
         type="text"
         value={message}
         onChange={(e) => setMessage(e.target.value)}
-        placeholder="Type a message..."
+        placeholder={chatId ? "Type a message..." : "Select a chat to start"}
         className="flex-1"
-        disabled={!user || isSending}
+        disabled={!user || !chatId || isSending} // Disable if no chat is selected
         aria-label="Chat message input"
       />
-      <Button type="submit" size="icon" disabled={!user || !message.trim() || isSending} aria-label="Send message">
+      <Button type="submit" size="icon" disabled={!user || !chatId || !message.trim() || isSending} aria-label="Send message">
         <Send className="h-5 w-5" />
       </Button>
     </form>
