@@ -60,19 +60,20 @@ export const createOrUpdateUserProfile = async (
 
         // --- Firestore Document Update ---
         // Prepare data for Firestore document
-        const firestoreData: Partial<UserProfile> = {
+        // Use a type assertion to allow serverTimestamp()
+        const firestoreData: Partial<UserProfile> & { lastSeen: any, createdAt?: any } = {
             uid: uid, // Ensure uid is always set/updated
             email: email,
             // Only set displayName/photoURL if they have a value (not undefined or null).
             // Use null explicitly if you want to clear the field in Firestore.
             ...(displayName !== undefined && { displayName: displayName }),
             ...(photoURL !== undefined && { photoURL: photoURL }),
-            lastSeen: serverTimestamp(), // Always update lastSeen on any interaction
+            lastSeen: serverTimestamp(), // Always update lastSeen on any interaction using the *real* serverTimestamp here
         };
 
         // Add createdAt only for new users
         if (isNewUser) {
-            firestoreData.createdAt = serverTimestamp();
+            firestoreData.createdAt = serverTimestamp(); // Use the *real* serverTimestamp here
         }
 
         // Use setDoc with merge: true to create or update the document.
@@ -96,16 +97,26 @@ export const createOrUpdateUserProfile = async (
 
 
 /**
+ * Type definition for data passed to updateUserProfileDocument.
+ * Allows specific fields to be marked as 'SERVER_TIMESTAMP'.
+ */
+type UserProfileUpdateData = {
+    [K in keyof UserProfile]?: UserProfile[K] | 'SERVER_TIMESTAMP';
+};
+
+
+/**
  * Updates specific fields in a user's profile document in Firestore.
- * Does NOT update Firebase Auth profile. Accepts Date object for time fields.
+ * Does NOT update Firebase Auth profile.
+ * Accepts a special string 'SERVER_TIMESTAMP' for timestamp fields to be set by the server.
  * Primarily used for updating `lastSeen` or other non-Auth related profile data.
  *
  * @param uid - The user's unique ID.
- * @param data - An object containing the fields to update (e.g., { lastSeen: new Date() }). Keys with undefined values are ignored.
+ * @param data - An object containing the fields to update (e.g., { lastSeen: 'SERVER_TIMESTAMP' }).
  * @returns Promise<void>
  * @throws Error if UID is missing, db is not initialized, or update fails.
  */
-export const updateUserProfileDocument = async (uid: string, data: Partial<UserProfile>): Promise<void> => {
+export const updateUserProfileDocument = async (uid: string, data: UserProfileUpdateData): Promise<void> => {
      if (!uid) {
         console.error("🔴 updateUserProfileDocument Error: No UID provided.");
         throw new Error("User ID is required for updating profile document.");
@@ -118,14 +129,20 @@ export const updateUserProfileDocument = async (uid: string, data: Partial<UserP
         throw new Error(dbErrorMsg);
      }
 
-     // Filter out undefined values, as Firestore updateDoc throws if you provide them.
+     // Prepare update data, converting 'SERVER_TIMESTAMP' to the actual serverTimestamp() call
+     // and Date objects to Firestore Timestamps. Filter out undefined values.
      const updateData = Object.entries(data).reduce((acc, [key, value]) => {
-        if (value !== undefined) {
-            // Convert Date objects to Firestore Timestamps before writing
-            acc[key as keyof Partial<UserProfile>] = value instanceof Date ? Timestamp.fromDate(value) : value;
+        if (value === 'SERVER_TIMESTAMP') {
+            acc[key as keyof Partial<UserProfile>] = serverTimestamp(); // Use the actual serverTimestamp() here
+        } else if (value instanceof Date) {
+            acc[key as keyof Partial<UserProfile>] = Timestamp.fromDate(value);
+        } else if (value !== undefined) {
+            // For any other defined value (string, null, number, boolean etc.)
+            acc[key as keyof Partial<UserProfile>] = value;
         }
+        // Ignore undefined values
         return acc;
-     }, {} as Partial<UserProfile>);
+     }, {} as Record<string, any>); // Use Record<string, any> to allow serverTimestamp()
 
 
     if (Object.keys(updateData).length === 0) {
@@ -144,8 +161,9 @@ export const updateUserProfileDocument = async (uid: string, data: Partial<UserP
     } catch (error: any) {
         // Log detailed Firestore error
         console.error(`🔴 Firestore Error updating document for user ${uid}:`, error);
+        // Provide a more detailed error message including the attempted data
         const detailedErrorMessage = `Failed to update Firestore document for UID ${uid}. Error: ${error.message || 'Unknown Firestore error'}${error.code ? ` (Code: ${error.code})` : ''}. Data attempted: ${JSON.stringify(updateData)}`;
-        console.error(detailedErrorMessage);
+        console.error(detailedErrorMessage); // Log the detailed error
         // Re-throw with the detailed message
         throw new Error(detailedErrorMessage);
     }

@@ -71,12 +71,16 @@ export function ChatWindow() {
         // console.log("Presence update skipped: No authenticated user.");
         return;
       }
-       // Removed db check here, as it's checked globally in firebase.ts
+       // Check if db is available before calling the service
+       if (!db) {
+         console.warn(`Presence update skipped for ${user.uid}: DB service not ready.`);
+         return;
+       }
 
       try {
         // console.log(`Attempting to update presence for user ${user.uid}...`);
-        // Pass only serializable data to the server action
-        await updateUserProfileDocument(user.uid, { lastSeen: serverTimestamp() });
+        // Pass the special marker 'SERVER_TIMESTAMP' instead of the actual function
+        await updateUserProfileDocument(user.uid, { lastSeen: 'SERVER_TIMESTAMP' });
         // console.log("Successfully updated user presence for", user.uid);
       } catch (error: any) {
           // Log the detailed error message propagated from the service
