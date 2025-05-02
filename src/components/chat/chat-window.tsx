@@ -91,7 +91,7 @@ export function ChatWindow() {
         } catch (error) {
           console.error("Error updating user presence:", error);
            // Optional: Toast notification for presence update failure
-          // toast({ title: "Presence Error", description: "Could not update online status.", variant: "destructive" });
+           toast({ title: "Presence Error", description: "Could not update online status.", variant: "destructive" });
         }
       }
     };
@@ -431,3 +431,5 @@ export function ChatWindow() {
     </div>
   );
 }
+
+    
