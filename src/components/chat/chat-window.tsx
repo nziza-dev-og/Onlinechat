@@ -54,9 +54,38 @@ export function ChatWindow() {
   const messageListenerUnsubscribe = useRef<(() => void) | null>(null); // Ref for unsubscribe function
 
 
+  // Update user presence (lastSeen) when the component mounts and user is available
+  useEffect(() => {
+    const updateUserPresence = async () => {
+      if (user) {
+        try {
+          console.log(`Attempting to update presence for user ${user.uid}...`);
+          await updateUserProfileDocument(user.uid, { lastSeen: serverTimestamp() });
+          console.log("Successfully updated user presence for", user.uid);
+        } catch (error: any) {
+          // Log the detailed error from the service function
+          console.error(`Error updating user presence for ${user.uid}:`, error.message, error);
+          // Optional: Show a less technical toast to the user
+          toast({
+            title: "Presence Error",
+            description: "Could not update your online status. Firestore might be unreachable or permissions might be incorrect.",
+            variant: "destructive",
+          });
+        }
+      }
+    };
+    updateUserPresence();
+    // No cleanup needed here as it's a one-time update on mount/user change
+  }, [user, toast]); // Depend on user and toast
+
+
   // Fetch users from Firestore 'users' collection
   useEffect(() => {
-    if (!user) return; // Don't fetch if user is not logged in
+    if (!user) {
+        setUsers([]); // Clear user list if logged out
+        setLoadingUsers(false); // Stop loading if no user
+        return;
+    }
 
     setLoadingUsers(true);
     // Query users collection, excluding the current user
@@ -82,22 +111,8 @@ export function ChatWindow() {
           });
     });
 
-    // Update current user's lastSeen on mount using the service
-    const updateUserPresence = async () => {
-      if(user) {
-        try {
-          await updateUserProfileDocument(user.uid, { lastSeen: serverTimestamp() });
-          console.log("Updated user presence for", user.uid);
-        } catch (error) {
-          console.error("Error updating user presence:", error);
-           // Optional: Toast notification for presence update failure
-           toast({ title: "Presence Error", description: "Could not update online status.", variant: "destructive" });
-        }
-      }
-    };
-    updateUserPresence();
 
-    // Cleanup subscription on unmount
+    // Cleanup subscription on unmount or when user changes
     return () => {
         console.log("Unsubscribing from users listener");
         unsubscribeUsers();
@@ -186,6 +201,7 @@ export function ChatWindow() {
            }
            // Combine and sort. Sorting is crucial as 'added' changes might not be perfectly ordered
            return [...prevMessages, ...newUniqueMessages].sort((a, b) => {
+               // Handle potential null/undefined timestamps gracefully
                const timeA = a.timestamp?.toMillis() ?? 0;
                const timeB = b.timestamp?.toMillis() ?? 0;
                return timeA - timeB;
@@ -224,7 +240,7 @@ export function ChatWindow() {
     // Cleanup function for this effect
      return () => {
         if (messageListenerUnsubscribe.current) {
-          console.log(`Unsubscribing from messages listener for chat ${chatId}`);
+          console.log(`Unsubscribing from messages listener for chat ${chatId ?? 'unknown'}`); // Log chatId safely
           messageListenerUnsubscribe.current();
           messageListenerUnsubscribe.current = null;
         }
@@ -431,5 +447,3 @@ export function ChatWindow() {
     </div>
   );
 }
-
-    

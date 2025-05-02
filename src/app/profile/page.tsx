@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useToast } from '@/hooks/use-toast';
+import { useToast } from '@/hooks/use-toast'; // Moved hook import here
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import * as z from 'zod';
@@ -42,13 +42,31 @@ const profileSchema = z.object({
 
 type ProfileFormData = z.infer<typeof profileSchema>;
 
-// Upload photo helper (similar to auth-form, could be moved to service)
-const uploadPhoto = async (file: File, uid: string): Promise<string | null> => {
-    if (!file) return null;
-    const toast = useToast().toast; // Get toast inside async function context if needed
+export default function ProfilePage() {
+  const { user, loading: authLoading } = useAuth();
+  const [profileData, setProfileData] = React.useState<UserProfile | null>(null);
+  const [loadingProfile, setLoadingProfile] = React.useState(true);
+  const [isEditing, setIsEditing] = React.useState(false);
+  const [isSaving, setIsSaving] = React.useState(false);
+  const [photoPreview, setPhotoPreview] = React.useState<string | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const { toast } = useToast(); // Moved useToast hook call to the top level
 
-    // Use a consistent file name or a unique ID for the profile picture
-    const fileName = `profile_${uid}_${Date.now()}.${file.name.split('.').pop()}`; // Add timestamp for uniqueness
+  const form = useForm<ProfileFormData>({
+    resolver: zodResolver(profileSchema),
+    defaultValues: {
+      displayName: '',
+      photoFile: null,
+    },
+  });
+
+  // Upload photo helper
+  // NOTE: This function now uses the 'toast' from the component's scope.
+  const uploadPhoto = async (file: File, uid: string): Promise<string | null> => {
+    if (!file) return null;
+    // Removed internal toast call: const toast = useToast().toast;
+
+    const fileName = `profile_${uid}_${Date.now()}.${file.name.split('.').pop()}`;
     const storageRef = ref(storage, `profilePictures/${uid}/${fileName}`);
 
     try {
@@ -66,6 +84,7 @@ const uploadPhoto = async (file: File, uid: string): Promise<string | null> => {
       return downloadURL;
     } catch (error: any) {
       console.error("Error uploading photo:", error);
+      // Use the toast function obtained from the component's scope
       toast({
         title: "Photo Upload Failed",
         description: `Could not upload profile picture: ${error.message || 'Unknown error'}`,
@@ -75,24 +94,6 @@ const uploadPhoto = async (file: File, uid: string): Promise<string | null> => {
     }
   };
 
-
-export default function ProfilePage() {
-  const { user, loading: authLoading } = useAuth();
-  const [profileData, setProfileData] = React.useState<UserProfile | null>(null);
-  const [loadingProfile, setLoadingProfile] = React.useState(true);
-  const [isEditing, setIsEditing] = React.useState(false);
-  const [isSaving, setIsSaving] = React.useState(false);
-  const [photoPreview, setPhotoPreview] = React.useState<string | null>(null);
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
-  const { toast } = useToast();
-
-  const form = useForm<ProfileFormData>({
-    resolver: zodResolver(profileSchema),
-    defaultValues: {
-      displayName: '',
-      photoFile: null,
-    },
-  });
 
   // Fetch profile data from Firestore
   React.useEffect(() => {

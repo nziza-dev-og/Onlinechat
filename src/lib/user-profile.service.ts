@@ -40,12 +40,15 @@ export const createOrUpdateUserProfile = async (
 
         // 1. Prepare data for Firebase Auth update
         const authUpdateData: { displayName?: string | null; photoURL?: string | null } = {};
+        // Check if displayName is provided and different from current user's displayName
         if (details?.displayName !== undefined && details.displayName !== user.displayName) {
-            authUpdateData.displayName = details.displayName;
-        }
-        if (details?.photoURL !== undefined && details.photoURL !== user.photoURL) {
-            authUpdateData.photoURL = details.photoURL;
-        }
+             authUpdateData.displayName = details.displayName;
+         }
+         // Check if photoURL is provided and different from current user's photoURL
+         if (details?.photoURL !== undefined && details.photoURL !== user.photoURL) {
+             authUpdateData.photoURL = details.photoURL;
+         }
+
 
         // 2. Update Firebase Auth profile (if necessary)
         if (Object.keys(authUpdateData).length > 0) {
@@ -54,12 +57,15 @@ export const createOrUpdateUserProfile = async (
         }
 
         // 3. Prepare data for Firestore document
+        // Refresh user object after potential Auth profile update to get latest values
+        const updatedUser = user.providerData[0]; // Re-fetch might be needed in some complex scenarios, but this usually works
+
         const firestoreData: Partial<UserProfile> = {
             uid: user.uid,
             email: user.email,
-            // Use provided details or fallback to current Auth user data
-            displayName: details?.displayName !== undefined ? details.displayName : user.displayName,
-            photoURL: details?.photoURL !== undefined ? details.photoURL : user.photoURL,
+            // Use the potentially updated values from authUpdateData or the latest from user object
+            displayName: authUpdateData.displayName !== undefined ? authUpdateData.displayName : updatedUser.displayName,
+            photoURL: authUpdateData.photoURL !== undefined ? authUpdateData.photoURL : updatedUser.photoURL,
             lastSeen: serverTimestamp(), // Always update lastSeen
         };
 
@@ -93,6 +99,10 @@ export const updateUserProfileDocument = async (uid: string, data: Partial<UserP
         console.error("No UID provided to updateUserProfileDocument.");
         throw new Error("User ID is required.");
     }
+    if (!db) {
+        console.error("Firestore instance (db) is not available in updateUserProfileDocument.");
+        throw new Error("Database service not initialized.");
+    }
     if (Object.keys(data).length === 0) {
         console.warn("updateUserProfileDocument called with empty data.");
         return; // No changes to make
@@ -103,9 +113,17 @@ export const updateUserProfileDocument = async (uid: string, data: Partial<UserP
     try {
         // Use setDoc with merge: true to update only specified fields or create if doesn't exist (though typically it should)
         await setDoc(userRef, data, { merge: true });
-        console.log(`Firestore document for user ${uid} updated with:`, data);
-    } catch (error) {
+        console.log(`Firestore document for user ${uid} updated successfully with:`, data);
+    } catch (error: any) {
         console.error(`Error updating Firestore document for user ${uid}:`, error);
-        throw new Error("Failed to update profile document.");
+        // Provide more context about the error if possible
+        const errorMessage = error.message || 'Unknown Firestore error';
+        const errorCode = error.code; // Firestore error code (e.g., 'permission-denied')
+        console.error(`Firestore Error Code: ${errorCode}, Message: ${errorMessage}`);
+        // Include data being sent for debugging
+        console.error(`Data attempted to write: ${JSON.stringify(data)}`);
+        // Re-throw a more specific error or the original
+        throw new Error(`Failed to update profile document: ${errorMessage} (Code: ${errorCode})`);
     }
 };
+
