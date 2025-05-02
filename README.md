@@ -10,47 +10,46 @@ This is a Next.js chat application built with Firebase for authentication, real-
     npm install
     ```
 
-2.  **Set Up Environment Variables (CRITICAL STEP):**
+2.  **Firebase Configuration (CRITICAL STEP - NOW HARDCODED):**
 
-    *   **Create `.env.local`:** Copy the example environment file:
+    *   **IMPORTANT:** Firebase configuration values (API Key, Project ID, etc.) are now **hardcoded directly within the `src/lib/firebase.ts` file** based on a previous request.
+    *   **VERIFY `src/lib/firebase.ts`:** Open this file and ensure the `firebaseConfig` object contains your **correct and valid** Firebase project credentials.
+    *   **`apiKey` is ABSOLUTELY ESSENTIAL.** If this value is incorrect, missing, or invalid in `src/lib/firebase.ts`, the application **WILL FAIL TO START** with errors like `auth/invalid-api-key` or similar Firebase initialization errors.
+    *   **Storage Bucket Format:** Ensure the `storageBucket` value is in the correct format (usually `your-project-id.appspot.com`). An incorrect format (like ending in `.firebasestorage.app`) will cause storage operations to fail.
+    *   **SECURITY WARNING:** Hardcoding credentials directly in source code is **generally NOT recommended** for security reasons, especially in public repositories. Using environment variables (like the previous `.env.local` method) is the standard and more secure practice. This change was made based on a specific request, but consider reverting to environment variables for production or shared projects.
+
+3.  **Set Up Google GenAI API Key (If using AI features):**
+
+    *   You still need to manage your `GOOGLE_GENAI_API_KEY` securely. The recommended way is using a *server-side only* environment variable.
+    *   **Create `.env.local` (Optional, for GenAI Key ONLY):** If you haven't already for other server-side keys, you can create this file:
         ```bash
-        cp .env.local.example .env.local
+        touch .env.local
         ```
-        **Do NOT rename this file.** It must be exactly `.env.local`.
+    *   **Add the key to `.env.local`:**
+        ```
+        GOOGLE_GENAI_API_KEY=YOUR_GOOGLE_GENAI_API_KEY
+        ```
+        **Replace `YOUR_GOOGLE_GENAI_API_KEY`** with your actual key.
+        **DO NOT** prefix this key with `NEXT_PUBLIC_`.
+    *   Ensure `.env.local` is listed in your `.gitignore` file.
 
-    *   **Edit `.env.local`:** Open the newly created `.env.local` file and **REPLACE ALL placeholder values (`YOUR_...`)** with your actual Firebase project configuration and your Google Generative AI API key.
-        *   You can find your Firebase project configuration in your Firebase project settings (Project settings > General > Your apps > Web app > SDK setup and configuration > Config).
-        *   You need to enable the Generative Language API (e.g., Gemini) in your Google Cloud project associated with Firebase and generate an API key for `GOOGLE_GENAI_API_KEY`.
-
-    *   **VERY IMPORTANT - READ CAREFULLY:**
-        *   All Firebase variables (`NEXT_PUBLIC_FIREBASE_*`) **MUST** have the `NEXT_PUBLIC_` prefix to be accessible by the client-side code.
-        *   **`NEXT_PUBLIC_FIREBASE_API_KEY` IS ABSOLUTELY ESSENTIAL.**
-            *   If this variable is **not set correctly**, is **missing**, or still contains the **placeholder `YOUR_FIREBASE_API_KEY`**, the application **WILL FAIL TO START** with an error like:
-                *   `Firebase API Key (NEXT_PUBLIC_FIREBASE_API_KEY) is not defined`
-                *   `auth/invalid-api-key`
-            *   **Double-check and triple-check** that you have copied the correct `apiKey` value from your Firebase project settings into the `NEXT_PUBLIC_FIREBASE_API_KEY` field in your `.env.local` file.
-        *   The `GOOGLE_GENAI_API_KEY` **MUST NOT** have the `NEXT_PUBLIC_` prefix as it should only be used server-side.
-
-3.  **Run Development Server:**
+4.  **Run Development Server:**
     ```bash
     npm run dev
     ```
-    The application will be available at `http://localhost:9002`. If you encounter Firebase errors on startup (especially `NEXT_PUBLIC_FIREBASE_API_KEY` or `auth/invalid-api-key` errors), **STOP** and **CAREFULLY RE-CHECK YOUR `.env.local` file** for typos, missing values, or placeholder values that were not replaced.
+    The application will be available at `http://localhost:9002`. If you encounter Firebase errors on startup (especially `auth/invalid-api-key`), **STOP** and **CAREFULLY RE-CHECK THE `firebaseConfig` OBJECT IN `src/lib/firebase.ts`** for typos or incorrect values copied from your Firebase project settings.
 
 ## Deployment (CRITICAL STEP)
 
-When deploying your application to a hosting provider (like Vercel, Firebase Hosting, Netlify, etc.), you **MUST** configure the **exact same environment variables** in your deployment environment/settings as you defined in your local `.env.local` file.
+Since Firebase configuration is now hardcoded in `src/lib/firebase.ts`, you **do not** need to set the `NEXT_PUBLIC_FIREBASE_*` environment variables in your hosting provider.
 
-*   **`NEXT_PUBLIC_FIREBASE_API_KEY`** (CRITICAL - App **will not start** without this set correctly in the deployment environment)
-*   **`NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`**
-*   **`NEXT_PUBLIC_FIREBASE_PROJECT_ID`**
-*   **`NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`**
-*   **`NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`**
-*   **`NEXT_PUBLIC_FIREBASE_APP_ID`**
-*   **`NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID`** (Optional)
+However, you **MUST** still configure any **server-side only** environment variables, such as:
+
 *   **`GOOGLE_GENAI_API_KEY`** (Ensure this is set as a *server-side* or *secret* environment variable in your hosting provider, **NOT** prefixed with `NEXT_PUBLIC_`).
 
-**Refer to your hosting provider's documentation on how to set environment variables.** Failure to set these variables correctly in the deployment environment, especially the `NEXT_PUBLIC_` prefixed ones and **critically `NEXT_PUBLIC_FIREBASE_API_KEY`**, will cause Firebase initialization to fail, and the application will likely crash or fail to start, often showing the same `NEXT_PUBLIC_FIREBASE_API_KEY is not defined` or `auth/invalid-api-key` errors seen locally.
+**Refer to your hosting provider's documentation on how to set server-side environment variables.**
+
+**WARNING:** Deploying with hardcoded Firebase credentials in `src/lib/firebase.ts` exposes your keys in the built client-side JavaScript bundle. This is a significant security risk. **Strongly consider reverting to using `NEXT_PUBLIC_` prefixed environment variables for Firebase configuration before deploying.**
 
 ## Building for Production
 
@@ -58,7 +57,7 @@ When deploying your application to a hosting provider (like Vercel, Firebase Hos
 npm run build
 ```
 
-This command builds the application for production usage. Ensure environment variables are correctly set *before* the build process if your hosting provider requires build-time variables (though runtime variables set in the deployment environment are usually sufficient for Firebase client-side config). If the build fails with Firebase errors, check the environment variables available *during the build process*.
+This command builds the application for production usage. Ensure server-side environment variables like `GOOGLE_GENAI_API_KEY` are correctly set *before* the build process if your hosting provider requires build-time variables (though runtime variables set in the deployment environment are usually sufficient).
 
 ## Key Features
 
@@ -81,8 +80,8 @@ This command builds the application for production usage. Ensure environment var
 *   `src/contexts/`: React context providers (e.g., AuthContext).
 *   `src/hooks/`: Custom React hooks.
 *   `src/lib/`: Core utilities and Firebase configuration/services.
+    *   `firebase.ts`: **Contains hardcoded Firebase configuration (Verify correctness!).**
 *   `src/ai/`: Genkit AI configuration and flows (if any).
 *   `src/types/`: TypeScript type definitions.
 *   `public/`: Static assets.
-*   `.env.local.example`: Example environment file.
-*   `.env.local`: **Your local environment variables (MUST BE CREATED AND FILLED CORRECTLY).**
+*   `.env.local`: **Your local SERVER-SIDE environment variables (e.g., GOOGLE_GENAI_API_KEY).** (Firebase client keys are hardcoded in `src/lib/firebase.ts`).
