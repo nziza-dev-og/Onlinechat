@@ -60,15 +60,17 @@ export function ChatWindow() {
       if (user) {
         try {
           console.log(`Attempting to update presence for user ${user.uid}...`);
+          // Use merge: true to avoid overwriting other fields if the doc exists
           await updateUserProfileDocument(user.uid, { lastSeen: serverTimestamp() });
           console.log("Successfully updated user presence for", user.uid);
         } catch (error: any) {
           // Log the detailed error from the service function
           console.error(`Error updating user presence for ${user.uid}:`, error.message, error);
           // Optional: Show a less technical toast to the user
+          // Avoid throwing here unless it's critical to stop execution
           toast({
             title: "Presence Error",
-            description: "Could not update your online status. Firestore might be unreachable or permissions might be incorrect.",
+            description: `Could not update your online status. Details: ${error.message}`,
             variant: "destructive",
           });
         }
@@ -88,11 +90,18 @@ export function ChatWindow() {
     }
 
     setLoadingUsers(true);
-    // Query users collection, excluding the current user
+    // Query users collection, excluding the current user. This fetches all known user profiles in Firestore.
+    // Firebase client SDK cannot list *all* Auth users directly for security reasons.
+    // The 'users' collection acts as the application's user directory.
     const usersQuery = query(collection(db, 'users'), where('uid', '!=', user.uid));
 
+    console.log("Setting up listener for Firestore 'users' collection...");
     const unsubscribeUsers = onSnapshot(usersQuery, (snapshot) => {
-      const fetchedUsers: UserProfile[] = snapshot.docs.map(doc => doc.data() as UserProfile);
+      console.log(`Received ${snapshot.docs.length} user documents from Firestore.`);
+      const fetchedUsers: UserProfile[] = snapshot.docs.map(doc => {
+          // console.log(`User Doc ID: ${doc.id}, Data:`, doc.data()); // Log fetched user data
+          return doc.data() as UserProfile;
+      });
       // Sort users alphabetically by displayName (or email as fallback)
       fetchedUsers.sort((a, b) => {
           const nameA = a.displayName || a.email || '';
@@ -102,11 +111,11 @@ export function ChatWindow() {
       setUsers(fetchedUsers);
       setLoadingUsers(false);
     }, (error) => {
-        console.error("Error fetching users:", error);
+        console.error("Error fetching users from Firestore:", error);
         setLoadingUsers(false);
          toast({
-            title: "Error",
-            description: "Could not fetch user list.",
+            title: "Error Fetching Users",
+            description: `Could not load user list: ${error.message}`,
             variant: "destructive",
           });
     });
@@ -114,7 +123,7 @@ export function ChatWindow() {
 
     // Cleanup subscription on unmount or when user changes
     return () => {
-        console.log("Unsubscribing from users listener");
+        console.log("Unsubscribing from Firestore 'users' listener.");
         unsubscribeUsers();
     };
   }, [user, toast]); // Re-run when user logs in/out
@@ -231,8 +240,8 @@ export function ChatWindow() {
         isInitialMessagesLoad.current = false; // Ensure flag is reset on error
         messageListenerUnsubscribe.current = null; // Clear ref on error
         toast({
-            title: "Error",
-            description: "Could not fetch messages.",
+            title: "Error Fetching Messages",
+            description: `Could not load messages: ${error.message}`,
             variant: "destructive",
         });
     });
@@ -338,7 +347,7 @@ export function ChatWindow() {
                  {/* Empty State (No Users or No Search Results) */}
                  {!loadingUsers && filteredUsers.length === 0 && (
                     <p className="p-4 text-sm text-center text-muted-foreground">
-                        {searchTerm ? "No users found." : "No other users available."}
+                        {searchTerm ? "No users found matching search." : (users.length === 0 ? "Loading users or none available." : "No other users available.")}
                     </p>
                  )}
                  {/* User Buttons */}
