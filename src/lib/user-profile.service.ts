@@ -21,6 +21,7 @@ export interface UserProfileInput {
 /**
  * Creates or updates a user's profile document in Firestore and optionally updates Firebase Auth profile.
  * Accepts primitive user data to avoid passing non-serializable objects across server/client boundaries.
+ * Handles both new user creation and updates for existing users (e.g., updating lastSeen).
  *
  * @param userData - An object containing the user's uid, email, and optionally displayName and photoURL.
  * @returns Promise<void>
@@ -39,7 +40,7 @@ export const createOrUpdateUserProfile = async (
 
     // Check if db is initialized BEFORE using it
     if (!db) {
-        const dbErrorMsg = "Database service (db) is not initialized in createOrUpdateUserProfile. Check Firebase initialization in src/lib/firebase.ts and ensure environment variables/hardcoded config are correct.";
+        const dbErrorMsg = "Database service (db) is not initialized in createOrUpdateUserProfile. Check Firebase initialization in src/lib/firebase.ts and ensure configuration is correct.";
         console.error("🔴 createOrUpdateUserProfile Error:", dbErrorMsg);
         throw new Error(dbErrorMsg);
     }
@@ -57,27 +58,16 @@ export const createOrUpdateUserProfile = async (
             console.log(`Updating profile for existing user ${uid}`);
         }
 
-        // --- Firebase Auth Profile Update (Still requires handling on client/server differently if needed) ---
-        // NOTE: Updating Firebase Auth profile (displayName/photoURL) *directly* from a server-only function
-        // like this is generally NOT the standard pattern. Auth updates usually happen client-side after auth actions,
-        // or via Admin SDK on a backend.
-        // For simplicity in this structure, we'll attempt it, but be aware of potential limitations/errors
-        // if Auth instance isn't properly available/scoped here. A more robust solution might involve
-        // separating Firestore updates (server-side safe) from Auth updates (client-side triggered).
-
-        // Attempt to get the *current* auth user on the server (might not work reliably without Admin SDK)
-        // This part is complex in Next.js App Router server actions. Firebase Client SDK isn't designed for this.
-        // A pragmatic approach for now might be to ONLY update Firestore here and handle Auth profile updates client-side.
-        // Let's proceed with the Firestore update logic for now.
-
         // --- Firestore Document Update ---
         // Prepare data for Firestore document
         const firestoreData: Partial<UserProfile> = {
-            uid: uid,
+            uid: uid, // Ensure uid is always set/updated
             email: email,
-            displayName: displayName, // Use the displayName passed in userData
-            photoURL: photoURL,   // Use the photoURL passed in userData
-            lastSeen: serverTimestamp(), // Always update lastSeen on login/signup/update
+            // Only update displayName/photoURL if they are provided and different from existing or null
+            // This prevents overwriting existing values with null unnecessarily on simple logins
+            ...(displayName !== undefined && { displayName: displayName }),
+            ...(photoURL !== undefined && { photoURL: photoURL }),
+            lastSeen: serverTimestamp(), // Always update lastSeen on any interaction
         };
 
         // Add createdAt only for new users
@@ -85,19 +75,22 @@ export const createOrUpdateUserProfile = async (
             firestoreData.createdAt = serverTimestamp();
         }
 
-        // Create or update Firestore document using setDoc with merge: true
+        // Use setDoc with merge: true to create or update the document.
+        // This handles both new user creation and updating existing fields like lastSeen.
         await setDoc(userRef, firestoreData, { merge: true });
-        console.log("Firestore user profile updated/created for user:", uid, firestoreData);
+        console.log(`Firestore user profile ${isNewUser ? 'created' : 'updated'} for user:`, uid, firestoreData);
+
+        // NOTE: Firebase Auth profile updates (displayName/photoURL) are typically handled client-side
+        // immediately after the auth action (signUp/signInWithPopup/updateProfile).
+        // This service focuses on the Firestore document.
 
     } catch (error: any) {
         console.error(`Error in createOrUpdateUserProfile for user ${uid}:`, error);
-        // Provide more context about the error if possible
         const errorMessage = error.message || 'Unknown error in createOrUpdateUserProfile';
         const errorCode = error.code;
         console.error(`Error Code: ${errorCode}, Message: ${errorMessage}`);
-        // Re-throw the error to be handled by the caller (e.g., show a toast)
-        // Include the original error message for better debugging
-        throw new Error(`Failed to update user profile: ${errorMessage} (Code: ${errorCode})`);
+        // Re-throw the error to be handled by the caller
+        throw new Error(`Failed to update user profile in Firestore: ${errorMessage} (Code: ${errorCode})`);
     }
 };
 
@@ -105,9 +98,10 @@ export const createOrUpdateUserProfile = async (
 /**
  * Updates specific fields in a user's profile document in Firestore.
  * Does NOT update Firebase Auth profile. Accepts Date object for time fields.
+ * Primarily used for updating `lastSeen` or other non-Auth related profile data.
  *
  * @param uid - The user's unique ID.
- * @param data - An object containing the fields to update (e.g., { displayName: 'New Name', lastSeen: new Date() }). Keys with undefined values are ignored.
+ * @param data - An object containing the fields to update (e.g., { lastSeen: new Date() }). Keys with undefined values are ignored.
  * @returns Promise<void>
  * @throws Error if UID is missing, db is not initialized, or update fails.
  */
@@ -127,7 +121,8 @@ export const updateUserProfileDocument = async (uid: string, data: Partial<UserP
      // Filter out undefined values, as Firestore updateDoc throws if you provide them.
      const updateData = Object.entries(data).reduce((acc, [key, value]) => {
         if (value !== undefined) {
-            acc[key as keyof Partial<UserProfile>] = value;
+            // Ensure Date objects are converted to Timestamps if necessary, though serverTimestamp() handles this for lastSeen
+            acc[key as keyof Partial<UserProfile>] = value instanceof Date ? Timestamp.fromDate(value) : value;
         }
         return acc;
      }, {} as Partial<UserProfile>);
@@ -140,21 +135,16 @@ export const updateUserProfileDocument = async (uid: string, data: Partial<UserP
 
     const userRef = doc(db, 'users', uid);
 
-    // Use updateDoc for targeted field updates. This requires the document to exist.
-    // If you need `setDoc` with `merge: true` (upsert behavior), you'd use that instead.
-    // Since this is typically called *after* profile creation or for presence updates,
-    // updateDoc is usually appropriate.
     try {
+         // Use updateDoc for targeted field updates. Assumes the document exists.
          await updateDoc(userRef, updateData);
-         console.log(`Firestore document for user ${uid} updated (using updateDoc) with:`, updateData);
+         // console.log(`Firestore document for user ${uid} updated (using updateDoc) with:`, updateData); // Reduce log noise
 
     } catch (error: any) {
         console.error(`Error updating Firestore document for user ${uid}:`, error);
-        // Provide more context about the error if possible
         const errorMessage = error.message || 'Unknown Firestore error';
-        const errorCode = error.code; // Firestore error code (e.g., 'permission-denied')
+        const errorCode = error.code;
         console.error(`Firestore Error Code: ${errorCode}, Message: ${errorMessage}`);
-        // Include data being sent for debugging
         console.error(`Data attempted to write: ${JSON.stringify(updateData)}`);
         // Re-throw a more specific error that includes the original Firestore message and code
         throw new Error(`Failed to update profile document: ${errorMessage} (Code: ${errorCode})`);

@@ -57,61 +57,55 @@ export function ChatWindow() {
   // Update user presence (lastSeen) when the component mounts and user is available
   useEffect(() => {
     const updateUserPresence = async () => {
-      if (user?.uid) { // Check for user and user.uid specifically
-        try {
-          console.log(`Attempting to update presence for user ${user.uid}...`);
-          // Pass only the necessary fields to the service function
-          await updateUserProfileDocument(user.uid, { lastSeen: new Date() });
-          console.log("Successfully updated user presence for", user.uid);
-        } catch (error: any) {
-          // Log the detailed error message from the service function
-          // Check if the error message indicates a server component issue
-          if (error.message && error.message.includes("Cannot access _delegate on the server")) {
-              console.warn(`Presence update skipped for ${user.uid}: Likely running in a server context where direct client SDK access is restricted.`);
-              // Optionally inform the user, or just log as a warning
-              // toast({
-              //   title: "Presence Update Skipped",
-              //   description: "Could not update online status due to server context.",
-              //   variant: "default",
-              // });
-          } else {
-              // Log other errors normally
-              console.error(`Error updating user presence for ${user.uid}:`, error.message, error);
-              toast({
-                title: "Presence Error",
-                description: `Could not update your online status. Details: ${error.message}`,
-                variant: "destructive",
-              });
-          }
+        if (user?.uid) {
+            try {
+                console.log(`Attempting to update presence for user ${user.uid}...`);
+                await updateUserProfileDocument(user.uid, { lastSeen: new Date() });
+                console.log("Successfully updated user presence for", user.uid);
+            } catch (error: any) {
+                // Log the detailed error message from the service function
+                 console.error(`Error updating user presence for ${user.uid}:`, error.message, error);
+                // Check if the error message indicates a server component issue or db not ready
+                if (error.message && (error.message.includes("Cannot access _delegate on the server") || error.message.includes("Database service (db) is not initialized"))) {
+                    console.warn(`Presence update skipped for ${user.uid}: DB service potentially not ready or running in incompatible context.`);
+                    // Don't show toast for this specific, potentially expected issue during init/SSR
+                } else {
+                    // Show toast for other unexpected errors
+                    toast({
+                        title: "Presence Error",
+                        description: `Could not update your online status. Details: ${error.message}`,
+                        variant: "destructive",
+                    });
+                }
+            }
+        } else {
+            console.log("User or user UID is not available, skipping presence update.");
         }
-      } else {
-          console.log("User or user UID is not available, skipping presence update.");
-      }
     };
-    updateUserPresence();
-    // No cleanup needed here as it's a one-time update on mount/user change
+    // Delay the initial presence update slightly to allow Firebase services to fully initialize
+    const timeoutId = setTimeout(updateUserPresence, 1500);
+
+    // Cleanup timeout if component unmounts before execution
+    return () => clearTimeout(timeoutId);
   }, [user, toast]); // Depend on user and toast
 
 
   // Fetch users from Firestore 'users' collection
   useEffect(() => {
-    if (!user) {
-        setUsers([]); // Clear user list if logged out
-        setLoadingUsers(false); // Stop loading if no user
+    if (!user || !db) { // Also check if db is initialized
+        setUsers([]); // Clear user list if logged out or db not ready
+        setLoadingUsers(false); // Stop loading
         return;
     }
 
     setLoadingUsers(true);
     // Query users collection, excluding the current user. This fetches all known user profiles in Firestore.
-    // Firebase client SDK cannot list *all* Auth users directly for security reasons.
-    // The 'users' collection acts as the application's user directory.
     const usersQuery = query(collection(db, 'users'), where('uid', '!=', user.uid));
 
     console.log("Setting up listener for Firestore 'users' collection...");
     const unsubscribeUsers = onSnapshot(usersQuery, (snapshot) => {
       console.log(`Received ${snapshot.docs.length} user documents from Firestore.`);
       const fetchedUsers: UserProfile[] = snapshot.docs.map(doc => {
-          // console.log(`User Doc ID: ${doc.id}, Data:`, doc.data()); // Log fetched user data
           return doc.data() as UserProfile;
       });
       // Sort users alphabetically by displayName (or email as fallback)
@@ -138,7 +132,7 @@ export function ChatWindow() {
         console.log("Unsubscribing from Firestore 'users' listener.");
         unsubscribeUsers();
     };
-  }, [user, toast]); // Re-run when user logs in/out
+  }, [user, toast]); // Re-run when user logs in/out or db becomes available
 
 
   // Fetch messages when a chat partner is selected
@@ -150,12 +144,12 @@ export function ChatWindow() {
         messageListenerUnsubscribe.current = null; // Reset the ref
       }
 
-    if (!user || !selectedChatPartner) {
-        setMessages([]); // Clear messages if no chat is selected
+    if (!user || !selectedChatPartner || !db) { // Also check for db
+        setMessages([]); // Clear messages if no chat is selected or db not ready
         setLoadingMessages(false);
         setChatId(null);
         isInitialMessagesLoad.current = true; // Reset initial load flag
-        console.log("No chat partner selected, clearing messages.");
+        console.log("No chat partner selected or DB not ready, clearing messages.");
         return; // Exit early
     }
 
@@ -361,7 +355,7 @@ export function ChatWindow() {
                  {/* Empty State (No Users or No Search Results) */}
                  {!loadingUsers && filteredUsers.length === 0 && (
                     <p className="p-4 text-sm text-center text-muted-foreground">
-                        {searchTerm ? "No users found matching search." : (users.length === 0 ? "Loading users or none available." : "No other users available.")}
+                        {searchTerm ? "No users found matching search." : (users.length === 0 ? "No other users available." : "No other users available.")}
                     </p>
                  )}
                  {/* User Buttons */}
@@ -470,3 +464,4 @@ export function ChatWindow() {
     </div>
   );
 }
+
