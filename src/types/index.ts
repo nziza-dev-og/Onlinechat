@@ -9,7 +9,7 @@ export interface User extends FirebaseUser {
 export interface Message {
   id: string;
   text: string;
-  timestamp: Timestamp;
+  timestamp: Timestamp; // Firestore typically returns Timestamps
   uid: string;
   displayName: string | null;
   photoURL: string | null;
@@ -21,6 +21,7 @@ export interface UserProfile {
     displayName: string | null;
     email: string | null;
     photoURL: string | null;
-    lastSeen?: Timestamp; // Optional: Track user presence
-    createdAt?: Timestamp; // Optional: Track when the profile was created
+    // Allow Date for input, Firestore converts to Timestamp. Reading will likely be Timestamp.
+    lastSeen?: Timestamp | Date;
+    createdAt?: Timestamp | Date;
 }

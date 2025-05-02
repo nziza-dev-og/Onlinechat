@@ -60,14 +60,13 @@ export function ChatWindow() {
       if (user) {
         try {
           console.log(`Attempting to update presence for user ${user.uid}...`);
-          // Use merge: true to avoid overwriting other fields if the doc exists
-          await updateUserProfileDocument(user.uid, { lastSeen: serverTimestamp() });
+          // Pass a plain Date object which Firestore converts to Timestamp
+          await updateUserProfileDocument(user.uid, { lastSeen: new Date() });
           console.log("Successfully updated user presence for", user.uid);
         } catch (error: any) {
-          // Log the detailed error from the service function
-          console.error(`Error updating user presence for ${user.uid}:`, error.message, error);
+          // Log the detailed error message from the service function
+          console.error(`Error updating user presence for ${user.uid}:`, error.message);
           // Optional: Show a less technical toast to the user
-          // Avoid throwing here unless it's critical to stop execution
           toast({
             title: "Presence Error",
             description: `Could not update your online status. Details: ${error.message}`,
@@ -168,13 +167,15 @@ export function ChatWindow() {
           if (change.type === "added") {
               newMessagesReceived = true;
               const data = change.doc.data();
-              const message = { ...data, id: change.doc.id } as Message;
-
-              // Basic validation for timestamp before processing
-              if (!message.timestamp || typeof message.timestamp.toDate !== 'function') {
-                  console.warn("Message missing or invalid timestamp, assigning current time:", change.doc.id, data);
-                   message.timestamp = Timestamp.now(); // Assign server timestamp if missing/invalid
-              }
+              // Ensure timestamp is correctly handled (Firestore might return Timestamp or null)
+              const message: Message = {
+                id: change.doc.id,
+                text: data.text,
+                timestamp: data.timestamp instanceof Timestamp ? data.timestamp : Timestamp.now(), // Handle potential null/undefined or incorrect types
+                uid: data.uid,
+                displayName: data.displayName ?? null,
+                photoURL: data.photoURL ?? null,
+              };
 
                // --- Notification Logic ---
               // Check if message is new *after* initial load and *not* from current user
