@@ -1,138 +1,138 @@
 
-import { initializeApp, getApps, getApp, FirebaseError } from "firebase/app";
-import { getAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
-import { getStorage } from "firebase/storage"; // Import getStorage
+import { initializeApp, getApps, getApp, FirebaseError, type FirebaseOptions } from "firebase/app";
+import { getAuth, type Auth } from "firebase/auth";
+import { getFirestore, type Firestore } from "firebase/firestore";
+import { getStorage, type FirebaseStorage } from "firebase/storage";
 
-// --- CRITICAL CONFIGURATION ---
-// Firebase configuration is now hardcoded based on user request.
-// In a real application, using environment variables (.env.local) is strongly recommended
-// for security and flexibility. See previous versions or README for .env setup.
-//
-// If you encounter errors like "auth/invalid-api-key", double-check these values
-// against your Firebase project settings.
-// ---------------------------------
+// --- Firebase Configuration ---
+// IMPORTANT: Load configuration from environment variables.
+// NEXT_PUBLIC_ prefixed variables are exposed to the browser.
+// Ensure these are set in your .env.local file for local development
+// and in your hosting provider's environment variables for deployment.
 
-// Firebase configuration using hardcoded values (as requested)
-const firebaseConfig = {
-    apiKey: "AIzaSyDR5ESnHuv6bsin9jFrEm3gTbMdySVpGZE",
-    authDomain: "chating-class.firebaseapp.com",
-    projectId: "chating-class",
-    storageBucket: "chating-class.appspot.com", // Corrected storageBucket format
-    messagingSenderId: "66220288730",
-    appId: "1:66220288730:web:abc61ad5a32a5ac2add3e3",
-    measurementId: "G-5RCN429FJK" // Optional
+const firebaseConfig: FirebaseOptions = {
+    // REQUIRED: Your Firebase project's API key. Critical for initialization.
+    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+    // Your Firebase project's authentication domain (e.g., 'your-project-id.firebaseapp.com').
+    authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+    // Your Firebase project ID.
+    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+    // Your Firebase storage bucket (e.g., 'your-project-id.appspot.com').
+    // Ensure it ends with '.appspot.com'.
+    storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+    // Your Firebase project's messaging sender ID.
+    messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+    // Your Firebase project's app ID.
+    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+    // Optional: Your Firebase project's measurement ID (for Analytics).
+    measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
 };
 
-
-// --- Validation for Hardcoded Values ---
-// This section checks if the necessary hardcoded values are present.
-// If a critical value is missing or seems incorrect, it throws an error.
+// --- Validation for Environment Variables ---
 let firebaseInitializationError: string | null = null;
 
+// Validate REQUIRED apiKey
 if (!firebaseConfig.apiKey) {
-    // Critical: API Key is required.
-    firebaseInitializationError = "Firebase API Key is missing in the hardcoded firebaseConfig object in src/lib/firebase.ts. Please ensure it has a valid value.";
+    firebaseInitializationError = "Firebase API Key (NEXT_PUBLIC_FIREBASE_API_KEY) is not defined. Please check your environment variables (e.g., .env.local file for local development, or your hosting provider's settings for deployment). Make sure the variable name is exactly 'NEXT_PUBLIC_FIREBASE_API_KEY' and the value is your actual Firebase API key.";
     console.error("🔴 FATAL Firebase Init Error:", firebaseInitializationError);
-} else if (firebaseConfig.apiKey === 'YOUR_FIREBASE_API_KEY' || firebaseConfig.apiKey.includes('AIzaSy') === false) {
-    // Check if placeholder or potentially invalid key format
-     firebaseInitializationError = `Firebase API Key in src/lib/firebase.ts ("${firebaseConfig.apiKey.substring(0, 10)}...") seems invalid or is a placeholder. Please replace it with your actual Firebase API key.`;
+    // Throw immediately if the critical API key is missing.
+    // This prevents the app from trying to run in a broken state.
+    // NOTE: This check runs during module initialization (server/client).
+    throw new Error(firebaseInitializationError);
+} else if (firebaseConfig.apiKey === 'YOUR_FIREBASE_API_KEY') {
+    // Check if placeholder value is still present
+     firebaseInitializationError = "Firebase API Key (NEXT_PUBLIC_FIREBASE_API_KEY) is still set to the placeholder value 'YOUR_FIREBASE_API_KEY'. Please replace it with your actual Firebase API key in your environment variables (.env.local or deployment settings).";
      console.error("🔴 FATAL Firebase Init Error:", firebaseInitializationError);
-}
-
-// Add checks for other essential config values
-if (!firebaseConfig.projectId && !firebaseInitializationError) {
-    firebaseInitializationError = "Firebase Project ID is missing in the hardcoded firebaseConfig object in src/lib/firebase.ts.";
-    console.error("🔴 Firebase Init Warning:", firebaseInitializationError); // Log as warning if not immediately fatal
-}
-if (!firebaseConfig.authDomain && !firebaseInitializationError) {
-    firebaseInitializationError = "Firebase Auth Domain is missing in the hardcoded firebaseConfig object in src/lib/firebase.ts.";
-    console.error("🔴 Firebase Init Warning:", firebaseInitializationError); // Log as warning if not immediately fatal
-}
-if (!firebaseConfig.storageBucket && !firebaseInitializationError) {
-    firebaseInitializationError = "Firebase Storage Bucket is missing in the hardcoded firebaseConfig object in src/lib/firebase.ts.";
-     console.error("🔴 Firebase Init Warning:", firebaseInitializationError);
-}
-// Validate storageBucket format - common mistake
-if (firebaseConfig.storageBucket && !firebaseConfig.storageBucket.endsWith('.appspot.com') && !firebaseInitializationError) {
-    firebaseInitializationError = `Invalid Firebase Storage Bucket format ("${firebaseConfig.storageBucket}"). It should typically end with '.appspot.com'. Please check the value in src/lib/firebase.ts.`;
-    console.error("🔴 Firebase Init Warning:", firebaseInitializationError);
-}
-if (!firebaseConfig.messagingSenderId && !firebaseInitializationError) {
-    firebaseInitializationError = "Firebase Messaging Sender ID is missing in the hardcoded firebaseConfig object in src/lib/firebase.ts.";
-     console.error("🔴 Firebase Init Warning:", firebaseInitializationError);
-}
-if (!firebaseConfig.appId && !firebaseInitializationError) {
-    firebaseInitializationError = "Firebase App ID is missing in the hardcoded firebaseConfig object in src/lib/firebase.ts.";
-     console.error("🔴 Firebase Init Warning:", firebaseInitializationError);
+     throw new Error(firebaseInitializationError);
+} else if (!firebaseConfig.apiKey.startsWith('AIzaSy')) {
+    // Basic sanity check for key format (Firebase web API keys typically start with AIzaSy)
+    console.warn(`🟡 Firebase Init Warning: The provided API Key (NEXT_PUBLIC_FIREBASE_API_KEY: "${firebaseConfig.apiKey.substring(0, 6)}...") doesn't start with the typical 'AIzaSy'. Ensure it's a valid Firebase Web API Key.`);
 }
 
 
-// Initialize Firebase Services only if the CRITICAL API key seems valid.
+// Validate other potentially important config values (log warnings, don't throw)
+if (!firebaseConfig.projectId) {
+    console.warn("🟡 Firebase Init Warning: Project ID (NEXT_PUBLIC_FIREBASE_PROJECT_ID) is missing. Some Firebase services might require it.");
+}
+if (!firebaseConfig.authDomain) {
+    console.warn("🟡 Firebase Init Warning: Auth Domain (NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN) is missing. Authentication might not work correctly.");
+}
+if (!firebaseConfig.storageBucket) {
+    console.warn("🟡 Firebase Init Warning: Storage Bucket (NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET) is missing. Firebase Storage operations will fail.");
+} else if (!firebaseConfig.storageBucket.endsWith('.appspot.com')) {
+    // Validate storageBucket format - common mistake (should be .appspot.com, not .firebasestorage.app)
+    console.warn(`🟡 Firebase Init Warning: Invalid Storage Bucket format ("${firebaseConfig.storageBucket}"). It should typically end with '.appspot.com', not '.firebasestorage.app'. Please check NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET.`);
+}
+if (!firebaseConfig.messagingSenderId) {
+    console.warn("🟡 Firebase Init Warning: Messaging Sender ID (NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID) is missing. FCM/Push Notifications might not work.");
+}
+if (!firebaseConfig.appId) {
+    console.warn("🟡 Firebase Init Warning: App ID (NEXT_PUBLIC_FIREBASE_APP_ID) is missing.");
+}
+
+
+// --- Initialize Firebase App and Services ---
 let app: ReturnType<typeof initializeApp> | undefined;
-let auth: ReturnType<typeof getAuth> | undefined;
-let db: ReturnType<typeof getFirestore> | undefined;
-let storage: ReturnType<typeof getStorage> | undefined;
+let auth: Auth | undefined;
+let db: Firestore | undefined;
+let storage: FirebaseStorage | undefined;
 
-// Proceed only if the critical API key error is NOT present.
-if (!firebaseInitializationError || !firebaseInitializationError.includes('API Key')) {
+try {
+    // Initialize Firebase App.
+    // This guards against re-initialization in hot-reloading environments.
+    app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+
+    // Get Firebase services. Wrap in try/catch in case a specific service fails.
     try {
-        // Initialize app only if it hasn't been initialized yet
-        app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
-
-        // Get services - Wrap in individual try/catch if specific services might fail independently
         auth = getAuth(app);
-        db = getFirestore(app);
-        storage = getStorage(app); // Initialize Storage
-
-        console.log("Firebase core services initialized (Auth, Firestore, Storage).");
-
-    } catch (error: any) {
-        console.error("🔴 Firebase core initialization or service retrieval failed unexpectedly:", error);
-        // Create a more informative error message based on the runtime error
-        let errorMessage = `Firebase core initialization or service retrieval failed unexpectedly: ${error.message}.`;
-        if (error instanceof FirebaseError && (error.code === 'auth/invalid-api-key' || (error.message && error.message.includes('API key not valid')))) {
-            // Enhance message specifically for invalid API key runtime errors
-            errorMessage = `Firebase initialization failed at runtime: ${error.message}. The hardcoded API Key in src/lib/firebase.ts might be incorrect or invalid for your project. Verify the key in your Firebase project settings.`;
-        } else {
-            errorMessage += ' Check Firebase console for project status and ensure ALL required Firebase configuration values in src/lib/firebase.ts are correct.';
-        }
-        firebaseInitializationError = errorMessage; // Store the runtime error
-        console.error("🔴 FATAL Firebase Runtime Error:", firebaseInitializationError);
-        // Clear service variables on error
-        app = undefined;
-        auth = undefined;
-        db = undefined;
-        storage = undefined;
+    } catch (e) {
+        console.error("🔴 Error initializing Firebase Auth:", e);
     }
-} else {
-     // If critical config was invalid initially, ensure services are undefined
-     console.warn("Firebase initialization skipped due to missing or invalid API Key in src/lib/firebase.ts.");
-     app = undefined;
-     auth = undefined;
-     db = undefined;
-     storage = undefined;
-}
+    try {
+        db = getFirestore(app);
+    } catch (e) {
+        console.error("🔴 Error initializing Firestore:", e);
+    }
+    try {
+        storage = getStorage(app);
+    } catch (e) {
+        console.error("🔴 Error initializing Firebase Storage:", e);
+    }
 
-// Throw error during module evaluation (server-side build/start or client-side load) if critical config is missing or invalid.
-// This ensures the app fails fast if Firebase cannot be configured correctly.
-if (firebaseInitializationError && firebaseInitializationError.includes('API Key')) {
-    // This error is intentionally thrown. You MUST fix the hardcoded configuration in src/lib/firebase.ts.
-    // Consult your Firebase project settings for the correct values.
+    console.log("Firebase App initialized successfully.");
+
+} catch (error: any) {
+    // Catch errors during initializeApp() itself
+    console.error("🔴 Firebase core initialization failed:", error);
+    let errorMessage = `Firebase core initialization failed: ${error.message}. Ensure Firebase config in environment variables is correct.`;
+    if (error instanceof FirebaseError && (error.code === 'auth/invalid-api-key' || (error.message && error.message.includes('API key not valid')))) {
+        errorMessage = `Firebase initialization failed at runtime due to an invalid API key: ${error.message}. Verify NEXT_PUBLIC_FIREBASE_API_KEY.`;
+    }
+    firebaseInitializationError = errorMessage; // Store the runtime error
+    console.error("🔴 FATAL Firebase Runtime Error:", firebaseInitializationError);
+
+    // Ensure services are undefined if initialization failed
+    app = undefined;
+    auth = undefined;
+    db = undefined;
+    storage = undefined;
+
+    // Re-throw the error to prevent the app from continuing in a broken state.
+    // This will be caught by Next.js error boundaries.
     throw new Error(firebaseInitializationError);
 }
 
-// Final safety check: Ensure essential services are defined AFTER the main error check.
-// This catches unexpected failures during getAuth/getFirestore/getStorage calls IF the initial API key check passed.
-if (!app || !auth || !db || !storage) {
-     // Only throw if the initial error wasn't the critical API key issue (which already threw)
-     if (!firebaseInitializationError || !firebaseInitializationError.includes('API Key')) {
-        const serviceError = "Critical Firebase services (App, Auth, Firestore, or Storage) are unexpectedly undefined after initialization attempt, despite API key seeming valid initially. This indicates an unexpected issue during service retrieval (getAuth, getFirestore, getStorage). Check console for specific errors. Ensure Firebase services (Authentication, Firestore, Storage) are enabled in your Firebase project and ALL required hardcoded configuration values in src/lib/firebase.ts are correct.";
-        console.error("🔴 Firebase Service Retrieval Error:", serviceError);
-        // Throwing here ensures the app doesn't proceed in a broken state.
-        throw new Error(serviceError);
-     }
+// --- Service Availability Check ---
+// Optional: Check if essential services are available after potential individual failures.
+if (!auth) {
+    console.warn("🟡 Firebase Warning: Auth service is unavailable. Authentication features will not work.");
+}
+if (!db) {
+    console.warn("🟡 Firebase Warning: Firestore service is unavailable. Database operations will fail.");
+}
+if (!storage) {
+    console.warn("🟡 Firebase Warning: Storage service is unavailable. File uploads/downloads will fail.");
 }
 
-
-export { app, auth, db, storage }; // Export storage
+// Export the initialized services (they might be undefined if initialization failed)
+export { app, auth, db, storage };

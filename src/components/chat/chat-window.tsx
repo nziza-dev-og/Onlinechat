@@ -1,9 +1,9 @@
 
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { db } from '@/lib/firebase';
-import { collection, query, orderBy, onSnapshot, limit, where, addDoc, serverTimestamp, doc, getDoc, setDoc, Timestamp } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, limit, where, addDoc, serverTimestamp, doc, getDoc, setDoc, Timestamp, type Unsubscribe, type FirestoreError } from 'firebase/firestore';
 import type { Message, UserProfile } from '@/types'; // Import UserProfile
 import { ChatMessage } from './chat-message';
 import { ChatInput } from './chat-input';
@@ -51,54 +51,56 @@ export function ChatWindow() {
   const viewportRef = useRef<HTMLDivElement>(null);
   const { user, signOut } = useAuth();
   const isInitialMessagesLoad = useRef(true); // Ref to track initial message load for notifications
-  const messageListenerUnsubscribe = useRef<(() => void) | null>(null); // Ref for unsubscribe function
+  const messageListenerUnsubscribe = useRef<Unsubscribe | null>(null); // Ref for unsubscribe function
+  const userListenerUnsubscribe = useRef<Unsubscribe | null>(null); // Ref for user listener unsubscribe
+
+   // Auto-scrolling effect: Scrolls the viewport to the bottom
+   const scrollToBottom = useCallback(() => {
+    if (viewportRef.current) {
+      // Using scrollTop ensures we scroll the container itself
+      viewportRef.current.scrollTop = viewportRef.current.scrollHeight;
+      // console.log("Scrolled to bottom"); // Debug log
+    }
+  }, []);
 
 
-  // Update user presence (lastSeen) when the component mounts and user is available
+  // Update user presence (lastSeen)
   useEffect(() => {
     const updateUserPresence = async () => {
-      if (user?.uid) {
-        try {
-          console.log(`Attempting to update presence for user ${user.uid}...`);
-          // Ensure db is available before calling the service
-          if (!db) {
-             console.warn(`Presence update skipped for ${user.uid}: DB service not ready.`);
-             return;
-          }
-          await updateUserProfileDocument(user.uid, { lastSeen: new Date() });
-          console.log("Successfully updated user presence for", user.uid);
-        } catch (error: any) {
-          // Log the detailed error from the service function
-          console.error(`Error updating user presence for ${user.uid}:`, error.message, error);
-          // Check if the error message indicates a server component issue or db not ready
-          if (error.message && (error.message.includes("Cannot access _delegate on the server") || error.message.includes("Database service (db) is not initialized"))) {
-              console.warn(`Presence update skipped for ${user.uid}: DB service potentially not ready or running in incompatible context.`);
-              // Don't show toast for this specific, potentially expected issue during init/SSR
-          } else if (error.message && error.message.includes("Failed to update profile document")) {
-              // Don't show toast for the expected error when db is not ready client-side initially
-              console.warn(`Presence update likely skipped for ${user.uid}: Underlying Firestore error (e.g., DB not ready).`);
-          }
-           else {
-              // Show toast for other unexpected errors
-              toast({
-                  title: "Presence Error",
-                  description: `Could not update your online status. Details: ${error.message}`,
-                  variant: "destructive",
-              });
-          }
-        }
-      } else {
-        console.log("User or user UID is not available, skipping presence update.");
+      if (!user?.uid) {
+        // console.log("Presence update skipped: No authenticated user.");
+        return;
+      }
+       // Check if db is available before calling the service
+       if (!db) {
+         console.warn(`Presence update skipped for ${user.uid}: DB service not ready.`);
+         return;
+      }
+
+      try {
+        // console.log(`Attempting to update presence for user ${user.uid}...`);
+        await updateUserProfileDocument(user.uid, { lastSeen: serverTimestamp() }); // Use serverTimestamp for consistency
+        // console.log("Successfully updated user presence for", user.uid);
+      } catch (error: any) {
+         console.error(`Error updating user presence for ${user.uid}:`, error.message, error);
+         // Avoid showing toast for expected DB init issues, but show for others
+         if (error.message && !error.message.includes("Database service (db) is not initialized")) {
+            toast({
+                title: "Presence Error",
+                description: `Could not update your online status. Details: ${error.message}`,
+                variant: "destructive",
+                duration: 3000, // Shorter duration for less critical errors
+            });
+         }
       }
     };
 
-    // Delay the initial presence update slightly to allow Firebase services to fully initialize client-side
+    // Delay the initial presence update slightly
     const timeoutId = setTimeout(updateUserPresence, 1500);
-
-    // Set up interval for periodic presence updates (e.g., every 5 minutes)
+    // Set up interval for periodic updates
     const intervalId = setInterval(updateUserPresence, 5 * 60 * 1000); // 5 minutes
 
-    // Cleanup timeout and interval on unmount
+    // Cleanup on unmount
     return () => {
       clearTimeout(timeoutId);
       clearInterval(intervalId);
@@ -108,91 +110,105 @@ export function ChatWindow() {
 
   // Fetch users from Firestore 'users' collection
   useEffect(() => {
-    console.log("User fetching effect triggered.");
+    // Cleanup previous listener
+    if (userListenerUnsubscribe.current) {
+      console.log("Unsubscribing from Firestore 'users' listener.");
+      userListenerUnsubscribe.current();
+      userListenerUnsubscribe.current = null;
+    }
+
     if (!user) {
-        console.log("User fetching skipped: No authenticated user.");
-        setUsers([]);
-        setLoadingUsers(false);
-        return;
+      console.log("User fetching skipped: No authenticated user.");
+      setUsers([]);
+      setLoadingUsers(false);
+      return;
     }
     if (!db) {
-        console.log("User fetching skipped: Firestore DB service not ready yet.");
-        setUsers([]); // Clear users if db is not ready
-        setLoadingUsers(true); // Indicate loading until db is ready
-        // Optionally, add a retry mechanism or wait for db initialization elsewhere
-        return;
+      console.log("User fetching skipped: Firestore DB service not ready yet.");
+      setUsers([]);
+      setLoadingUsers(true); // Keep loading until db is ready
+      return;
     }
 
     setLoadingUsers(true);
-    console.log(`Setting up Firestore listener for 'users' collection, excluding UID: ${user.uid}`);
+    console.log(`Setting up Firestore listener for 'users' collection, excluding self: ${user.uid}`);
     const usersQuery = query(collection(db, 'users'), where('uid', '!=', user.uid));
 
-    const unsubscribeUsers = onSnapshot(usersQuery, (snapshot) => {
+    // Store the new unsubscribe function
+    userListenerUnsubscribe.current = onSnapshot(usersQuery, (snapshot) => {
       console.log(`Firestore 'users' snapshot received. Docs count: ${snapshot.docs.length}`);
       if (snapshot.empty) {
-          console.log("No user documents found (excluding self).");
+        console.log("No other user documents found.");
       }
-      const fetchedUsers: UserProfile[] = snapshot.docs.map(doc => {
-          const data = doc.data();
-           // Basic validation/logging for each document's structure
-           if (!data.uid || typeof data.uid !== 'string') {
-                console.warn("Fetched user document missing or invalid UID:", doc.id, data);
-           }
-           // Add more checks if needed (e.g., for displayName, email)
-          return {
-              uid: data.uid ?? doc.id, // Fallback UID to doc ID if missing, though unlikely
-              displayName: data.displayName ?? null,
-              email: data.email ?? null,
-              photoURL: data.photoURL ?? null,
-              lastSeen: data.lastSeen ?? undefined, // Keep as undefined if missing
-              createdAt: data.createdAt ?? undefined,
-          } as UserProfile; // Assert type after potential fallbacks/checks
-      }).filter(u => u.uid); // Ensure users without a valid UID are filtered out
 
-      // Sort users alphabetically by displayName (or email as fallback)
+      const fetchedUsers: UserProfile[] = snapshot.docs
+        .map(doc => {
+          const data = doc.data();
+          // Validate essential fields
+          if (!data.uid || typeof data.uid !== 'string') {
+            console.warn("Fetched user document missing or invalid UID:", doc.id, data);
+            return null; // Skip this document
+          }
+          return {
+            uid: data.uid,
+            displayName: data.displayName ?? null,
+            email: data.email ?? null,
+            photoURL: data.photoURL ?? null,
+            lastSeen: data.lastSeen instanceof Timestamp ? data.lastSeen : undefined, // Ensure it's a Timestamp or undefined
+            createdAt: data.createdAt instanceof Timestamp ? data.createdAt : undefined,
+          };
+        })
+        .filter((u): u is UserProfile => u !== null); // Type guard to filter out nulls
+
+      // Sort users alphabetically by displayName (case-insensitive, fallback to email)
       fetchedUsers.sort((a, b) => {
-          const nameA = a.displayName || a.email || '';
-          const nameB = b.displayName || b.email || '';
-          return nameA.localeCompare(nameB);
+        const nameA = (a.displayName || a.email || '').toLowerCase();
+        const nameB = (b.displayName || b.email || '').toLowerCase();
+        if (nameA < nameB) return -1;
+        if (nameA > nameB) return 1;
+        return 0;
       });
 
-      console.log(`Mapped and sorted ${fetchedUsers.length} users.`, fetchedUsers.map(u => u.uid)); // Log UIDs
+      // console.log(`Mapped and sorted ${fetchedUsers.length} users. UIDs:`, fetchedUsers.map(u => u.uid));
       setUsers(fetchedUsers);
       setLoadingUsers(false);
-    }, (error) => {
-        console.error("Error fetching users from Firestore:", error.code, error.message, error);
-        setLoadingUsers(false);
-         toast({
-            title: "Error Fetching Users",
-            description: `Could not load user list: ${error.message}`,
-            variant: "destructive",
-          });
+    }, (error: FirestoreError) => { // Use FirestoreError type
+      console.error("🔴 Error fetching users from Firestore:", error.code, error.message, error);
+      setLoadingUsers(false);
+      userListenerUnsubscribe.current = null; // Clear ref on error
+      toast({
+        title: "Error Fetching Users",
+        description: `Could not load user list: ${error.message} (${error.code})`,
+        variant: "destructive",
+      });
     });
-
 
     // Cleanup subscription on unmount or when user changes
     return () => {
-        console.log("Unsubscribing from Firestore 'users' listener.");
-        unsubscribeUsers();
+      if (userListenerUnsubscribe.current) {
+        console.log("Unsubscribing from Firestore 'users' listener on cleanup.");
+        userListenerUnsubscribe.current();
+        userListenerUnsubscribe.current = null;
+      }
     };
-  }, [user, toast]); // Re-run when user logs in/out
+  }, [user, toast]); // Re-run when user logs in/out or toast function changes (unlikely but safe)
 
 
   // Fetch messages when a chat partner is selected
   useEffect(() => {
      // Cleanup previous listener before setting up a new one
      if (messageListenerUnsubscribe.current) {
-        console.log("Unsubscribing from previous messages listener");
+        console.log("Unsubscribing from previous messages listener.");
         messageListenerUnsubscribe.current();
         messageListenerUnsubscribe.current = null; // Reset the ref
       }
 
     if (!user || !selectedChatPartner || !db) { // Also check for db
-        setMessages([]); // Clear messages if no chat is selected or db not ready
+        setMessages([]); // Clear messages
         setLoadingMessages(false);
         setChatId(null);
         isInitialMessagesLoad.current = true; // Reset initial load flag
-        // console.log("No chat partner selected or DB not ready, clearing messages.");
+        // console.log("Message fetching skipped: No chat partner selected or DB not ready.");
         return; // Exit early
     }
 
@@ -200,99 +216,96 @@ export function ChatWindow() {
     isInitialMessagesLoad.current = true; // Set flag for initial load
     const currentChatId = getChatId(user.uid, selectedChatPartner.uid);
     setChatId(currentChatId); // Store the current chat ID
-    console.log(`Fetching messages for chat: ${currentChatId}`);
+    console.log(`Setting up messages listener for chat: ${currentChatId}`);
 
     const messagesQuery = query(
       collection(db, 'chats', currentChatId, 'messages'),
-      orderBy('timestamp', 'asc'), // Order by asc
-      limit(100) // Fetch more messages initially or implement pagination later
+      orderBy('timestamp', 'asc'), // Order by ascending timestamp
+      limit(100) // Consider pagination for very long chats
     );
 
     // Store the new unsubscribe function
     messageListenerUnsubscribe.current = onSnapshot(messagesQuery, (querySnapshot) => {
-      const fetchedMessages: Message[] = [];
-      let newMessagesReceived = false; // Track if new messages were added
+       const newMessages: Message[] = [];
+       let newMessagesReceived = false;
 
-      querySnapshot.docChanges().forEach((change) => {
+       querySnapshot.docChanges().forEach((change) => {
           if (change.type === "added") {
-              newMessagesReceived = true;
               const data = change.doc.data();
-              // Ensure timestamp is correctly handled (Firestore might return Timestamp or null)
-              const message: Message = {
-                id: change.doc.id,
-                text: data.text,
-                timestamp: data.timestamp instanceof Timestamp ? data.timestamp : Timestamp.now(), // Handle potential null/undefined or incorrect types
-                uid: data.uid,
-                displayName: data.displayName ?? null,
-                photoURL: data.photoURL ?? null,
-              };
-
-               // --- Notification Logic ---
-              // Check if message is new *after* initial load and *not* from current user
-              if (!isInitialMessagesLoad.current && message.uid !== user?.uid) {
-                   // Only show notification if the document (tab/window) is currently hidden
-                   if (typeof document !== 'undefined' && document.hidden) {
-                        console.log("Document hidden, showing toast notification for new message.");
-                        toast({
-                            title: `New message from ${message.displayName || 'User'}`,
-                            description: message.text.substring(0, 50) + (message.text.length > 50 ? '...' : ''),
-                            // Optional: Add an action to bring the window to focus
-                            // action: <ToastAction altText="Show chat">Show</ToastAction>,
-                        });
-                   } else {
-                       console.log("Document visible, new message received but no toast shown.");
-                       // Optional: could play a subtle sound or update favicon
-                   }
+              // Basic validation
+              if (!data.text || !data.uid || !(data.timestamp instanceof Timestamp)) {
+                 console.warn("Skipping invalid message:", change.doc.id, data);
+                 return;
               }
-              fetchedMessages.push(message);
+
+               const message: Message = {
+                  id: change.doc.id,
+                  text: data.text,
+                  timestamp: data.timestamp, // Already validated as Timestamp
+                  uid: data.uid,
+                  displayName: data.displayName ?? null,
+                  photoURL: data.photoURL ?? null,
+               };
+               newMessages.push(message);
+
+                // --- Notification Logic ---
+                // Check if message is new *after* initial load and *not* from current user
+                if (!isInitialMessagesLoad.current && message.uid !== user?.uid) {
+                     newMessagesReceived = true; // Mark that new messages came in after initial load
+                     // Only show notification if the document (tab/window) is currently hidden
+                     if (typeof document !== 'undefined' && document.hidden) {
+                          console.log("Document hidden, showing toast notification for new message.");
+                          toast({
+                              title: `New message from ${message.displayName || 'User'}`,
+                              description: message.text.substring(0, 50) + (message.text.length > 50 ? '...' : ''),
+                              // Optional: Add an action to bring the window to focus? Requires more complex logic.
+                              // action: <ToastAction altText="Show chat">Show</ToastAction>,
+                          });
+                     } else {
+                         console.log("Document visible, new message received but no toast shown.");
+                     }
+                }
           }
-          // Add logic for 'modified' or 'removed' changes if needed in the future
-          // else if (change.type === "modified") { ... }
-          // else if (change.type === "removed") { ... }
-      });
-
-
-       // Efficiently update messages state: Append new, avoid duplicates, maintain sort order
-       setMessages(prevMessages => {
-           const existingMessageIds = new Set(prevMessages.map(m => m.id));
-           const newUniqueMessages = fetchedMessages.filter(m => !existingMessageIds.has(m.id));
-           if (newUniqueMessages.length === 0) {
-               return prevMessages; // No change if no new unique messages
-           }
-           // Combine and sort. Sorting is crucial as 'added' changes might not be perfectly ordered
-           return [...prevMessages, ...newUniqueMessages].sort((a, b) => {
-               // Handle potential null/undefined timestamps gracefully
-               const timeA = a.timestamp?.toMillis() ?? 0;
-               const timeB = b.timestamp?.toMillis() ?? 0;
-               return timeA - timeB;
-           });
+          // Handle 'modified' or 'removed' if needed
        });
 
-
-      setLoadingMessages(false);
-
-      // Scroll to bottom logic: Trigger on initial load or when new messages arrive
-      if (newMessagesReceived || isInitialMessagesLoad.current) {
-           // console.log("Scrolling to bottom due to initial load or new messages.");
-           // Use setTimeout to ensure DOM has updated before scrolling
-           setTimeout(() => scrollToBottom(), 100);
-      }
-
-      // After processing the *first* snapshot, mark initial load as complete
-      if(isInitialMessagesLoad.current) {
-          console.log(`Initial messages loaded for chat ${currentChatId}`);
-          isInitialMessagesLoad.current = false;
-      }
+       // Update state efficiently and ensure correct order
+       if (newMessages.length > 0) {
+           setMessages(prevMessages => {
+               const combined = [...prevMessages, ...newMessages];
+               // Remove potential duplicates (though unlikely with docChanges 'added')
+               const uniqueMessages = Array.from(new Map(combined.map(m => [m.id, m])).values());
+               // Ensure final sort order by timestamp
+               return uniqueMessages.sort((a, b) => a.timestamp.toMillis() - b.timestamp.toMillis());
+           });
+       }
 
 
-    }, (error) => {
-        console.error(`Error fetching messages for chat ${currentChatId}:`, error);
+       setLoadingMessages(false);
+
+        // Scroll to bottom only after messages state has likely updated
+        // Use setTimeout to allow React to render the new messages first
+        setTimeout(() => {
+            // Scroll if it's the initial load OR if new messages were received *after* the initial load
+            if (isInitialMessagesLoad.current || newMessagesReceived) {
+                 // console.log(`Scrolling to bottom. Initial load: ${isInitialMessagesLoad.current}, New msgs received: ${newMessagesReceived}`);
+                 scrollToBottom();
+            }
+            // Mark initial load as complete *after* the first snapshot processing and potential scroll
+            if (isInitialMessagesLoad.current) {
+                 // console.log(`Initial messages loaded for chat ${currentChatId}.`);
+                 isInitialMessagesLoad.current = false;
+            }
+        }, 100); // Small delay often helps
+
+    }, (error: FirestoreError) => {
+        console.error(`🔴 Error fetching messages for chat ${currentChatId}:`, error.code, error.message, error);
         setLoadingMessages(false);
         isInitialMessagesLoad.current = false; // Ensure flag is reset on error
         messageListenerUnsubscribe.current = null; // Clear ref on error
         toast({
             title: "Error Fetching Messages",
-            description: `Could not load messages: ${error.message}`,
+            description: `Could not load messages: ${error.message} (${error.code})`,
             variant: "destructive",
         });
     });
@@ -306,32 +319,26 @@ export function ChatWindow() {
         }
       };
 
-  }, [user, selectedChatPartner, toast]); // Dependencies: user, selectedChatPartner, toast
+  }, [user, selectedChatPartner, toast, scrollToBottom]); // Add scrollToBottom to dependencies
 
-
-   // Auto-scrolling effect: Scrolls the viewport to the bottom
-   const scrollToBottom = () => {
-    if (viewportRef.current) {
-      // Using scrollTop ensures we scroll the container itself
-      viewportRef.current.scrollTop = viewportRef.current.scrollHeight;
-    }
-  };
 
 
   // Handles selecting a user from the list
-  const handleSelectUser = (partner: UserProfile) => {
+  const handleSelectUser = useCallback((partner: UserProfile) => {
      if (selectedChatPartner?.uid !== partner.uid) { // Only proceed if a *different* user is selected
-        console.log(`Selecting user: ${partner.displayName || partner.email} (${partner.uid})`);
+        console.log(`Selecting chat partner: ${partner.displayName || partner.email} (${partner.uid})`);
         setSelectedChatPartner(partner);
-        // Reset message state immediately for better perceived responsiveness
+        // Reset state immediately for better perceived responsiveness
         setMessages([]);
-        setLoadingMessages(true); // Indicate that messages are now loading for the new chat
+        setLoadingMessages(true); // Indicate loading for the new chat
         isInitialMessagesLoad.current = true; // Reset flag for the new chat's initial load
         setChatId(null); // Clear old chatId, useEffect will set the new one
+        // Clear search term when a user is selected? Optional UX choice.
+        // setSearchTerm('');
       } else {
           console.log(`User ${partner.displayName || partner.email} is already selected.`);
       }
-  };
+  }, [selectedChatPartner?.uid]); // Dependency: only re-create if selectedChatPartner changes
 
    // Filter users based on search term (case-insensitive)
    const filteredUsers = users.filter(u =>
@@ -342,24 +349,23 @@ export function ChatWindow() {
 
   // --- JSX ---
   return (
-     // Adjusted height: screen height minus header height (h-14 typically 3.5rem or 56px)
+     // Adjusted height: screen height minus header height (h-14 is theme(spacing.14))
     <div className="flex h-[calc(100vh-theme(spacing.14))] bg-secondary">
        {/* ====== Sidebar for User List ====== */}
        <aside className="w-64 flex flex-col border-r bg-background shadow-md">
          {/* --- Sidebar Header --- */}
-         <header className="flex items-center justify-between p-4 border-b min-h-[65px]"> {/* Added min-height */}
-             <div className="flex items-center gap-2 overflow-hidden"> {/* Prevents long names/emails from breaking layout */}
+         <header className="flex items-center justify-between p-4 border-b min-h-[65px]"> {/* Ensure consistent height */}
+             <div className="flex items-center gap-2 overflow-hidden mr-2"> {/* Allow space for button */}
                 <Avatar className="h-8 w-8 flex-shrink-0">
-                    {/* Current user's avatar */}
                     <AvatarImage src={user?.photoURL || undefined} alt={user?.displayName || 'My Avatar'} data-ai-hint="current user profile avatar"/>
-                    <AvatarFallback>{getInitials(user?.displayName || user?.email)}</AvatarFallback> {/* Use email as fallback */}
+                    <AvatarFallback>{getInitials(user?.displayName || user?.email)}</AvatarFallback>
                 </Avatar>
-                {/* Current user's name/email */}
-                <span className="font-semibold text-foreground truncate flex-1 min-w-0">{user?.displayName || user?.email || 'Chat User'}</span>
+                {/* Use tooltip for long names? */}
+                <span className="font-semibold text-foreground truncate flex-1 min-w-0 text-sm">{user?.displayName || user?.email || 'User'}</span>
              </div>
             {/* Sign Out Button */}
-            <Button variant="ghost" size="icon" onClick={signOut} aria-label="Sign out" className="flex-shrink-0 text-muted-foreground hover:text-foreground">
-              <LogOut className="h-5 w-5" />
+            <Button variant="ghost" size="icon" onClick={signOut} aria-label="Sign out" className="flex-shrink-0 text-muted-foreground hover:text-destructive h-8 w-8">
+              <LogOut className="h-4 w-4" />
             </Button>
          </header>
 
@@ -368,9 +374,9 @@ export function ChatWindow() {
             <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                    type="search" // Use type="search" for potential browser features (like clear button)
+                    type="search"
                     placeholder="Search users..."
-                    className="pl-8 h-9 bg-muted/50 focus:bg-background" // Subtle background
+                    className="pl-8 h-9 bg-muted/50 focus:bg-background"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     aria-label="Search for users to chat with"
@@ -384,12 +390,11 @@ export function ChatWindow() {
                  {/* Loading Skeletons */}
                  {loadingUsers && (
                      <div className="space-y-1 p-2">
-                        {[...Array(5)].map((_, i) => ( // Show more skeletons
-                            <div key={i} className="flex items-center space-x-3 p-2 h-[52px]"> {/* Match button height */}
+                        {[...Array(6)].map((_, i) => ( // Consistent skeleton layout
+                            <div key={i} className="flex items-center space-x-3 p-2 h-[52px]">
                                 <Skeleton className="h-8 w-8 rounded-full" />
                                 <div className="space-y-1.5 flex-1">
                                     <Skeleton className="h-4 w-3/4" />
-                                     {/* <Skeleton className="h-3 w-1/2" /> */}
                                 </div>
                             </div>
                         ))}
@@ -397,11 +402,14 @@ export function ChatWindow() {
                  )}
                  {/* Empty State (No Users or No Search Results) */}
                  {!loadingUsers && filteredUsers.length === 0 && (
-                    <p className="p-4 text-sm text-center text-muted-foreground">
-                        {/* Provide more context on why the list might be empty */}
-                        {searchTerm ? "No users found matching search." : (users.length === 0 ? "No other users found." : "No other users available.")}
-                        {users.length === 0 && !searchTerm && " If you just signed up, others may appear soon."}
-                    </p>
+                    <div className="flex flex-col items-center justify-center p-6 text-center text-muted-foreground">
+                         <Users className="h-10 w-10 mb-3 text-primary/70" />
+                        <p className="text-sm font-medium">
+                            {searchTerm ? "No users found" : (users.length === 0 ? "No other users available" : "No users found matching search")}
+                        </p>
+                         {searchTerm && <p className="text-xs mt-1">Try a different name or email.</p>}
+                         {!searchTerm && users.length === 0 && <p className="text-xs mt-1">Invite others or wait for them to join!</p>}
+                    </div>
                  )}
                  {/* User Buttons */}
                  {!loadingUsers && filteredUsers.map((u) => (
@@ -409,23 +417,26 @@ export function ChatWindow() {
                         key={u.uid}
                         variant="ghost"
                         className={cn(
-                            "w-full justify-start h-auto py-2 px-3 text-left rounded-md", // Ensure consistent height and rounding
-                            "gap-3", // Add gap for spacing
+                            "w-full justify-start h-auto py-2 px-3 text-left rounded-md",
+                            "gap-3 items-center", // Ensure vertical alignment
                             selectedChatPartner?.uid === u.uid ? "bg-accent text-accent-foreground hover:bg-accent/90" : "hover:bg-muted/50"
                         )}
                         onClick={() => handleSelectUser(u)}
-                        aria-pressed={selectedChatPartner?.uid === u.uid} // Accessibility for selected state
+                        aria-pressed={selectedChatPartner?.uid === u.uid}
                     >
-                        {/* User Avatar */}
-                        <Avatar className="h-8 w-8">
+                        <Avatar className="h-8 w-8 flex-shrink-0"> {/* Prevent shrinking */}
                             <AvatarImage src={u.photoURL || undefined} alt={u.displayName || 'User Avatar'} data-ai-hint="user chat list avatar"/>
                             <AvatarFallback>{getInitials(u.displayName || u.email)}</AvatarFallback>
                         </Avatar>
-                        {/* User Name/Email (truncates if too long) */}
-                        <div className="flex flex-col flex-1 min-w-0"> {/* Ensure text truncates */}
+                        <div className="flex flex-col flex-1 min-w-0"> {/* Truncation container */}
                             <span className="font-medium truncate text-sm">{u.displayName || u.email || 'Unnamed User'}</span>
-                             {/* Optional: Add last message snippet or online status indicator here */}
-                             {/* <span className="text-xs text-muted-foreground truncate">Last message...</span> */}
+                             {/* Optional: Last seen status */}
+                             {u.lastSeen && (
+                                 <span className="text-xs text-muted-foreground truncate">
+                                     {/* Consider using formatDistanceToNowStrict or similar */}
+                                     Last seen: {u.lastSeen.toDate().toLocaleTimeString()}
+                                 </span>
+                             )}
                         </div>
                     </Button>
                  ))}
@@ -439,58 +450,54 @@ export function ChatWindow() {
                  <>
                  {/* --- Chat Header --- */}
                  <header className="flex items-center gap-3 p-4 border-b shadow-sm bg-card min-h-[65px]">
-                    {/* Chat Partner Avatar */}
                     <Avatar className="h-9 w-9">
                         <AvatarImage src={selectedChatPartner.photoURL || undefined} alt={selectedChatPartner.displayName || 'Chat partner avatar'} data-ai-hint="chat partner avatar"/>
                         <AvatarFallback>{getInitials(selectedChatPartner.displayName || selectedChatPartner.email)}</AvatarFallback>
                     </Avatar>
-                     {/* Chat Partner Name/Email */}
                     <div className="flex flex-col">
                         <span className="font-semibold text-card-foreground">{selectedChatPartner.displayName || selectedChatPartner.email}</span>
-                        {/* Optional: Display online status or last seen time here */}
-                        {/* <span className="text-xs text-muted-foreground">Online</span> */}
-                        {/* <span className="text-xs text-muted-foreground">Last seen: {formatDistanceToNow(selectedChatPartner.lastSeen.toDate())} ago</span> */}
+                        {/* Optional: Display online status indicator */}
                     </div>
                  </header>
 
                 {/* --- Message List --- */}
-                <ScrollArea className="flex-1" ref={scrollAreaRef}>
-                    {/* Viewport div for controlling scroll */}
-                     {/* Make viewport take remaining height */}
-                    <div ref={viewportRef} className="flex flex-col h-full p-4 space-y-2 overflow-y-auto">
-                        {/* Spacer div pushes messages up when content is short */}
-                        {messages.length > 0 && <div className="flex-grow" />}
+                {/* Wrap ScrollArea in a flex-1 container to make it fill space */}
+                <div className="flex-1 overflow-hidden">
+                    <ScrollArea className="h-full" ref={scrollAreaRef}>
+                         {/* Viewport takes full height of ScrollArea */}
+                        <div ref={viewportRef} className="h-full flex flex-col p-4 space-y-2">
+                             {/* Spacer grows to push messages down */}
+                            <div className="flex-grow" />
 
-                        {/* Loading Skeletons for Messages */}
-                        {loadingMessages && messages.length === 0 && (
-                            <div className="space-y-4 p-4 flex flex-col flex-grow justify-end"> {/* Adjust for loading state */}
-                                <Skeleton className="h-12 w-3/5 rounded-lg self-start" />
-                                <Skeleton className="h-16 w-3/4 rounded-lg self-end" />
-                                <Skeleton className="h-10 w-1/2 rounded-lg self-start" />
-                                <Skeleton className="h-14 w-2/3 rounded-lg self-end" />
-                            </div>
-                        )}
-                        {/* Empty Chat Placeholder */}
-                        {!loadingMessages && messages.length === 0 && (
-                             <div className="flex-grow flex items-center justify-center">
-                                <div className="text-center text-muted-foreground p-6 bg-muted/30 rounded-lg">
-                                    <MessageSquare className="h-12 w-12 mx-auto mb-3 text-primary/80" />
-                                    <p className="font-medium">No messages yet.</p>
-                                    <p className="text-sm">Start the conversation with <span className="font-semibold">{selectedChatPartner.displayName || selectedChatPartner.email}</span>!</p>
+                            {/* Loading Skeletons */}
+                            {loadingMessages && messages.length === 0 && (
+                                <div className="space-y-4 p-4">
+                                    {[...Array(4)].map((_, i) => (
+                                        <React.Fragment key={i}>
+                                         <Skeleton className={cn("h-12 rounded-lg", i % 2 === 0 ? "w-3/5 self-start" : "w-3/4 self-end")}/>
+                                        </React.Fragment>
+                                    ))}
                                 </div>
-                             </div>
-                        )}
-                        {/* Render Messages */}
-                         {/* Add padding-bottom to prevent input overlap */}
-                        <div className="pb-4">
-                             {messages.map((msg) => (
-                                <ChatMessage key={msg.id} message={msg} />
-                            ))}
+                            )}
+                            {/* Empty Chat Placeholder */}
+                            {!loadingMessages && messages.length === 0 && (
+                                <div className="flex flex-col items-center justify-center text-center text-muted-foreground p-6">
+                                    <MessageSquare className="h-12 w-12 mx-auto mb-3 text-primary/80" />
+                                    <p className="font-medium">Start your conversation!</p>
+                                    <p className="text-sm">Send a message to {selectedChatPartner.displayName || selectedChatPartner.email}.</p>
+                                </div>
+                            )}
+                            {/* Render Messages */}
+                            <div className="pb-4"> {/* Padding at the bottom */}
+                                {messages.map((msg) => (
+                                    <ChatMessage key={msg.id} message={msg} />
+                                ))}
+                            </div>
+                             {/* Dummy element for scrollIntoView (alternative if scrollTop fails) */}
+                             {/* <div ref={messagesEndRef} /> */}
                         </div>
-                         {/* Optional: Dummy element for scrollIntoView (alternative to scrollTop) */}
-                         {/* <div id="chat-end" style={{ height: '1px' }} /> */}
-                    </div>
-                </ScrollArea>
+                    </ScrollArea>
+                </div>
 
                 {/* --- Chat Input --- */}
                 <ChatInput chatId={chatId} />
@@ -499,14 +506,11 @@ export function ChatWindow() {
                  // ====== Placeholder when no chat is selected ======
                  <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground p-8 bg-gradient-to-br from-background to-muted/30">
                     <Users className="h-16 w-16 mb-4 text-primary opacity-80" />
-                    <h2 className="text-xl font-semibold text-foreground mb-1">Welcome to Your Chat!</h2>
-                    <p className="text-base mb-4 max-w-xs">Select a user from the list on the left to start chatting.</p>
-                     {/* Suggestion for mobile users (conditionally rendered or styled) */}
-                    {/* <p className="text-sm md:hidden">Tap the menu icon to see your contacts.</p> */}
+                    <h2 className="text-xl font-semibold text-foreground mb-1">Select a Chat</h2>
+                    <p className="text-base mb-4 max-w-xs">Choose someone from the list on the left to start messaging.</p>
                 </div>
             )}
        </main>
     </div>
   );
 }
-
