@@ -71,27 +71,24 @@ export function ChatWindow() {
         // console.log("Presence update skipped: No authenticated user.");
         return;
       }
-       // Check if db is available before calling the service
-       if (!db) {
-         console.warn(`Presence update skipped for ${user.uid}: DB service not ready.`);
-         return;
-      }
+       // Removed db check here, as it's checked globally in firebase.ts
 
       try {
         // console.log(`Attempting to update presence for user ${user.uid}...`);
-        await updateUserProfileDocument(user.uid, { lastSeen: serverTimestamp() }); // Use serverTimestamp for consistency
+        // Pass only serializable data to the server action
+        await updateUserProfileDocument(user.uid, { lastSeen: serverTimestamp() });
         // console.log("Successfully updated user presence for", user.uid);
       } catch (error: any) {
-         console.error(`Error updating user presence for ${user.uid}:`, error.message, error);
-         // Avoid showing toast for expected DB init issues, but show for others
-         if (error.message && !error.message.includes("Database service (db) is not initialized")) {
-            toast({
-                title: "Presence Error",
-                description: `Could not update your online status. Details: ${error.message}`,
-                variant: "destructive",
-                duration: 3000, // Shorter duration for less critical errors
-            });
-         }
+          // Log the detailed error message propagated from the service
+         console.error(`Error updating user presence for ${user.uid}: "${error.message}"`, error);
+         // Optional: Show a less technical toast to the user
+         toast({
+             title: "Presence Error",
+             // Avoid showing overly technical details from the error object itself
+             description: `Could not update your online status. Please try again later.`,
+             variant: "destructive",
+             duration: 3000,
+         });
       }
     };
 
