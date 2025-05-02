@@ -12,20 +12,18 @@ import {
   signInWithPopup,
   AuthError, // Import AuthError for better type checking
   UserCredential, // Import UserCredential
-  updateProfile, // Import updateProfile
 } from 'firebase/auth';
-import { doc, setDoc, serverTimestamp, getDoc } from 'firebase/firestore'; // Import Firestore functions
-import { auth, db } from '@/lib/firebase';
+import { auth, storage } from '@/lib/firebase'; // Import storage
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { LogIn, UserPlus, Chrome, ImagePlus, Upload } from 'lucide-react'; // Use Chrome icon for Google, ImagePlus/Upload for profile pic
-import type { UserProfile } from '@/types'; // Import UserProfile type
+import { LogIn, UserPlus, Chrome, ImagePlus, Upload } from 'lucide-react';
 import { getStorage, ref, uploadString, getDownloadURL } from "firebase/storage"; // Firebase Storage
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"; // Import Avatar components
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { createOrUpdateUserProfile } from '@/lib/user-profile.service'; // Import the service
 
 // Extend schema for sign up to include optional display name and photo URL
 const signUpSchema = z.object({
@@ -62,70 +60,15 @@ const getFirebaseAuthErrorMessage = (error: AuthError): string => {
         return 'Multiple sign-in attempts detected. Please close other popups and try again.';
     case 'auth/popup-blocked':
         return 'Sign-in popup was blocked by the browser. Please allow popups for this site.';
+    case 'auth/network-request-failed':
+        return 'Network error. Please check your internet connection and try again.';
     // Add more specific Firebase error codes as needed
     default:
-      // Check for network errors specifically
-      if (error.code === 'auth/network-request-failed') {
-        return 'Network error. Please check your internet connection and try again.';
-      }
       console.error("Unhandled Firebase Auth Error:", error.code, error.message); // Log unhandled errors
       return error.message || 'An unknown authentication error occurred.';
   }
 };
 
-// Function to update user profile in Firestore and Firebase Auth
-const updateUserProfile = async (userCred: UserCredential, displayName?: string, photoURL?: string | null) => {
-    const user = userCred.user;
-    if (!user) return;
-
-    const userRef = doc(db, 'users', user.uid);
-    // Check if it's a new user registration or sign-in based on metadata or Firestore doc existence
-    // Using creationTime and lastSignInTime is more reliable than additionalUserInfo.isNewUser
-    const isNewUser = user.metadata.creationTime === user.metadata.lastSignInTime;
-    console.log("Is new user?", isNewUser, user.metadata.creationTime, user.metadata.lastSignInTime);
-
-
-    // Prepare data for Firebase Auth update
-    const authUpdateData: { displayName?: string | null; photoURL?: string | null } = {};
-    // Only update if new data is provided and different from existing user data
-    if (displayName && displayName !== user.displayName) authUpdateData.displayName = displayName;
-    if (photoURL !== undefined && photoURL !== user.photoURL) authUpdateData.photoURL = photoURL;
-
-    // Prepare data for Firestore update/create
-    const firestoreData: Partial<UserProfile> = {
-        uid: user.uid,
-        email: user.email, // Always include email
-        // Use provided values or fallback to existing user data (important for Google sign-in merge)
-        displayName: displayName ?? user.displayName ?? null,
-        photoURL: photoURL !== undefined ? photoURL : user.photoURL ?? null,
-        lastSeen: serverTimestamp(), // Update last seen on login/signup
-    };
-    // Only add createdAt for new users
-    if (isNewUser) {
-        firestoreData.createdAt = serverTimestamp();
-    }
-
-
-    try {
-        // 1. Update Firebase Auth profile (if necessary)
-        if (Object.keys(authUpdateData).length > 0) {
-            await updateProfile(user, authUpdateData);
-            console.log("Firebase Auth profile updated:", authUpdateData);
-        }
-
-        // 2. Create or update Firestore document
-        // Use setDoc with merge: true to create or update.
-        await setDoc(userRef, firestoreData, { merge: true });
-
-        console.log("User profile updated/created in Firestore:", firestoreData);
-
-    } catch (error) {
-        console.error("Error updating user profile:", error);
-        // Optionally handle Firestore/Auth update error (e.g., show a toast)
-        // Consider if a partial update is acceptable or if rollback is needed
-        throw new Error("Failed to update user profile."); // Re-throw to be caught by caller
-    }
-};
 
 // Helper to get initials
 const getInitials = (name: string | null | undefined): string => {
@@ -207,11 +150,10 @@ export function AuthForm() {
     }
   };
 
-   // Upload photo to Firebase Storage
+   // Upload photo to Firebase Storage (Consider moving to user-profile.service.ts if reused)
    const uploadPhoto = async (file: File, uid: string): Promise<string | null> => {
     if (!file) return null; // No file provided
 
-    const storage = getStorage();
     // Use a consistent file name or a unique ID for the profile picture
     const fileName = `profile_${uid}.${file.name.split('.').pop()}`; // e.g., profile_userId.png
     const storageRef = ref(storage, `profilePictures/${uid}/${fileName}`);
@@ -269,9 +211,13 @@ export function AuthForm() {
              }
         }
 
-        // 3. Update profile (Auth and Firestore) - Pass displayName and photoURL
-        console.log("Updating profile with:", { displayName: signUpData.displayName, photoURL });
-        await updateUserProfile(userCredential, signUpData.displayName || undefined, photoURL); // Pass undefined if empty string
+        // 3. Update profile (Auth and Firestore) using the service
+        const profileDetails = {
+            displayName: signUpData.displayName || null, // Pass null if empty string
+            photoURL: photoURL // Pass the potentially uploaded URL or null
+        };
+        console.log("Creating/Updating profile with:", profileDetails);
+        await createOrUpdateUserProfile(userCredential, profileDetails);
         toast({ title: 'Account created successfully!' });
 
       } else {
@@ -281,8 +227,9 @@ export function AuthForm() {
         userCredential = await signInWithEmailAndPassword(auth, signInData.email, signInData.password);
         console.log("User signed in:", userCredential.user.uid);
 
-        // Update lastSeen in Firestore on successful sign-in (no displayName/photoURL needed here)
-        await updateUserProfile(userCredential);
+        // Update lastSeen in Firestore on successful sign-in using the service
+        // No displayName/photoURL needed here, service defaults to existing Auth user data
+        await createOrUpdateUserProfile(userCredential);
         toast({ title: 'Signed in successfully!' });
       }
 
@@ -290,9 +237,14 @@ export function AuthForm() {
 
     } catch (error: any) {
       console.error(`${isSignUp ? 'Sign Up' : 'Sign In'} Error:`, error);
+      // Check if it's an AuthError first
+      const errorMessage = error instanceof Error && 'code' in error
+            ? getFirebaseAuthErrorMessage(error as AuthError)
+            : error.message || 'An unexpected error occurred.';
+
       toast({
         title: isSignUp ? 'Sign Up Failed' : 'Sign In Failed',
-        description: getFirebaseAuthErrorMessage(error),
+        description: errorMessage,
         variant: 'destructive',
       });
     } finally {
@@ -309,15 +261,22 @@ export function AuthForm() {
       const user = userCredential.user;
       console.log("Signed in with Google:", user.uid, user.displayName, user.photoURL);
 
-      // Update profile using Google's info (displayName, photoURL) + update lastSeen
-      await updateUserProfile(userCredential, user.displayName || undefined, user.photoURL || null);
+      // Update profile using Google's info (displayName, photoURL) + update lastSeen via service
+      const profileDetails = {
+          displayName: user.displayName || null,
+          photoURL: user.photoURL || null
+      };
+      await createOrUpdateUserProfile(userCredential, profileDetails);
       toast({ title: 'Signed in with Google successfully!' });
       // AuthProvider listener handles redirect/UI update
     } catch (error: any) {
       console.error('Google Sign-In Error:', error);
+       const errorMessage = error instanceof Error && 'code' in error
+            ? getFirebaseAuthErrorMessage(error as AuthError)
+            : error.message || 'An unexpected error occurred during Google Sign-In.';
       toast({
         title: 'Google Sign-In Failed',
-        description: getFirebaseAuthErrorMessage(error),
+        description: errorMessage,
         variant: 'destructive',
       });
     } finally {
@@ -341,7 +300,7 @@ export function AuthForm() {
 
   // --- JSX ---
   return (
-    <div className="flex items-center justify-center min-h-screen bg-secondary p-4">
+    <div className="flex items-center justify-center min-h-[calc(100vh-theme(spacing.14))] bg-secondary p-4"> {/* Adjust min-height for header */}
       <Tabs defaultValue="signin" value={activeTab} className="w-full max-w-md" onValueChange={handleTabChange}>
         <TabsList className="grid w-full grid-cols-2">
           <TabsTrigger value="signin">Sign In</TabsTrigger>
@@ -532,3 +491,4 @@ export function AuthForm() {
     </div>
   );
 }
+```

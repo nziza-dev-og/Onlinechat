@@ -17,6 +17,7 @@ import { Input } from '@/components/ui/input'; // Import Input for search
 import { Separator } from '@/components/ui/separator'; // Import Separator
 import { cn } from '@/lib/utils'; // Import cn for conditional classes
 import { useToast } from "@/hooks/use-toast"; // Import useToast
+import { updateUserProfileDocument } from '@/lib/user-profile.service'; // Import the service
 
 // Helper function to create a unique chat ID between two users
 const getChatId = (uid1: string, uid2: string): string => {
@@ -81,16 +82,16 @@ export function ChatWindow() {
           });
     });
 
-    // Update current user's lastSeen on mount
+    // Update current user's lastSeen on mount using the service
     const updateUserPresence = async () => {
       if(user) {
-        const userRef = doc(db, 'users', user.uid);
         try {
-          // Use setDoc with merge: true to create/update presence
-          await setDoc(userRef, { lastSeen: serverTimestamp(), uid: user.uid, email: user.email }, { merge: true });
+          await updateUserProfileDocument(user.uid, { lastSeen: serverTimestamp() });
           console.log("Updated user presence for", user.uid);
         } catch (error) {
           console.error("Error updating user presence:", error);
+           // Optional: Toast notification for presence update failure
+          // toast({ title: "Presence Error", description: "Could not update online status.", variant: "destructive" });
         }
       }
     };
@@ -184,7 +185,11 @@ export function ChatWindow() {
                return prevMessages; // No change if no new unique messages
            }
            // Combine and sort. Sorting is crucial as 'added' changes might not be perfectly ordered
-           return [...prevMessages, ...newUniqueMessages].sort((a, b) => a.timestamp.toMillis() - b.timestamp.toMillis());
+           return [...prevMessages, ...newUniqueMessages].sort((a, b) => {
+               const timeA = a.timestamp?.toMillis() ?? 0;
+               const timeB = b.timestamp?.toMillis() ?? 0;
+               return timeA - timeB;
+           });
        });
 
 
@@ -261,7 +266,8 @@ export function ChatWindow() {
 
   // --- JSX ---
   return (
-    <div className="flex h-screen bg-secondary">
+     // Adjusted height: screen height minus header height (h-14 typically 3.5rem or 56px)
+    <div className="flex h-[calc(100vh-theme(spacing.14))] bg-secondary">
        {/* ====== Sidebar for User List ====== */}
        <aside className="w-64 flex flex-col border-r bg-background shadow-md">
          {/* --- Sidebar Header --- */}
@@ -372,13 +378,14 @@ export function ChatWindow() {
                 {/* --- Message List --- */}
                 <ScrollArea className="flex-1" ref={scrollAreaRef}>
                     {/* Viewport div for controlling scroll */}
-                    <div ref={viewportRef} className="flex flex-col min-h-full p-4 space-y-2 overflow-y-auto"> {/* Added overflow-y-auto */}
+                     {/* Make viewport take remaining height */}
+                    <div ref={viewportRef} className="flex flex-col h-full p-4 space-y-2 overflow-y-auto">
                         {/* Spacer div pushes messages up when content is short */}
                         {messages.length > 0 && <div className="flex-grow" />}
 
                         {/* Loading Skeletons for Messages */}
                         {loadingMessages && messages.length === 0 && (
-                            <div className="space-y-4 p-4">
+                            <div className="space-y-4 p-4 flex flex-col flex-grow justify-end"> {/* Adjust for loading state */}
                                 <Skeleton className="h-12 w-3/5 rounded-lg self-start" />
                                 <Skeleton className="h-16 w-3/4 rounded-lg self-end" />
                                 <Skeleton className="h-10 w-1/2 rounded-lg self-start" />
@@ -396,9 +403,12 @@ export function ChatWindow() {
                              </div>
                         )}
                         {/* Render Messages */}
-                        {messages.map((msg) => (
-                            <ChatMessage key={msg.id} message={msg} />
-                        ))}
+                         {/* Add padding-bottom to prevent input overlap */}
+                        <div className="pb-4">
+                             {messages.map((msg) => (
+                                <ChatMessage key={msg.id} message={msg} />
+                            ))}
+                        </div>
                          {/* Optional: Dummy element for scrollIntoView (alternative to scrollTop) */}
                          {/* <div id="chat-end" style={{ height: '1px' }} /> */}
                     </div>
@@ -421,3 +431,4 @@ export function ChatWindow() {
     </div>
   );
 }
+```
