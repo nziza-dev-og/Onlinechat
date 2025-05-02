@@ -491,4 +491,3 @@ export function AuthForm() {
     </div>
   );
 }
-```

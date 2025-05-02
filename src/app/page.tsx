@@ -24,4 +24,3 @@ export default function Home() {
   // Ensure ChatWindow also has adjusted height if necessary
   return user ? <ChatWindow /> : <AuthForm />;
 }
-```
