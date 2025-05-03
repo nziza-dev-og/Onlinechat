@@ -90,13 +90,21 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
                     Replying to {message.replyToMessageAuthor || 'Unknown'}
                  </p>
                  <p className="text-muted-foreground truncate italic">
-                    {message.replyToMessageText || 'Original message'}
+                    {message.replyToMessageText || (message.imageUrl ? 'Image' : (message.audioUrl ? 'Voice note' : 'Original message'))}
                  </p>
             </div>
          )}
 
+         {/* Display Audio Player if audioUrl exists */}
+         {message.audioUrl && (
+            <div className="my-2">
+                <audio controls src={message.audioUrl} preload="metadata" className="w-full max-w-xs h-10">
+                  Your browser does not support the audio element.
+                </audio>
+            </div>
+         )}
 
-        {message.imageUrl && (
+        {message.imageUrl && !message.audioUrl && ( // Don't show image if audio is present (or decide based on preference)
           <div className="relative aspect-square w-48 max-w-full my-2 rounded-md overflow-hidden border">
             <Image
               src={message.imageUrl}

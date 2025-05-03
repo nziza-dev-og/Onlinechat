@@ -14,6 +14,7 @@ export interface Message {
   displayName: string | null;
   photoURL: string | null;
   imageUrl?: string | null; // Optional image URL for chat messages
+  audioUrl?: string | null; // Optional audio URL for voice notes
   // Fields for reply functionality
   replyToMessageId?: string | null;
   replyToMessageText?: string | null;
