@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -110,16 +109,16 @@ export function ChatWindow() {
           return;
        }
         // Check if db is available before calling the service
-        if (!db) {
+        const currentDb = getFirestore(app); // Get instance here
+        if (!currentDb) {
           console.warn(`Presence update skipped for ${user.uid}: DB service not ready.`);
           return;
         }
 
         try {
-            // Call server action for update
              // Pass user data as primitives to the server action
-             await updateUserProfileDocument({
-                 uid: user.uid,
+             // Correctly pass uid and data object separately
+             await updateUserProfileDocument(user.uid, {
                  lastSeen: 'SERVER_TIMESTAMP'
              });
              // console.log(`✅ User presence updated for ${user.uid} (${reason}).`);
@@ -165,7 +164,7 @@ export function ChatWindow() {
 
     return () => {
       clearTimeout(initialTimeoutId);
-      if (intervalId) clearInterval(intervalId);
+      if (intervalId) clearInterval(Id);
       if (typeof window !== 'undefined') {
         window.removeEventListener('focus', handleFocus);
         window.removeEventListener('blur', handleBlur);
@@ -199,24 +198,42 @@ export function ChatWindow() {
       const fetchedUsers: UserProfile[] = snapshot.docs
         .map(doc => {
           const data = doc.data();
-          if (!data.uid || typeof data.uid !== 'string') {
+          // Check if UID exists and is a string.
+          const uid = data.uid;
+          if (!uid || typeof uid !== 'string') {
             console.warn("Fetched user document missing or invalid UID:", doc.id, data);
             return null;
           }
+
+          // Ensure lastSeen and createdAt are handled correctly if they exist.
+           let lastSeen: Timestamp | undefined = undefined;
+           if (data.lastSeen instanceof Timestamp) {
+               lastSeen = data.lastSeen;
+           } else if (data.lastSeen && typeof data.lastSeen.toDate === 'function') { // Handle potential Firestore-like Timestamp object from cache/local
+               try { lastSeen = Timestamp.fromMillis(data.lastSeen.toMillis()); } catch { /* ignore invalid date */ }
+           }
+
+           let createdAt: Timestamp | undefined = undefined;
+           if (data.createdAt instanceof Timestamp) {
+               createdAt = data.createdAt;
+           } else if (data.createdAt && typeof data.createdAt.toDate === 'function') {
+               try { createdAt = Timestamp.fromMillis(data.createdAt.toMillis()); } catch { /* ignore invalid date */ }
+           }
+
           return {
-            uid: data.uid,
+            uid: uid,
             displayName: data.displayName ?? null,
             email: data.email ?? null,
             photoURL: data.photoURL ?? null,
             status: data.status ?? null,
-            lastSeen: data.lastSeen instanceof Timestamp ? data.lastSeen : undefined,
-            createdAt: data.createdAt instanceof Timestamp ? data.createdAt : undefined,
+            lastSeen: lastSeen,
+            createdAt: createdAt,
             isAdmin: data.isAdmin ?? false,
             passwordChangeRequested: data.passwordChangeRequested ?? false,
             passwordChangeApproved: data.passwordChangeApproved ?? false,
           };
         })
-        .filter((u): u is UserProfile => u !== null && u.uid !== user.uid); // Exclude self
+        .filter((u): u is UserProfile => u !== null && u.uid !== user.uid); // Exclude self and invalid docs
 
       // Sort: Online users first, then alphabetically
       fetchedUsers.sort((a, b) => {
@@ -235,6 +252,7 @@ export function ChatWindow() {
 
       setUsers(fetchedUsers);
       setLoadingUsers(false);
+       console.log(`Firestore: Updated user list, count: ${fetchedUsers.length}`);
 
       // Update selected partner's info if they are still in the list
       if (selectedChatPartner) {
@@ -263,8 +281,9 @@ export function ChatWindow() {
 
     return () => {
       if (userListenerUnsubscribe.current) {
-        userListenerUnsubscribe.current();
-        userListenerUnsubscribe.current = null;
+         console.log("Cleaning up Firestore 'users' listener.");
+         userListenerUnsubscribe.current();
+         userListenerUnsubscribe.current = null;
       }
     };
   }, [user, toast, selectedChatPartner?.uid]); // Re-run if user changes or selected partner UID changes to refresh partner data
@@ -298,6 +317,7 @@ export function ChatWindow() {
     const currentChatId = getChatId(user.uid, selectedChatPartner.uid);
     setChatId(currentChatId);
     setIsVideoButtonDisabled(false); // Enable video button
+     console.log(`Setting up listeners for chat: ${currentChatId}`);
 
     const messagesQuery = query(
       collection(currentDb, 'chats', currentChatId, 'messages'),
@@ -318,10 +338,18 @@ export function ChatWindow() {
           if (change.type === "added") {
               const data = change.doc.data();
               // Basic validation
-              if (!(data.timestamp instanceof Timestamp) || !data.uid) {
-                 console.warn("Skipping invalid message:", change.doc.id, data);
-                 return;
-              }
+               let timestamp: Timestamp | null = null;
+               if (data.timestamp instanceof Timestamp) {
+                   timestamp = data.timestamp;
+               } else if (data.timestamp && typeof data.timestamp.toDate === 'function') { // Handle Firestore-like Timestamp object
+                   try { timestamp = Timestamp.fromMillis(data.timestamp.toMillis()); } catch { /* ignore invalid date */ }
+               }
+
+               if (!timestamp || !data.uid) {
+                  console.warn("Skipping invalid message (missing timestamp or uid):", change.doc.id, data);
+                  return;
+               }
+
               // Ensure some content exists
               if (!data.text && !data.imageUrl && !data.audioUrl) {
                    console.warn("Skipping empty message:", change.doc.id, data);
@@ -333,13 +361,13 @@ export function ChatWindow() {
                   text: data.text ?? '',
                   imageUrl: data.imageUrl ?? null,
                   audioUrl: data.audioUrl ?? null, // Include audio URL
-                  timestamp: data.timestamp,
+                  timestamp: timestamp, // Use the validated Firestore Timestamp
                   uid: data.uid,
                   displayName: data.displayName ?? null,
                   photoURL: data.photoURL ?? null,
                   // Include reply fields
                   replyToMessageId: data.replyToMessageId ?? null,
-                  replyToMessageText: data.replyToMessageText ?? null,
+                  replyToMessageText: data.replyToMessageText ?? null, // Can be text, 'Image', 'Voice note'
                   replyToMessageAuthor: data.replyToMessageAuthor ?? null,
                };
                newMessagesBatch.push(message);
@@ -357,14 +385,16 @@ export function ChatWindow() {
                                             : message.imageUrl ? 'Sent an image'
                                             : message.audioUrl ? 'Sent a voice note'
                                             : 'Sent a message';
+                     const titlePrefix = '(*) ';
+                     if (typeof document !== 'undefined' && !document.title.startsWith(titlePrefix)) {
+                           document.title = titlePrefix + document.title;
+                      }
                      toast({
-                         title: `(*) New message from ${message.displayName || 'User'}`, // Add indicator to title
+                         title: `New message from ${message.displayName || 'User'}`,
                          description: notificationText,
                          duration: 5000,
                      });
-                      if (typeof document !== 'undefined' && !document.title.startsWith('(*)')) {
-                           document.title = `(*) ${document.title}`;
-                      }
+
                  }
           }
           // Handle 'modified' or 'removed' changes if needed (e.g., message edits/deletions)
@@ -388,7 +418,7 @@ export function ChatWindow() {
             if (viewportRef.current) {
                 const { scrollTop, scrollHeight, clientHeight } = viewportRef.current;
                 // Scroll down if near the bottom or if it was the initial load
-                 const isNearBottom = scrollHeight - scrollTop - clientHeight < 100;
+                 const isNearBottom = scrollHeight - scrollTop - clientHeight < 150; // Increased threshold slightly
                 if (isNearBottom || isInitialMessagesLoadForScroll.current) {
                      scrollToBottom();
                 }
@@ -434,10 +464,12 @@ export function ChatWindow() {
      return () => {
         // Cleanup listeners
         if (messageListenerUnsubscribe.current) {
+          console.log(`Cleaning up message listener for chat ${currentChatId}.`);
           messageListenerUnsubscribe.current();
           messageListenerUnsubscribe.current = null;
         }
         if (chatDocListenerUnsubscribe.current) {
+            console.log(`Cleaning up chat document listener for chat ${currentChatId}.`);
             chatDocListenerUnsubscribe.current();
             chatDocListenerUnsubscribe.current = null;
         }
@@ -453,8 +485,9 @@ export function ChatWindow() {
   // Focus handling for notification title update
   useEffect(() => {
     const handleFocus = () => {
-        if (typeof document !== 'undefined' && document.title.startsWith('(*)')) {
-            document.title = document.title.replace(/^\(\*\)\s*/, '');
+        const titlePrefix = '(*) ';
+        if (typeof document !== 'undefined' && document.title.startsWith(titlePrefix)) {
+            document.title = document.title.substring(titlePrefix.length);
         }
     };
 
@@ -500,6 +533,7 @@ export function ChatWindow() {
      isInitialMessagesLoadForScroll.current = true; // Reset scroll behavior
      const newChatId = getChatId(user.uid, partner.uid);
      setChatId(newChatId); // Set the new chat ID - triggers the messages useEffect
+      console.log(`Selected user ${partner.uid}, switching to chat ${newChatId}`);
 
      // Ensure chat document exists (or create it)
      const chatDocRef = doc(currentDb, 'chats', newChatId);
@@ -651,7 +685,7 @@ export function ChatWindow() {
                         <span className="font-semibold text-card-foreground">{selectedChatPartner.displayName || selectedChatPartner.email}</span>
                         <span className="text-xs text-muted-foreground">
                            {isOnline(selectedChatPartner.lastSeen)
-                               ? (selectedChatPartner.status || 'Online')
+                               ? (isPartnerTyping ? 'typing...' : (selectedChatPartner.status || 'Online'))
                                : (selectedChatPartner.status || formatLastSeen(selectedChatPartner.lastSeen))
                            }
                         </span>
@@ -671,8 +705,8 @@ export function ChatWindow() {
 
                 <div className="flex-1 overflow-hidden">
                     <ScrollArea className="h-full" ref={scrollAreaRef}>
-                        <div ref={viewportRef} className="h-full flex flex-col p-4 space-y-2">
-                            <div className="flex-grow" />
+                        <div ref={viewportRef} className="h-full flex flex-col p-4 space-y-0.5"> {/* Reduce space-y for tighter messages */}
+                            <div className="flex-grow" /> {/* Pushes messages to bottom */}
                             {loadingMessages && messages.length === 0 && (
                                 <div className="space-y-4 p-4">
                                     {[...Array(4)].map((_, i) => (
@@ -689,7 +723,7 @@ export function ChatWindow() {
                                     <p className="text-sm">Send a message to {selectedChatPartner.displayName || selectedChatPartner.email}.</p>
                                 </div>
                             )}
-                            <div className="pb-4">
+                            <div className="pb-2"> {/* Reduce bottom padding */}
                                 {messages.map((msg) => (
                                     <ChatMessage
                                         key={msg.id}
@@ -699,12 +733,12 @@ export function ChatWindow() {
                                 ))}
                             </div>
                             {isPartnerTyping && (
-                                <div className="flex items-center gap-2 text-sm text-muted-foreground animate-pulse px-2 pb-2">
-                                    <Avatar className="h-7 w-7 flex-shrink-0">
+                                <div className="flex items-center gap-2 text-sm text-muted-foreground animate-pulse px-2 pb-1">
+                                    <Avatar className="h-6 w-6 flex-shrink-0">
                                         <AvatarImage src={selectedChatPartner.photoURL || undefined} alt={selectedChatPartner.displayName || 'Typing avatar'} data-ai-hint="typing indicator avatar"/>
-                                        <AvatarFallback>{getInitials(selectedChatPartner.displayName || selectedChatPartner.email)}</AvatarFallback>
+                                        <AvatarFallback className="text-xs">{getInitials(selectedChatPartner.displayName || selectedChatPartner.email)}</AvatarFallback>
                                     </Avatar>
-                                    <span>is typing...</span>
+                                    <span>typing...</span>
                                 </div>
                             )}
                         </div>
@@ -739,4 +773,3 @@ export function ChatWindow() {
      </>
   );
 }
-
