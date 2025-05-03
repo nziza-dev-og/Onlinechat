@@ -6,8 +6,9 @@ import { format, formatDistanceToNow } from 'date-fns';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import Image from 'next/image';
-import { Reply, Mic } from 'lucide-react'; // Import Reply icon and Mic icon
+import { Reply, Mic, Play } from 'lucide-react'; // Import Reply icon and Mic icon, Play
 import { Button } from '@/components/ui/button'; // Import Button for reply action
+import * as React from 'react'; // Import React for audio handling
 
 interface ChatMessageProps {
   message: Message;
@@ -28,11 +29,13 @@ const getInitials = (name: string | null | undefined): string => {
 export function ChatMessage({ message, onReply }: ChatMessageProps) {
   const { user } = useAuth();
   const isSender = user?.uid === message.uid;
+  const audioRef = React.useRef<HTMLAudioElement>(null);
+  const [isPlaying, setIsPlaying] = React.useState(false);
 
   const formatShortTimestamp = (timestamp: any): string => {
     if (timestamp && typeof timestamp.toDate === 'function') {
       try {
-        return format(timestamp.toDate(), 'p');
+        return format(timestamp.toDate(), 'p'); // Format like 1:23 PM
       } catch (error) {
         console.error("Error formatting short timestamp:", error, timestamp);
         return 'Invalid date';
@@ -45,6 +48,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
     if (timestamp && typeof timestamp.toDate === 'function') {
       try {
         const date = timestamp.toDate();
+        // Format like 'Jun 15th, 2024 at 1:23:45 PM'
         return format(date, 'PPpp');
       } catch (error) {
         console.error("Error formatting full timestamp:", error, timestamp);
@@ -58,6 +62,48 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
       e.stopPropagation(); // Prevent triggering other click events if needed
       onReply(message);
   };
+
+  // --- Audio Playback Handling ---
+  const togglePlay = () => {
+    const audioElement = audioRef.current;
+    if (!audioElement) return;
+
+    if (isPlaying) {
+      audioElement.pause();
+    } else {
+      audioElement.play().catch(err => console.error("Error playing audio:", err));
+    }
+    setIsPlaying(!isPlaying);
+  };
+
+  // Reset isPlaying state when audio ends
+  React.useEffect(() => {
+    const audioElement = audioRef.current;
+    if (!audioElement) return;
+
+    const handleEnded = () => setIsPlaying(false);
+    const handlePause = () => setIsPlaying(false); // Also set to false on manual pause
+    const handlePlay = () => setIsPlaying(true);
+
+    audioElement.addEventListener('ended', handleEnded);
+    audioElement.addEventListener('pause', handlePause);
+    audioElement.addEventListener('play', handlePlay);
+
+    return () => {
+      audioElement.removeEventListener('ended', handleEnded);
+       audioElement.removeEventListener('pause', handlePause);
+      audioElement.removeEventListener('play', handlePlay);
+    };
+  }, []);
+  // --- End Audio Playback Handling ---
+
+  // Determine reply context text
+  const getReplyTextPreview = (msg: Message): string => {
+      if (msg.text) return msg.text;
+      if (msg.imageUrl) return 'Image';
+      if (msg.audioUrl) return 'Voice note';
+      return 'Original message';
+  }
 
   return (
     <div className={cn(
@@ -73,7 +119,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
 
       <div
         className={cn(
-          "max-w-[70%] rounded-xl px-3.5 py-2.5 shadow-sm",
+          "max-w-[70%] rounded-xl px-3.5 py-2.5 shadow-sm break-words", // Added break-words
           isSender
             ? "bg-accent text-accent-foreground rounded-br-sm"
             : "bg-card text-card-foreground rounded-bl-sm"
@@ -85,12 +131,12 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
 
          {/* Display Reply Context */}
          {message.replyToMessageId && (
-            <div className="mb-2 p-2 border-l-2 border-primary/50 bg-primary/10 rounded-r-md text-xs">
+            <div className="mb-2 p-2 border-l-2 border-primary/50 bg-primary/10 rounded-r-md text-xs opacity-80">
                  <p className="font-medium text-primary-foreground/80 truncate">
                     Replying to {message.replyToMessageAuthor || 'Unknown'}
                  </p>
                  <p className="text-muted-foreground truncate italic">
-                    {message.replyToMessageText || (message.imageUrl ? 'Image' : (message.audioUrl ? 'Voice note' : 'Original message'))}
+                    {getReplyTextPreview(message)}
                  </p>
             </div>
          )}
@@ -101,15 +147,26 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
                 "my-2 p-2 rounded-md flex items-center gap-2",
                  isSender ? "bg-accent/80" : "bg-muted/60" // Slightly different background
             )}>
-                 <Mic className="h-4 w-4 flex-shrink-0 text-foreground/70" />
-                <audio controls src={message.audioUrl} preload="metadata" className="w-full max-w-xs h-9"> {/* Adjusted height */}
+                 <Button
+                     variant="ghost"
+                     size="icon"
+                     onClick={togglePlay}
+                     className="h-8 w-8 text-foreground/80 hover:text-foreground"
+                     aria-label={isPlaying ? "Pause voice note" : "Play voice note"}
+                 >
+                    {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                 </Button>
+                 {/* Hidden audio element */}
+                <audio ref={audioRef} src={message.audioUrl} preload="metadata" className="hidden">
                   Your browser does not support the audio element.
                 </audio>
+                {/* Optional: Display duration or waveform here */}
+                <span className="text-xs text-muted-foreground">Voice note</span>
             </div>
          )}
 
-        {message.imageUrl && !message.audioUrl && ( // Don't show image if audio is present (or decide based on preference)
-          <div className="relative aspect-square w-48 max-w-full my-2 rounded-md overflow-hidden border">
+        {message.imageUrl && !message.audioUrl && ( // Don't show image if audio is present
+          <div className="relative aspect-video w-48 max-w-full my-2 rounded-md overflow-hidden border">
             <Image
               src={message.imageUrl}
               alt="Chat image"
@@ -123,7 +180,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
         )}
 
         {message.text && (
-            <p className="text-sm break-words whitespace-pre-wrap">{message.text}</p>
+            <p className="text-sm whitespace-pre-wrap">{message.text}</p>
         )}
 
          <TooltipProvider delayDuration={300}>

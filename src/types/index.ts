@@ -17,7 +17,7 @@ export interface Message {
   audioUrl?: string | null; // Optional audio URL for voice notes
   // Fields for reply functionality
   replyToMessageId?: string | null;
-  replyToMessageText?: string | null;
+  replyToMessageText?: string | null; // Can be text, 'Image', or 'Voice note'
   replyToMessageAuthor?: string | null;
 }
 
@@ -96,4 +96,3 @@ export interface CommentSerializable {
   text: string;
   timestamp: string; // ISO string
 }
-
