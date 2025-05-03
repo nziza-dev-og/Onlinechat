@@ -1,4 +1,5 @@
 
+
 import type { User as FirebaseUser } from 'firebase/auth';
 import type { Timestamp } from 'firebase/firestore';
 
@@ -100,4 +101,19 @@ export interface CommentSerializable {
   photoURL: string | null;
   text: string;
   timestamp: string; // ISO string
+}
+
+// Interface for messages sent to admin
+export interface AdminMessage {
+    id: string;
+    senderUid: string;
+    senderName: string | null;
+    senderEmail: string | null;
+    message: string;
+    timestamp: string; // ISO string for serialization
+    isRead: boolean;
+    // Add reply fields if needed
+    reply?: string | null;
+    repliedAt?: string | null; // ISO string
+    repliedBy?: string | null; // Admin UID
 }

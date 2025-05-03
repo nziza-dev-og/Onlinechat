@@ -4,22 +4,22 @@
 import * as React from 'react';
 import { useAuth } from '@/hooks/use-auth';
 import { getPasswordChangeRequests, reviewPasswordChangeRequest } from '@/lib/user-profile.service';
-import type { UserProfile } from '@/types';
+import type { UserProfile, AdminMessage } from '@/types'; // Added AdminMessage import
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Loader2, ShieldAlert, CheckCircle, XCircle, UserCheck, UserX, BarChart2, Bell, Settings, ShieldCheck, Send, Ban } from 'lucide-react'; // Added Ban icon
+import { Loader2, ShieldAlert, CheckCircle, XCircle, UserCheck, UserX, BarChart2, Bell, Settings, ShieldCheck, Send, Ban, MessageSquare } from 'lucide-react'; // Added MessageSquare
 import { useToast } from '@/hooks/use-toast';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { getFirestore, doc, getDoc, type Firestore } from 'firebase/firestore';
 import { app } from '@/lib/firebase';
-import { getOnlineUsersCount } from '@/lib/admin.service';
+import { getOnlineUsersCount, getAdminMessages } from '@/lib/admin.service'; // Added getAdminMessages import
 import { sendNotification } from '@/lib/notification.service'; // Import notification service
 import { Textarea } from '@/components/ui/textarea'; // Import Textarea
 import { Label } from '@/components/ui/label'; // Import Label
-import { Switch } from "@/components/ui/switch"; // Import Switch for settings
+import { Switch } from "@/components/ui/switch"; // Import Switch for settings/security
 import { Input } from "@/components/ui/input"; // Import Input for settings/security
 import { blockIpAddress, logSuspiciousActivity } from '@/lib/security.service'; // Import security services
 
@@ -33,6 +33,33 @@ const getInitials = (name: string | null | undefined): string => {
       return nameParts[0][0].toUpperCase();
     }
     return '?';
+};
+
+// Helper to safely format timestamp or ISO string
+const formatTimestamp = (timestamp: any, formatString: string): string => {
+    if (!timestamp) return '';
+    let date: Date | null = null;
+    try {
+        if (timestamp instanceof Date) {
+            date = timestamp;
+        } else if (timestamp && typeof timestamp.toDate === 'function') { // Firestore Timestamp
+            date = timestamp.toDate();
+        } else if (typeof timestamp === 'string') { // ISO string
+            date = parseISO(timestamp);
+        } else if (typeof timestamp === 'number') { // Unix timestamp (seconds or ms)
+            date = new Date(timestamp > 100000000000 ? timestamp : timestamp * 1000);
+        }
+
+        if (date && !isNaN(date.getTime())) {
+            return formatDistanceToNowStrict(date, { addSuffix: true });
+        } else {
+            console.warn("Could not parse timestamp for formatting:", timestamp);
+            return 'Invalid date';
+        }
+    } catch (error) {
+        console.error("Error formatting timestamp:", error, timestamp);
+        return 'Invalid date';
+    }
 };
 
 export default function AdminPage() {
@@ -58,6 +85,13 @@ export default function AdminPage() {
   const [isBlockingIp, setIsBlockingIp] = React.useState(false);
   const [blockReason, setBlockReason] = React.useState(''); // Optional reason
 
+  // Admin Messages State
+  const [adminMessages, setAdminMessages] = React.useState<AdminMessage[]>([]);
+  const [loadingAdminMessages, setLoadingAdminMessages] = React.useState(true);
+  const [replyingToAdminMessage, setReplyingToAdminMessage] = React.useState<AdminMessage | null>(null);
+  const [replyText, setReplyText] = React.useState('');
+  const [isSendingReply, setIsSendingReply] = React.useState(false);
+
   const { toast } = useToast();
 
    // Initialize Firestore instance on mount
@@ -72,6 +106,7 @@ export default function AdminPage() {
             setIsAdmin(false); // Assume not admin if DB fails
             setLoadingRequests(false);
             setLoadingAnalytics(false);
+            setLoadingAdminMessages(false);
         }
     }, []);
 
@@ -82,25 +117,32 @@ export default function AdminPage() {
       setIsAdmin(null);
       setLoadingRequests(true);
       setLoadingAnalytics(true);
+      setLoadingAdminMessages(true);
       setRequests([]);
       setOnlineUsers(null);
+      setAdminMessages([]);
       return;
     }
     if (!user) {
       setIsAdmin(false);
       setLoadingRequests(false);
       setLoadingAnalytics(false);
+      setLoadingAdminMessages(false);
       setRequests([]);
       setError("Please log in to access the admin page.");
       setOnlineUsers(null);
+      setAdminMessages([]);
       return;
     }
 
     const checkAdminAndFetchData = async (firestoreInstance: Firestore) => {
         setLoadingRequests(true);
         setLoadingAnalytics(true);
+        setLoadingAdminMessages(true);
         setError(null);
         setOnlineUsers(null);
+        setAdminMessages([]);
+
         try {
              const profile = await getDoc(doc(firestoreInstance, 'users', user.uid));
              const isAdminUser = profile.exists() && profile.data()?.isAdmin === true;
@@ -108,9 +150,16 @@ export default function AdminPage() {
 
              if (isAdminUser) {
                 // Fetch password requests
-                const fetchedRequests = await getPasswordChangeRequests(user.uid);
-                setRequests(fetchedRequests);
-                setLoadingRequests(false); // Requests loaded
+                try {
+                    const fetchedRequests = await getPasswordChangeRequests(user.uid);
+                    setRequests(fetchedRequests);
+                } catch (reqError: any) {
+                    console.error("Error fetching password requests:", reqError);
+                    toast({ title: "Request Fetch Error", description: reqError.message, variant: "destructive" });
+                } finally {
+                    setLoadingRequests(false); // Requests loaded or failed
+                }
+
 
                 // Fetch analytics data
                 try {
@@ -118,15 +167,22 @@ export default function AdminPage() {
                     setOnlineUsers(onlineCount);
                 } catch (analyticsError: any) {
                      console.error("Error fetching analytics:", analyticsError);
-                     toast({
-                         title: "Analytics Error",
-                         description: analyticsError.message || "Could not load online user count.",
-                         variant: "destructive",
-                     });
+                     toast({ title: "Analytics Error", description: analyticsError.message || "Could not load online user count.", variant: "destructive"});
                      setOnlineUsers(0); // Default to 0 on error
                 } finally {
                      setLoadingAnalytics(false); // Analytics loaded (or failed)
                 }
+
+                 // Fetch admin messages
+                 try {
+                    const fetchedMessages = await getAdminMessages(user.uid);
+                    setAdminMessages(fetchedMessages);
+                 } catch (msgError: any) {
+                     console.error("Error fetching admin messages:", msgError);
+                     toast({ title: "Messages Fetch Error", description: msgError.message, variant: "destructive" });
+                 } finally {
+                    setLoadingAdminMessages(false); // Messages loaded or failed
+                 }
 
                 // TODO: Fetch initial settings values from config service
                 // const config = await getPlatformConfig();
@@ -137,8 +193,10 @@ export default function AdminPage() {
                 setError("You do not have permission to access this page.");
                 setRequests([]);
                 setOnlineUsers(null);
+                setAdminMessages([]);
                 setLoadingRequests(false);
                 setLoadingAnalytics(false);
+                setLoadingAdminMessages(false);
              }
         } catch (err: any) {
             console.error("Error checking admin status or fetching data:", err);
@@ -146,8 +204,10 @@ export default function AdminPage() {
             setIsAdmin(false);
             setRequests([]);
             setOnlineUsers(null);
+            setAdminMessages([]);
             setLoadingRequests(false);
             setLoadingAnalytics(false);
+            setLoadingAdminMessages(false);
         }
     };
 
@@ -170,11 +230,7 @@ export default function AdminPage() {
       setRequests(prevRequests => prevRequests.filter(req => req.uid !== targetUserId));
     } catch (err: any) {
       console.error(`Error ${approve ? 'approving' : 'denying'} request:`, err);
-      toast({
-        title: "Action Failed",
-        description: err.message || `Could not ${approve ? 'approve' : 'deny'} the request.`,
-        variant: "destructive",
-      });
+      toast({ title: "Action Failed", description: err.message || `Could not ${approve ? 'approve' : 'deny'} the request.`, variant: "destructive"});
     } finally {
       setProcessingUserId(null);
     }
@@ -188,17 +244,10 @@ export default function AdminPage() {
         setIsSendingNotification(true);
         try {
             await sendNotification(notificationMessage.trim()); // Send global announcement
-            toast({
-                title: 'Announcement Sent',
-                description: 'Your announcement has been broadcast.',
-            });
+            toast({ title: 'Announcement Sent', description: 'Your announcement has been broadcast.' });
             setNotificationMessage(''); // Clear input
         } catch (error: any) {
-            toast({
-                title: 'Send Failed',
-                description: error.message || 'Could not send the announcement.',
-                variant: 'destructive',
-            });
+            toast({ title: 'Send Failed', description: error.message || 'Could not send the announcement.', variant: 'destructive' });
         } finally {
             setIsSendingNotification(false);
         }
@@ -229,31 +278,42 @@ export default function AdminPage() {
         const effectiveReason = blockReason.trim() || 'Blocked by administrator'; // Default reason
         try {
             await blockIpAddress(ipToBlock.trim(), effectiveReason, user.uid);
-            toast({
-                title: 'IP Address Blocked',
-                description: `IP address ${ipToBlock.trim()} has been blocked.`,
-            });
+            toast({ title: 'IP Address Blocked', description: `IP address ${ipToBlock.trim()} has been blocked.` });
             setIpToBlock(''); // Clear input
             setBlockReason(''); // Clear reason input
         } catch (error: any) {
-             toast({
-                title: 'IP Block Failed',
-                description: error.message || 'Could not block the IP address.',
-                variant: 'destructive',
-             });
+             toast({ title: 'IP Block Failed', description: error.message || 'Could not block the IP address.', variant: 'destructive' });
               // Log the failed attempt
              try {
-                 await logSuspiciousActivity('ip_block_failure', {
-                     adminUid: user.uid,
-                     targetIp: ipToBlock.trim(),
-                     error: error.message,
-                 });
+                 await logSuspiciousActivity('ip_block_failure', { adminUid: user.uid, targetIp: ipToBlock.trim(), error: error.message });
              } catch (logError) {
                  console.error("Failed to log IP block failure:", logError);
              }
         } finally {
             setIsBlockingIp(false);
         }
+   };
+
+   // Handle sending reply to admin message (Placeholder)
+   const handleSendReply = async (e: React.FormEvent) => {
+       e.preventDefault();
+       if (!replyingToAdminMessage || !replyText.trim() || isSendingReply || !user) return;
+
+       setIsSendingReply(true);
+       console.log(`Replying to message ${replyingToAdminMessage.id} from ${replyingToAdminMessage.senderUid} with text: ${replyText}`);
+       try {
+           // TODO: Implement actual reply logic (e.g., send reply via a service)
+           // await sendAdminReply(replyingToAdminMessage.id, replyText, user.uid);
+           await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate network
+           toast({ title: 'Reply Sent (Placeholder)' });
+           setReplyText('');
+           setReplyingToAdminMessage(null); // Clear reply state
+           // Optionally update the message state in UI (mark as replied?)
+       } catch (error: any) {
+           toast({ title: 'Reply Failed', description: error.message, variant: 'destructive' });
+       } finally {
+           setIsSendingReply(false);
+       }
    };
 
 
@@ -294,9 +354,10 @@ export default function AdminPage() {
         </div>
 
         <Tabs defaultValue="requests" className="w-full">
-          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 md:grid-cols-5 mb-4"> {/* Added mb-4 */}
+          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 md:grid-cols-6 mb-4"> {/* Added mb-4 and Messages tab */}
             <TabsTrigger value="requests"><ShieldCheck className="mr-2 h-4 w-4 inline-block"/> Requests</TabsTrigger>
             <TabsTrigger value="analytics"><BarChart2 className="mr-2 h-4 w-4 inline-block"/> Analytics</TabsTrigger>
+            <TabsTrigger value="messages"><MessageSquare className="mr-2 h-4 w-4 inline-block"/> Messages</TabsTrigger> {/* New Messages Tab */}
             <TabsTrigger value="notifications"><Bell className="mr-2 h-4 w-4 inline-block"/> Notifications</TabsTrigger>
             <TabsTrigger value="settings"><Settings className="mr-2 h-4 w-4 inline-block"/> Settings</TabsTrigger>
             <TabsTrigger value="security"><ShieldAlert className="mr-2 h-4 w-4 inline-block"/> Security</TabsTrigger>
@@ -403,6 +464,81 @@ export default function AdminPage() {
                       <p className="text-muted-foreground italic text-center mt-4">More detailed usage statistics and reports coming soon...</p>
                       {/* Placeholder for charts and detailed stats */}
                   </CardContent>
+              </Card>
+           </TabsContent>
+
+          {/* Messages Tab */}
+           <TabsContent value="messages">
+              <Card className="shadow-lg mt-4">
+                   <CardHeader>
+                       <CardTitle>Admin Messages</CardTitle>
+                       <CardDescription>Messages sent directly to administrators.</CardDescription>
+                   </CardHeader>
+                    <CardContent className="space-y-4">
+                         {loadingAdminMessages && (
+                             <div className="space-y-3">
+                                 {[...Array(2)].map((_, i) => (
+                                     <div key={i} className="p-3 border rounded-md bg-background">
+                                         <div className="flex items-center justify-between mb-1">
+                                             <Skeleton className="h-4 w-1/3" />
+                                             <Skeleton className="h-3 w-1/4" />
+                                         </div>
+                                         <Skeleton className="h-4 w-full" />
+                                          <Skeleton className="h-8 w-20 mt-3" />
+                                     </div>
+                                 ))}
+                             </div>
+                         )}
+
+                         {!loadingAdminMessages && adminMessages.length === 0 && (
+                             <div className="text-center text-muted-foreground p-6 border border-dashed rounded-md">
+                                 <MessageSquare className="h-10 w-10 mx-auto mb-3" />
+                                 <p>No messages found for administrators.</p>
+                             </div>
+                         )}
+
+                          {!loadingAdminMessages && adminMessages.map((msg) => (
+                             <div key={msg.id} className="p-4 border rounded-lg bg-card shadow-sm">
+                                 <div className="flex items-center justify-between mb-2 text-xs text-muted-foreground">
+                                     <span>From: {msg.senderName || 'Unknown User'} ({msg.senderEmail || 'No email'})</span>
+                                     <span>{formatTimestamp(msg.timestamp, 'PPp')}</span>
+                                 </div>
+                                 <p className="text-sm text-foreground mb-3">{msg.message}</p>
+                                 {/* Reply Section (Conditional) */}
+                                 {replyingToAdminMessage?.id === msg.id ? (
+                                     <form onSubmit={handleSendReply} className="mt-3 space-y-2">
+                                         <Label htmlFor={`reply-${msg.id}`}>Your Reply</Label>
+                                         <Textarea
+                                             id={`reply-${msg.id}`}
+                                             value={replyText}
+                                             onChange={(e) => setReplyText(e.target.value)}
+                                             placeholder="Type your reply..."
+                                             required
+                                             minLength={5}
+                                             maxLength={500}
+                                             disabled={isSendingReply}
+                                             className="min-h-[80px]"
+                                         />
+                                         <div className="flex justify-end gap-2">
+                                             <Button type="button" variant="ghost" size="sm" onClick={() => { setReplyingToAdminMessage(null); setReplyText(''); }} disabled={isSendingReply}>Cancel</Button>
+                                             <Button type="submit" size="sm" disabled={!replyText.trim() || isSendingReply}>
+                                                 {isSendingReply ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Send className="mr-2 h-4 w-4"/>} Send Reply
+                                             </Button>
+                                         </div>
+                                     </form>
+                                 ) : (
+                                     <Button
+                                         variant="outline"
+                                         size="sm"
+                                         onClick={() => setReplyingToAdminMessage(msg)}
+                                         disabled={!!replyingToAdminMessage || isSendingReply} // Disable if already replying to another msg
+                                     >
+                                         Reply
+                                     </Button>
+                                 )}
+                             </div>
+                         ))}
+                    </CardContent>
               </Card>
            </TabsContent>
 
@@ -549,6 +685,4 @@ export default function AdminPage() {
     </div>
   );
 }
-
-
     
