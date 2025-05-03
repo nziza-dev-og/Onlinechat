@@ -17,7 +17,7 @@ export interface UserProfileInput {
 
 
 /**
- * Creates or updates a user's profile document in Firestore and optionally updates Firebase Auth profile.
+ * Creates or updates a user's profile document in Firestore.
  * Accepts primitive user data to avoid passing non-serializable objects across server/client boundaries.
  * Handles both new user creation and updates for existing users (e.g., updating lastSeen).
  *
@@ -61,10 +61,10 @@ export const createOrUpdateUserProfile = async (
         // Use a type assertion to allow serverTimestamp()
         const firestoreData: Partial<UserProfile> & { lastSeen: any, createdAt?: any } = {
             uid: uid, // Ensure uid is always set/updated
-            email: email,
-            // Only set displayName/photoURL if they have a value (not undefined).
-            // Use null explicitly if you want to clear the field in Firestore.
-            ...(displayName !== undefined && { displayName: displayName ?? null }), // Use null if explicitly undefined/null
+            email: email?.toLowerCase() ?? null, // Store email lowercase or null
+            // Only set displayName/photoURL if they are explicitly provided in userData.
+            // Use null if the provided value is null or an empty string for displayName.
+            ...(displayName !== undefined && { displayName: displayName || null }), // Use null for empty string or null
             ...(photoURL !== undefined && { photoURL: photoURL ?? null }),         // Use null if explicitly undefined/null
             lastSeen: serverTimestamp(), // Always update lastSeen on any interaction using the *real* serverTimestamp here
         };
@@ -76,7 +76,7 @@ export const createOrUpdateUserProfile = async (
 
         // Use setDoc with merge: true to create or update the document.
         // This handles both new user creation and updating existing fields like lastSeen.
-        console.log(`Attempting Firestore ${isNewUser ? 'set' : 'set with merge'} for user ${uid} with data:`, firestoreData);
+        console.log(`Attempting Firestore ${isNewUser ? 'set' : 'set with merge'} for user ${uid} with data:`, JSON.stringify(firestoreData, null, 2));
         await setDoc(userRef, firestoreData, { merge: !isNewUser }); // Merge only if it's NOT a new user
         console.log(`Firestore: User profile ${isNewUser ? 'created' : 'updated'} for user: ${uid}`);
 
@@ -137,7 +137,12 @@ export const updateUserProfileDocument = async (uid: string, data: UserProfileUp
             acc[key as keyof Partial<UserProfile>] = Timestamp.fromDate(value);
         } else if (value !== undefined) {
             // For any other defined value (string, null, number, boolean etc.)
-            acc[key as keyof Partial<UserProfile>] = value;
+            // If displayName is an empty string, store it as null in Firestore
+             if (key === 'displayName' && value === '') {
+                 acc[key] = null;
+             } else {
+                 acc[key as keyof Partial<UserProfile>] = value;
+             }
         }
         // Ignore undefined values
         return acc;
@@ -145,7 +150,7 @@ export const updateUserProfileDocument = async (uid: string, data: UserProfileUp
 
 
     if (Object.keys(updateData).length === 0) {
-        console.warn(`Firestore: updateUserProfileDocument called for user ${uid} with no valid data to update (all values were undefined).`);
+        console.warn(`Firestore: updateUserProfileDocument called for user ${uid} with no valid data to update (all values were undefined or empty displayName).`);
         return; // No changes to make
     }
 
@@ -164,7 +169,7 @@ export const updateUserProfileDocument = async (uid: string, data: UserProfileUp
              throw new Error(`User profile document for UID ${uid} does not exist. Update failed.`);
          }
 
-         console.log(`Attempting Firestore update for user ${uid} with data:`, updateData);
+         console.log(`Attempting Firestore update for user ${uid} with data:`, JSON.stringify(updateData, null, 2));
          // Use updateDoc for targeted field updates.
          await updateDoc(userRef, updateData);
          // console.log(`Firestore: Document for user ${uid} updated successfully.`); // Keep log noise low for frequent updates like lastSeen

@@ -151,9 +151,9 @@ export function AuthForm() {
     }
   };
 
-   // Upload photo to Firebase Storage (Consider moving to user-profile.service.ts if reused)
+   // Upload photo to Firebase Storage
    const uploadPhoto = async (file: File, uid: string): Promise<string | null> => {
-    if (!file) return null; // No file provided
+    if (!file || !storage) return null; // No file provided or storage not initialized
 
     // Use a consistent file name or a unique ID for the profile picture
     const fileName = `profile_${uid}.${file.name.split('.').pop()}`; // e.g., profile_userId.png
@@ -191,6 +191,12 @@ export function AuthForm() {
     let finalPhotoURL: string | null = null; // Keep track of the photo URL
     let finalDisplayName: string | null = null;
 
+    if (!auth) {
+        toast({ title: 'Authentication Error', description: 'Auth service not available.', variant: 'destructive' });
+        setIsSubmitting(false);
+        return;
+    }
+
     try {
       let userCredential: UserCredential;
       let userId: string;
@@ -213,14 +219,20 @@ export function AuthForm() {
              finalPhotoURL = await uploadPhoto(signUpData.photoFile, user.uid);
              if (!finalPhotoURL) {
                 console.warn("Photo upload failed during sign up, proceeding without profile picture.");
+                // Optionally toast a warning?
              }
         }
+        // Ensure displayName is string or null, not undefined
         finalDisplayName = signUpData.displayName || null;
 
         // 3. Update Firebase Auth Profile (displayName, photoURL) - Happens Client-Side
         const authProfileUpdates: { displayName?: string | null; photoURL?: string | null } = {};
-        if (finalDisplayName !== user.displayName) authProfileUpdates.displayName = finalDisplayName;
-        if (finalPhotoURL !== user.photoURL) authProfileUpdates.photoURL = finalPhotoURL;
+        if (finalDisplayName !== user.displayName) {
+             authProfileUpdates.displayName = finalDisplayName;
+        }
+         if (finalPhotoURL !== user.photoURL) {
+             authProfileUpdates.photoURL = finalPhotoURL;
+         }
 
         if (Object.keys(authProfileUpdates).length > 0) {
             try {
@@ -237,12 +249,14 @@ export function AuthForm() {
         const profileData: UserProfileInput = {
             uid: userId,
             email: userEmail,
-            displayName: finalDisplayName,
-            photoURL: finalPhotoURL
+            displayName: finalDisplayName, // Use the potentially updated display name
+            photoURL: finalPhotoURL      // Use the potentially uploaded photo URL
         };
 
+        // Call the service function to create/update the Firestore document
         console.log("Creating/Updating Firestore profile with:", profileData);
         await createOrUpdateUserProfile(profileData);
+        console.log(`Firestore profile created/updated for user ${userId}`);
         toast({ title: 'Account created successfully!' });
 
       } else {
@@ -255,13 +269,11 @@ export function AuthForm() {
         userEmail = user.email;
         console.log("User signed in:", userId);
 
-        // Prepare data for Firestore profile update (only uid and email needed for lastSeen update)
+        // Prepare data for Firestore profile update (only uid and email needed for lastSeen update by the service)
         const profileData: UserProfileInput = {
             uid: userId,
             email: userEmail,
-            // Use existing Auth data as potential source if needed, but service focuses on lastSeen here
-            displayName: user.displayName,
-            photoURL: user.photoURL,
+            // We don't need to send displayName/photoURL here as the service only updates lastSeen on sign-in
         };
 
         // Update lastSeen in Firestore on successful sign-in using the service
@@ -291,6 +303,11 @@ export function AuthForm() {
 
   const handleGoogleSignIn = async () => {
     setIsSubmitting(true);
+    if (!auth) {
+        toast({ title: 'Authentication Error', description: 'Auth service not available.', variant: 'destructive' });
+        setIsSubmitting(false);
+        return;
+    }
     const provider = new GoogleAuthProvider();
     try {
       console.log("Attempting Google Sign-In...");
@@ -298,7 +315,7 @@ export function AuthForm() {
       const user = userCredential.user;
       console.log("Signed in with Google:", user.uid, user.displayName, user.photoURL);
 
-      // Prepare data for Firestore profile update (using primitives)
+      // Prepare data for Firestore profile update (using primitives from Google's profile)
       const profileData: UserProfileInput = {
           uid: user.uid,
           email: user.email,
