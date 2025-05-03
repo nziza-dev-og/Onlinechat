@@ -104,13 +104,13 @@ export function PostForm({ onPostAdded }: PostFormProps) {
 
 
   return (
-    <Card className="w-full shadow-md mb-6">
+    <Card className="w-full shadow-lg mb-8 border border-border/50 bg-card"> {/* Increased mb and added border */}
       <form onSubmit={form.handleSubmit(onSubmit)}>
-        <CardHeader>
-          <CardTitle>Create a New Post</CardTitle>
+        <CardHeader className="pb-4"> {/* Reduced bottom padding */}
+          <CardTitle className="text-xl font-semibold">Create a New Post</CardTitle>
           <CardDescription>Share your thoughts, images, or videos.</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-5"> {/* Increased spacing */}
           {/* Text Input */}
           <div className="grid w-full gap-1.5">
             <Label htmlFor="text">What's on your mind?</Label>
@@ -120,7 +120,7 @@ export function PostForm({ onPostAdded }: PostFormProps) {
               maxLength={1000}
               {...form.register('text')}
               disabled={isSubmitting}
-              className="min-h-[80px]"
+              className="min-h-[100px] text-base" // Increased min-height and text size
             />
             {form.formState.errors.text && (
               <p className="text-sm text-destructive">{form.formState.errors.text.message}</p>
@@ -129,6 +129,8 @@ export function PostForm({ onPostAdded }: PostFormProps) {
                 {form.watch('text')?.length ?? 0} / 1000
              </p>
           </div>
+
+          <Separator /> {/* Add separators */}
 
           {/* Image URL Input */}
           <div className="grid w-full gap-1.5">
@@ -165,8 +167,8 @@ export function PostForm({ onPostAdded }: PostFormProps) {
            </div>
 
         </CardContent>
-        <CardFooter className="flex justify-end">
-          <Button type="submit" disabled={isSubmitting || !canSubmit || !form.formState.isValid}>
+        <CardFooter className="flex justify-end pt-4 border-t border-border/50"> {/* Added border */}
+          <Button type="submit" disabled={isSubmitting || !canSubmit || !form.formState.isValid} size="lg"> {/* Larger button */}
             {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
             Post
           </Button>
@@ -175,4 +177,3 @@ export function PostForm({ onPostAdded }: PostFormProps) {
     </Card>
   );
 }
-
