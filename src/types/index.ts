@@ -27,3 +27,16 @@ export interface UserProfile {
     createdAt?: Timestamp | Date;
 }
 
+// Added Post type
+export interface Post {
+    id: string;
+    uid: string; // User ID of the author
+    displayName: string | null; // Author's display name at time of posting
+    photoURL: string | null; // Author's photo URL at time of posting
+    text?: string | null; // Optional text content
+    imageUrl?: string | null; // Optional image URL
+    videoUrl?: string | null; // Optional video URL
+    timestamp: Timestamp; // Firestore Timestamp of creation
+}
+
+
