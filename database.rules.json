@@ -1,0 +1,75 @@
+{
+  "rules": {
+    "users": {
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "calls": {
+      "$callId": {
+        // Allow read/write only if the authenticated user's UID is part of the callId string
+        // This assumes callId is structured like 'user1_user2'
+        ".read": "auth != null && $callId.contains(auth.uid)",
+        ".write": "auth != null && $callId.contains(auth.uid)",
+
+        "messages": {
+          // Read/Write rules inherited from parent ($callId) are sufficient
+          "$messageId": {
+            // Validate the structure and sender of each new message
+            // Ensure payload exists, timestamp is server value, and sender matches auth
+            ".validate": "newData.hasChildren(['senderId', 'type', 'payload', 'timestamp']) && newData.child('senderId').val() === auth.uid && newData.child('timestamp').val() == now"
+          }
+        }
+        // Allow removing the entire call node by a participant (e.g., when hanging up)
+        // Ensure this doesn't conflict with specific write rules above if needed.
+        // A participant can delete the node if it exists and they are part of the callId.
+        // ".write": "!data.exists() || (auth != null && $callId.contains(auth.uid))" // Combined write/delete
+      }
+    },
+    // --- Rules for other potential top-level RTDB nodes ---
+     "adminMessages": {
+        // Only admins can read admin messages
+        ".read": "root.child('users').child(auth.uid).child('isAdmin').val() === true",
+        // Any authenticated user can send a message to admin
+        ".write": "auth != null",
+        "$messageId": {
+           // Validate required fields and sender ID for new messages
+           ".validate": "newData.hasChildren(['senderUid', 'message', 'timestamp']) && newData.child('senderUid').val() === auth.uid && newData.child('timestamp').val() == now"
+         }
+     },
+     "notifications": {
+         // Allow all authenticated users to read notifications (for global announcements etc.)
+         ".read": "auth != null",
+         // Only admins can write notifications (e.g., send announcements)
+         ".write": "root.child('users').child(auth.uid).child('isAdmin').val() === true",
+         "$notificationId": {
+            // Basic validation for notification structure if written directly
+            ".validate": "newData.hasChildren(['message', 'timestamp'])"
+         }
+     },
+      "blocked_ips": {
+          // Only admins can read or write blocked IPs
+          ".read": "root.child('users').child(auth.uid).child('isAdmin').val() === true",
+          ".write": "root.child('users').child(auth.uid).child('isAdmin').val() === true",
+           "$ipAddress": {
+              // Validate IP structure if needed, ensure required fields
+             ".validate": "newData.hasChildren(['ip', 'blockedAt', 'blockedBy'])"
+           }
+      },
+      "security_logs": {
+          // Only admins can read security logs
+          ".read": "root.child('users').child(auth.uid).child('isAdmin').val() === true",
+          // Disallow direct client writes; logs should likely be written via server functions/actions
+          ".write": false
+      },
+      "settings": {
+          "--platform-config--": {
+              // Allow all authenticated users to read platform settings
+              ".read": "auth != null",
+               // Only admins can write platform settings
+               ".write": "root.child('users').child(auth.uid).child('isAdmin').val() === true"
+          }
+      }
+  }
+}
