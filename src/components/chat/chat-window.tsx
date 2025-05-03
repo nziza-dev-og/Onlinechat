@@ -103,9 +103,10 @@ export function ChatWindow() {
          }
 
         try {
-          // console.log(`Updating presence for ${user.uid} (${reason})...`);
-          await updateUserProfileDocument(user.uid, { lastSeen: serverTimestamp() }); // Use actual serverTimestamp()
-          // console.log(`Presence updated for ${user.uid} (${reason}).`);
+           // console.log(`Updating presence for ${user.uid} (${reason})...`);
+           // IMPORTANT: Pass the string 'SERVER_TIMESTAMP' to the server action
+           await updateUserProfileDocument(user.uid, { lastSeen: 'SERVER_TIMESTAMP' });
+           // console.log(`Presence updated for ${user.uid} (${reason}).`);
         } catch (error: any) {
            // Log the detailed error from the service function
            console.error(`🔴 Error updating user presence for ${user.uid} (${reason}):`, error.message, error);
@@ -298,10 +299,6 @@ export function ChatWindow() {
       limit(100) // Consider pagination for very long chats
     );
 
-    // Flag to ensure we only process the initial batch for scrolling once
-    let initialSnapshotProcessed = false;
-    let hasScrolledInitially = false;
-
     // Store the new unsubscribe function
     messageListenerUnsubscribe.current = onSnapshot(messagesQuery, (querySnapshot) => {
        const newMessagesBatch: Message[] = []; // Collect new messages from this snapshot
@@ -464,7 +461,7 @@ export function ChatWindow() {
                     // Create the chat document with participants array (optional, but good practice)
                     await setDoc(chatDocRef, {
                         participants: [user.uid, partner.uid],
-                        createdAt: serverTimestamp()
+                        createdAt: serverTimestamp() // Use actual serverTimestamp
                     });
                     console.log(`Chat document ${newChatId} created.`);
                 }
