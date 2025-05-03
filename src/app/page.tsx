@@ -36,5 +36,3 @@ export default function Home() {
   // If loading is complete and there's no user, show the AuthForm
   return <AuthForm />;
 }
-
-    
