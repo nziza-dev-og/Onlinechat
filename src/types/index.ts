@@ -171,9 +171,11 @@ export type SignalingMessage = SignalingOffer | SignalingAnswer | SignalingCandi
 
 // --- Platform Configuration Types ---
 export interface MusicPlaylistItem {
-    id: string; // Unique ID for the track (can be URL or a generated ID)
+    id: string; // Unique ID for the track (can be Firestore doc ID)
     title: string;
     url: string;
+    // Add optional duration if you pre-process files, helps with trimming UI
+    duration?: number; // Duration in seconds
 }
 
 export interface PlatformConfig {
@@ -183,4 +185,23 @@ export interface PlatformConfig {
   // Add other config fields here (e.g., theme, logoUrl)
 }
 // --- End Platform Configuration Types ---
+
+// --- Define the UserProfileUpdateData type ---
+// This type should match the definition in user-profile.service.ts
+// or be imported from there if possible (though importing server code to client might be tricky).
+export type UserProfileUpdateData = {
+    displayName?: string | null;
+    photoURL?: string | null;
+    status?: string | null;
+    lastSeen?: 'SERVER_TIMESTAMP';
+    // Password change flags can be updated by specific actions, but not generally
+    passwordChangeRequested?: boolean;
+    passwordChangeApproved?: boolean;
+} & {
+    uid?: never;
+    email?: never;
+    createdAt?: never;
+    isAdmin?: never; // Explicitly prevent isAdmin updates via this general function
+};
+
 ```
