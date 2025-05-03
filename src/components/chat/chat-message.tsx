@@ -6,7 +6,7 @@ import { format, formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import Image from 'next/image';
-import { Reply, Mic, Play, Pause } from 'lucide-react'; // Ensure Pause is imported
+import { Reply, Mic, Play, Pause, Video as VideoIcon } from 'lucide-react'; // Added VideoIcon
 import { Button } from '@/components/ui/button'; // Import Button for reply action
 import * as React from 'react'; // Import React for audio handling and state
 import { FullScreenImageViewer } from './full-screen-image-viewer'; // Import the modal
@@ -175,6 +175,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
       if (msg.text) return msg.text;
       if (msg.imageUrl) return 'Image';
       if (msg.audioUrl) return 'Voice note';
+      if (msg.videoUrl) return 'Video'; // Add video case
       return 'Original message';
   }
 
@@ -235,10 +236,6 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
                  <audio ref={audioRef} src={message.audioUrl} preload="metadata" className="hidden">
                      Your browser does not support the audio element.
                  </audio>
-                 {/* Progress bar simulation or actual if needed */}
-                 {/* <div className="flex-1 h-1 bg-foreground/20 rounded-full overflow-hidden">
-                     <div className="h-full bg-primary transition-all duration-150" style={{ width: `${audioDuration ? (currentTime / audioDuration) * 100 : 0}%` }}></div>
-                 </div> */}
                  {/* Display Time */}
                  <span className="text-xs text-muted-foreground font-mono w-16 text-right flex-shrink-0">
                      {audioDuration !== null ? `${formatAudioTime(currentTime)} / ${formatAudioTime(audioDuration)}` : (message.audioUrl ? 'Loading...' : 'No audio')}
@@ -247,7 +244,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
          )}
 
         {/* Display Image - Wrapped in Button */}
-         {message.imageUrl && !message.audioUrl && (
+         {message.imageUrl && !message.audioUrl && !message.videoUrl && (
           <Button
               variant="ghost"
               className="relative aspect-video w-48 max-w-full my-2 p-0 h-auto rounded-md overflow-hidden border block cursor-pointer" // Make it a block, remove default padding
@@ -264,6 +261,27 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
              />
           </Button>
          )}
+
+         {/* Display Video */}
+          {message.videoUrl && !message.audioUrl && !message.imageUrl && (
+             <div className="relative aspect-video w-full max-w-md my-2 rounded-lg overflow-hidden border shadow-inner">
+                 {/* Basic HTML5 Video Player */}
+                 <video
+                     src={message.videoUrl}
+                     controls
+                     preload="metadata" // Load metadata to get duration/dimensions if possible
+                     className="w-full h-full object-contain bg-black" // contain ensures the whole video fits
+                     data-ai-hint="chat message video"
+                     title={message.text ? `Video: ${message.text.substring(0, 30)}...` : "Chat video"}
+                 >
+                     Your browser does not support the video tag.
+                     <a href={message.videoUrl} target="_blank" rel="noopener noreferrer" className="text-primary underline p-2 block">
+                         Watch video
+                     </a>
+                 </video>
+                 {/* Consider adding a more robust video player component later if needed */}
+             </div>
+          )}
 
 
         {message.text && (

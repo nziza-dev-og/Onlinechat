@@ -6,7 +6,7 @@ import { db } from '@/lib/firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Send, Image as ImageIcon, X, Mic, Square, Trash2, Play, Pause, AlertCircle } from 'lucide-react'; // Added Mic, Square, Trash2, Play, Pause, AlertCircle
+import { Send, Image as ImageIcon, X, Mic, Square, Trash2, Play, Pause, AlertCircle, Video as VideoIcon } from 'lucide-react'; // Added VideoIcon
 import { useAuth } from '@/hooks/use-auth';
 import { updateTypingStatus } from '@/lib/chat.service';
 import { uploadAudio } from '@/lib/storage.service'; // Import the audio upload service
@@ -25,7 +25,9 @@ interface ChatInputProps {
 export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) {
   const [message, setMessage] = useState('');
   const [imageUrl, setImageUrl] = useState('');
+  const [videoUrl, setVideoUrl] = useState(''); // State for video URL
   const [showImageUrlInput, setShowImageUrlInput] = useState(false);
+  const [showVideoUrlInput, setShowVideoUrlInput] = useState(false); // State for showing video input
   const { user } = useAuth();
   const [isSending, setIsSending] = useState(false);
   const { toast } = useToast();
@@ -204,6 +206,10 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
   const startRecording = async () => {
     console.log("Start recording requested.");
     discardRecording(); // Clear any previous recording/preview first
+    setShowImageUrlInput(false); // Hide other inputs
+    setShowVideoUrlInput(false);
+    setImageUrl('');
+    setVideoUrl('');
 
     const stream = await getMicStream();
     if (!stream) {
@@ -223,7 +229,7 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
             }
         }
         if (!supportedMimeType) {
-            console.warn(`Could not find preferred MIME type. Using browser default (likely '${mediaRecorderRef.current?.mimeType || 'unknown'}'). Recording might fail or have unexpected format.`);
+            console.warn(`Could not find preferred MIME type. Using browser default. Recording might fail or have unexpected format.`);
         }
         console.log("Using MIME type:", supportedMimeType || "browser default");
 
@@ -313,9 +319,6 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
       } finally {
           setIsRecording(false);
           // Stream stopping is now handled within onstop or explicitly above if forced stop on non-recording
-          // stopStream(); // Removed from here
-          // Don't nullify ref here, let onstop handle cleanup or useEffect cleanup
-          // mediaRecorderRef.current = null;
       }
     } else if (!isRecording && !force) {
         console.warn("Stop recording called but not currently recording.");
@@ -350,13 +353,10 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
       if (isPreviewPlaying) {
           console.log("Pausing audio preview.");
           audioRef.current.pause();
-          // Resetting currentTime might cause issues if user wants to resume
-          // audioRef.current.currentTime = 0; // Reset to start on pause
       } else {
           console.log("Playing audio preview.");
           audioRef.current.play().catch(err => console.error("Error playing audio preview:", err));
       }
-      // State is toggled via event listeners
   };
 
   // Moved ended handler here to use useCallback
@@ -408,8 +408,13 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
     e.preventDefault();
     const trimmedMessage = message.trim();
     const trimmedImageUrl = imageUrl.trim();
-    // Prioritize audio if present
-    const hasContent = trimmedMessage || trimmedImageUrl || audioBlob;
+    const trimmedVideoUrl = videoUrl.trim(); // Trim video URL
+
+    // Prioritize audio if present, then video, then image
+    const hasContent = trimmedMessage || audioBlob || trimmedVideoUrl || trimmedImageUrl;
+    let mediaUrl: string | null = null;
+    let mediaType: 'audio' | 'video' | 'image' | null = null;
+
 
     if (!user || !chatId || !hasContent || isSending) {
         console.warn("Send message condition not met:", { user: !!user, chatId: !!chatId, hasContent, isSending });
@@ -426,12 +431,12 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
     }
 
     const { uid, displayName, photoURL } = user;
-    let finalAudioUrl: string | null = null;
 
     try {
-      // 1. Upload audio if present
+      // 1. Upload audio if present (Highest Priority)
       if (audioBlob) {
          console.log("Audio blob detected, starting upload...");
+         mediaType = 'audio';
          setUploadProgress(0); // Indicate start of upload
          const timestamp = Date.now();
          // Ensure MIME type is available, default to webm if needed
@@ -443,9 +448,9 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
          const updateProgress = (progress: number) => setUploadProgress(progress);
 
          try {
-             finalAudioUrl = await uploadAudio(audioBlob, audioPath, updateProgress); // Pass progress callback
+             mediaUrl = await uploadAudio(audioBlob, audioPath, updateProgress); // Pass progress callback
              setUploadProgress(100); // Ensure it reaches 100 on success
-             console.log("Audio upload successful, URL:", finalAudioUrl);
+             console.log("Audio upload successful, URL:", mediaUrl);
          } catch (uploadError: any) {
              console.error("Error during audio upload:", uploadError);
              toast({
@@ -457,22 +462,33 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
              setUploadProgress(null);
              return; // Stop message sending process
          }
+      } else if (trimmedVideoUrl) { // 2. Check for Video URL if no audio
+          mediaType = 'video';
+          mediaUrl = trimmedVideoUrl;
+          console.log("Video URL provided:", mediaUrl);
+          // TODO: Potentially add validation or thumbnail generation here if needed
+      } else if (trimmedImageUrl) { // 3. Check for Image URL if no audio or video
+          mediaType = 'image';
+          mediaUrl = trimmedImageUrl;
+          console.log("Image URL provided:", mediaUrl);
+          // TODO: Potentially add validation here
       }
 
-      // 2. Add message to Firestore
+
+      // 4. Add message to Firestore
       const messagesRef = collection(db, 'chats', chatId, 'messages');
 
-      // Ensure we don't save both imageUrl and audioUrl (prefer audio if present)
       const messageData: Omit<Message, 'id' | 'timestamp'> & { timestamp: any } = {
         text: trimmedMessage || '',
-        imageUrl: finalAudioUrl ? null : (trimmedImageUrl || null), // Image only if no audio
-        audioUrl: finalAudioUrl, // Save the uploaded audio URL
+        imageUrl: mediaType === 'image' ? mediaUrl : null,
+        audioUrl: mediaType === 'audio' ? mediaUrl : null,
+        videoUrl: mediaType === 'video' ? mediaUrl : null, // Add videoUrl
         timestamp: serverTimestamp(),
         uid,
         displayName: displayName ?? null, // Use null if undefined
         photoURL: photoURL ?? null, // Use null if undefined
         replyToMessageId: replyingTo?.id ?? null,
-        replyToMessageText: replyingTo?.text ?? (replyingTo?.imageUrl ? 'Image' : (replyingTo?.audioUrl ? 'Voice note' : null)), // Include type for media replies
+        replyToMessageText: replyingTo?.text ?? (replyingTo?.imageUrl ? 'Image' : (replyingTo?.audioUrl ? 'Voice note' : (replyingTo?.videoUrl ? 'Video' : null))), // Include type for media replies
         replyToMessageAuthor: replyingTo?.displayName ?? null,
       };
       console.log("Adding message to Firestore:", messageData);
@@ -481,7 +497,9 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
       console.log("Message added successfully to Firestore.");
       setMessage('');
       setImageUrl('');
+      setVideoUrl(''); // Clear video URL input
       setShowImageUrlInput(false);
+      setShowVideoUrlInput(false); // Hide video URL input
       discardRecording(); // Clear audio state after successful send
       onClearReply(); // Clear reply context after sending
     } catch (error) {
@@ -502,19 +520,34 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
     const nextShowState = !showImageUrlInput;
     console.log("Toggling image URL input to:", nextShowState);
     setShowImageUrlInput(nextShowState);
-    if (!nextShowState) { // If hiding
-      setImageUrl('');
-    } else { // If showing
-      discardRecording(); // Discard audio if user switches to image URL input
+    setShowVideoUrlInput(false); // Ensure video input is hidden
+    discardRecording(); // Discard audio
+    setVideoUrl(''); // Clear video url
+    if (!nextShowState) {
+      setImageUrl(''); // Clear image url if hiding
     }
+  };
+
+  const toggleVideoUrlInput = () => {
+      const nextShowState = !showVideoUrlInput;
+      console.log("Toggling video URL input to:", nextShowState);
+      setShowVideoUrlInput(nextShowState);
+      setShowImageUrlInput(false); // Ensure image input is hidden
+      discardRecording(); // Discard audio
+      setImageUrl(''); // Clear image url
+      if (!nextShowState) {
+          setVideoUrl(''); // Clear video url if hiding
+      }
   };
 
   const handleMicButtonClick = () => {
       console.log("Mic button clicked. Current state:", { isRecording, hasMicPermission, browserSupportsMedia });
-      if (showImageUrlInput) {
-        console.log("Hiding image input because mic was clicked.");
+      if (showImageUrlInput || showVideoUrlInput) {
+        console.log("Hiding image/video input because mic was clicked.");
         setShowImageUrlInput(false);
+        setShowVideoUrlInput(false);
         setImageUrl('');
+        setVideoUrl('');
       }
       if (isRecording) {
           stopRecording();
@@ -533,7 +566,7 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
       }
   }
 
-  const canSendMessage = user && chatId && (!!message.trim() || !!imageUrl.trim() || !!audioBlob) && !isSending;
+  const canSendMessage = user && chatId && (!!message.trim() || !!imageUrl.trim() || !!videoUrl.trim() || !!audioBlob) && !isSending;
   // Update canRecord logic based on permission and browser support
   const canRecord = browserSupportsMedia && user && chatId && !isSending && !isCheckingPermission; // Check browser support and that permission check is done
   const micButtonDisabled = isCheckingPermission || !canRecord; // Disable while checking permission or if cannot record
@@ -556,7 +589,7 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
               Replying to {replyingTo.displayName || 'Unknown'}
             </p>
             <p className="text-muted-foreground truncate italic">
-              {replyingTo.text || (replyingTo.imageUrl ? 'Image' : (replyingTo.audioUrl ? 'Voice note' : 'Original message'))}
+              {replyingTo.text || (replyingTo.imageUrl ? 'Image' : (replyingTo.audioUrl ? 'Voice note' : (replyingTo.videoUrl ? 'Video' : 'Original message')))}
             </p>
           </div>
           <Button
@@ -572,7 +605,7 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
       )}
 
       {/* Audio Recording/Preview UI */}
-      {(isRecording || audioBlob) && !showImageUrlInput && (
+      {(isRecording || audioBlob) && !showImageUrlInput && !showVideoUrlInput && (
         <div className="flex items-center gap-3 p-2 bg-muted/50 rounded-md h-14">
           {isRecording && (
             <>
@@ -621,7 +654,7 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
 
       <form onSubmit={sendMessage} className="flex items-center gap-2">
         {/* Image Button */}
-        {!isRecording && !audioBlob && (
+        {!isRecording && !audioBlob && !showVideoUrlInput && (
           <Button
             type="button"
             variant="ghost"
@@ -635,8 +668,24 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
           </Button>
         )}
 
-        {/* Text Input (Hidden during recording/preview unless showImageUrlInput is true) */}
-        {(!isRecording && !audioBlob) || showImageUrlInput ? (
+        {/* Video Button */}
+        {!isRecording && !audioBlob && !showImageUrlInput && (
+           <Button
+               type="button"
+               variant="ghost"
+               size="icon"
+               onClick={toggleVideoUrlInput}
+               disabled={!user || !chatId || isSending}
+               aria-label="Toggle video URL input"
+               className={cn(showVideoUrlInput ? 'bg-accent text-accent-foreground' : '', "flex-shrink-0")}
+           >
+               <VideoIcon className="h-5 w-5" />
+           </Button>
+        )}
+
+
+        {/* Text Input (Hidden during recording/preview unless image/video input is active) */}
+        {(!isRecording && !audioBlob) || showImageUrlInput || showVideoUrlInput ? (
           <Input
             ref={inputRef}
             type="text"
@@ -711,6 +760,21 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
           />
         </div>
       )}
+
+      {/* Video URL Input (conditionally shown) */}
+       {showVideoUrlInput && (
+         <div className="flex items-center gap-2 pl-12 pr-12"> {/* Adjust padding */}
+           <Input
+             type="url"
+             value={videoUrl}
+             onChange={(e) => setVideoUrl(e.target.value)}
+             placeholder="Enter video URL (e.g., YouTube, Vimeo)..."
+             className="flex-1 h-9 text-sm"
+             disabled={!user || !chatId || isSending || isRecording}
+             aria-label="Video URL input"
+           />
+         </div>
+       )}
 
       {/* Upload Progress Bar */}
       {uploadProgress !== null && (

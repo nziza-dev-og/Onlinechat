@@ -1,5 +1,3 @@
-
-
 import type { User as FirebaseUser } from 'firebase/auth';
 import type { Timestamp } from 'firebase/firestore';
 
@@ -17,9 +15,10 @@ export interface Message {
   photoURL: string | null;
   imageUrl?: string | null; // Optional image URL for chat messages
   audioUrl?: string | null; // Optional audio URL for voice notes
+  videoUrl?: string | null; // Optional video URL for chat messages
   // Fields for reply functionality
   replyToMessageId?: string | null;
-  replyToMessageText?: string | null; // Can be text, 'Image', or 'Voice note'
+  replyToMessageText?: string | null; // Can be text, 'Image', 'Voice note', or 'Video'
   replyToMessageAuthor?: string | null;
 }
 
