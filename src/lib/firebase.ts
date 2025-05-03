@@ -17,7 +17,7 @@ const firebaseConfig: FirebaseOptions = {
     messagingSenderId: "66220288730",
     appId: "1:66220288730:web:abc61ad5a32a5ac2add3e3",
     measurementId: "G-5RCN429FJK",
-    // Add the Realtime Database URL
+    // Add the Realtime Database URL - IMPORTANT for WebRTC signaling
     databaseURL: "https://chating-class-default-rtdb.firebaseio.com",
 };
 
@@ -42,40 +42,56 @@ let firebaseInitializationError: string | null = null;
 try {
     // --- Configuration Validation ---
     let configError = null;
-    // **IMPORTANT**: Replace "YOUR_FIREBASE_API_KEY" check with a check against the actual hardcoded key if necessary,
-    // or ideally remove this check if relying solely on hardcoded values. For now, checking for null/empty.
-    if (!firebaseConfig.apiKey) {
-        configError = "Firebase API Key (NEXT_PUBLIC_FIREBASE_API_KEY) is not defined. Please check your environment variables (e.g., .env.local file for local development, or your hosting provider's settings for deployment). Make sure the variable name is exactly 'NEXT_PUBLIC_FIREBASE_API_KEY' and the value is your actual Firebase API key.";
+    const checkConfigValue = (key: keyof FirebaseOptions, name: string, required: boolean = true, formatCheck?: (value: string) => boolean, formatDesc?: string) => {
+        const value = firebaseConfig[key];
+        if (required && !value) {
+            return `${name} (${key}) is not defined. Please check the hardcoded firebaseConfig in src/lib/firebase.ts.`;
+        }
+        if (value && formatCheck && !formatCheck(value as string)) {
+             return `${name} (${key}) has an incorrect format. Expected format: ${formatDesc}. Current value: ${value}`;
+        }
+        return null;
+    }
+
+    configError = checkConfigValue('apiKey', 'Firebase API Key', true);
+    if (configError) {
         console.error("🔴 FATAL Firebase Config Error:", configError);
-        throw new Error(configError); // API Key is critical, throw immediately
+        throw new Error(configError);
     }
-    // Add checks for other critical values if needed (projectId, authDomain)
-    // Example (can be adapted):
-    else if (!firebaseConfig.projectId) {
-         configError = "Firebase Project ID (NEXT_PUBLIC_FIREBASE_PROJECT_ID) is not defined. Check environment variables.";
+
+    configError = checkConfigValue('authDomain', 'Firebase Auth Domain', true);
+     if (configError) {
          console.error("🔴 FATAL Firebase Config Error:", configError);
-         throw new Error(configError); // Project ID is critical
-    }
-     else if (!firebaseConfig.authDomain) {
-          configError = "Firebase Auth Domain (NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN) is not defined. Check environment variables.";
-          console.error("🔴 FATAL Firebase Config Error:", configError);
-          throw new Error(configError); // Auth Domain is critical
+         throw new Error(configError);
+     }
+
+     configError = checkConfigValue('projectId', 'Firebase Project ID', true);
+     if (configError) {
+         console.error("🔴 FATAL Firebase Config Error:", configError);
+         throw new Error(configError);
      }
 
     // Check non-critical but important values
-    if (!firebaseConfig.storageBucket || !firebaseConfig.storageBucket.endsWith('.appspot.com')) {
-        configError = `Firebase Storage Bucket (NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET) is missing or has an incorrect format (should be 'your-project-id.appspot.com'). Current value: ${firebaseConfig.storageBucket}`;
-        console.warn("🟡 Firebase Config Warning:", configError); // Warn but don't throw
-    }
-    if (!firebaseConfig.databaseURL) {
-        configError = "Firebase Realtime Database URL (NEXT_PUBLIC_FIREBASE_DATABASE_URL) is not defined. Check environment variables.";
-        console.warn("🟡 Firebase Config Warning:", configError); // Warn but don't throw
-    }
+    configError = checkConfigValue('storageBucket', 'Firebase Storage Bucket', false, (v) => v.endsWith('.appspot.com'), "'your-project-id.appspot.com'");
+     if (configError) {
+         console.warn("🟡 Firebase Config Warning:", configError); // Warn but don't throw
+     }
+
+    configError = checkConfigValue('databaseURL', 'Firebase Realtime Database URL', false, (v) => v.startsWith('https://') && v.endsWith('.firebaseio.com'), "'https://your-project-id-default-rtdb.firebaseio.com'");
+     if (configError) {
+         console.warn("🟡 Firebase Config Warning:", configError); // Warn but don't throw for RTDB URL
+     }
 
 
     // Initialize Firebase App.
     // This guards against re-initialization in hot-reloading environments.
-    app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+    if (getApps().length === 0) {
+        app = initializeApp(firebaseConfig);
+        console.log("Firebase App initialized.");
+    } else {
+        app = getApp();
+        console.log("Firebase App already initialized.");
+    }
 
     // Get Firebase services using the helper function.
     auth = safeInitializeService(() => getAuth(app), "Auth");
@@ -83,10 +99,8 @@ try {
     storage = safeInitializeService(() => getStorage(app), "Storage");
     rtdb = safeInitializeService(() => getDatabase(app), "Realtime Database"); // Initialize RTDB
 
-    if (app) {
-        console.log("Firebase App initialized successfully.");
-    } else {
-        // This case should theoretically not be reached due to the check above, but good to have.
+    if (!app) {
+        // This case should theoretically not be reached due to the checks above, but good to have.
         firebaseInitializationError = "Firebase App could not be initialized for an unknown reason.";
         console.error("🔴 FATAL Firebase Init Error:", firebaseInitializationError);
         throw new Error(firebaseInitializationError);
@@ -95,7 +109,7 @@ try {
 } catch (error: any) {
     // Catch errors during initializeApp() itself or re-thrown config errors
     console.error("🔴 Firebase core initialization failed:", error);
-    let errorMessage = `Firebase core initialization failed: ${error.message}. Ensure Firebase config in src/lib/firebase.ts is correct and valid.`;
+    let errorMessage = `Firebase core initialization failed: ${error.message || 'Unknown error'}. Ensure Firebase config in src/lib/firebase.ts is correct and valid.`;
     if (error instanceof FirebaseError && (error.code === 'auth/invalid-api-key' || (error.message && error.message.includes('API key not valid')))) {
         errorMessage = `Firebase initialization failed at runtime due to an invalid API key: ${error.message}. Verify the hardcoded apiKey in src/lib/firebase.ts.`;
     }
@@ -111,7 +125,7 @@ try {
     rtdb = undefined; // Ensure RTDB is undefined too
 
     // Re-throw the error to prevent the app from continuing in a broken state.
-    // This will be caught by Next.js error boundaries.
+    // This might be caught by Next.js error boundaries or cause server start failure.
     throw new Error(firebaseInitializationError);
 }
 
@@ -124,4 +138,3 @@ if (!rtdb) console.warn("🟡 Firebase Warning: Realtime Database service is una
 
 // Export the initialized services (they might be undefined if initialization failed)
 export { app, auth, db, storage, rtdb, firebaseInitializationError }; // Export rtdb and error
-

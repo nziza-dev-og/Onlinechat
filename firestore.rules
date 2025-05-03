@@ -4,102 +4,97 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Users collection: Allow users to read their own profile and write to it. Allow any authenticated user to read other profiles (needed for user list).
+    // Users collection rules
     match /users/{userId} {
-      allow read: if request.auth != null; // Allow any logged-in user to read profiles
-      allow write: if request.auth != null && request.auth.uid == userId; // Allow user to write only their own profile
+      // Allow reading profile if authenticated
+      allow read: if request.auth != null;
+      // Allow writing (updating) profile only if the user is updating their own profile
+      allow write: if request.auth != null && request.auth.uid == userId;
     }
 
-    // Chats collection
-    match /chats/{chatId} {
-      // Allow read/write on the chat document itself only if user is a participant
-      allow read, write: if request.auth != null && chatId.split('_').includes(request.auth.uid);
+    // Posts collection rules
+    match /posts/{postId} {
+      // Allow reading posts if authenticated
+      allow read: if request.auth != null;
+      // Allow creating posts if authenticated
+      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
+      // Allow updating (like/comment counts) if authenticated
+      allow update: if request.auth != null;
+      // Allow deleting posts only if the user is the owner
+      allow delete: if request.auth != null && resource.data.uid == request.auth.uid;
 
-      // Messages subcollection within a chat
-      match /messages/{messageId} {
-        // Allow read if the user is a participant of the parent chat document
-        allow read: if request.auth != null && exists(/databases/$(database)/documents/chats/$(chatId)) && resource.data.participants.hasAny([request.auth.uid]);
-
-        // Allow create (send message) if user is authenticated and is the sender
+      // Comments subcollection rules
+      match /comments/{commentId} {
+        // Allow reading comments if authenticated
+        allow read: if request.auth != null;
+        // Allow creating comments if authenticated and user matches
         allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
-
-        // Disallow update/delete for now to keep messages immutable
+        // Disallow direct updates/deletes for simplicity (handle via post delete)
         allow update, delete: if false;
       }
     }
 
-    // Posts collection
-    match /posts/{postId} {
-      // Allow read by any authenticated user
-      allow read: if request.auth != null;
+    // Chats collection rules
+    match /chats/{chatId} {
+      // Allow reading/writing chat document (for participants, typing status) if user is a participant
+      allow read, write: if request.auth != null && request.auth.uid in resource.data.participants;
 
-      // Allow create if user is authenticated and the post belongs to them
-      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
-
-      // Allow update (like/unlike count) by any authenticated user
-      // Restrict direct updates to fields other than likeCount/likedBy/commentCount if needed
-       allow update: if request.auth != null
-                    && request.resource.data.keys().hasOnly(['likeCount', 'likedBy', 'commentCount']); // Example: Only allow updating these fields
-
-      // Allow delete only by the post owner
-      allow delete: if request.auth != null && resource.data.uid == request.auth.uid;
-
-      // Comments subcollection
-       match /comments/{commentId} {
-          // Allow read by any authenticated user
-          allow read: if request.auth != null;
-          // Allow create if user is authenticated and comment belongs to them
-          allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
-          // Disallow update/delete for now
-          allow update, delete: if false;
-       }
+      // Messages subcollection rules
+      match /messages/{messageId} {
+        // Allow reading messages if the user is a participant in the chat
+        allow read: if request.auth != null && get(/databases/$(database)/documents/chats/$(chatId)).data.participants.hasAny([request.auth.uid]);
+        // Allow creating messages if user is authenticated and matches the message sender UID
+        allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
+        // Disallow direct updates/deletes for simplicity
+        allow update, delete: if false;
+      }
     }
 
-     // Notifications Collection
-     match /notifications/{notificationId} {
-         // Allow read for global notifications OR if the user is the target
-         allow read: if request.auth != null && (resource.data.isGlobal == true || resource.data.targetUserId == request.auth.uid);
-         // Allow create only by admin (assuming 'users/{adminUid}/isAdmin' check) - Needs isAdmin field in user profiles
-         allow create: if request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
-          // Allow update only for 'isRead' field and only by the target user
-          allow update: if request.auth != null && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']) && resource.data.targetUserId == request.auth.uid;
-          // Allow delete only by admin (for cleanup)
-         allow delete: if request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+     // Settings collection rules (for admin config)
+    match /settings/{docId} {
+       // Allow reading settings if authenticated
+       allow read: if request.auth != null;
+       // Allow writing settings only if the user is an admin (check user document)
+       allow write: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
      }
 
-     // Admin Messages Collection (Messages *to* admins)
+     // Security Logs collection rules
+     match /security_logs/{logId} {
+       // Only allow admins to read logs
+       allow read: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+       // Disallow direct client writes (logs should be written by server-side functions/actions)
+       allow write: if false;
+     }
+
+     // Blocked IPs collection rules
+     match /blocked_ips/{ipAddress} {
+       // Only allow admins to read/write blocked IPs
+       allow read, write: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+     }
+
+     // Admin Messages collection rules
      match /adminMessages/{messageId} {
-         // Allow read only by admins
-         allow read: if request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
-         // Allow any authenticated user to create (send a message to admin)
-         allow create: if request.auth != null && request.resource.data.senderUid == request.auth.uid;
-         // Allow update only by admin (for marking as read or replying)
-         allow update: if request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
-         // Allow delete only by admin
-         allow delete: if request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+       // Allow admins to read all messages
+       allow read: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+       // Allow any authenticated user to send a message TO admin
+       allow create: if request.auth != null && request.resource.data.senderUid == request.auth.uid;
+       // Allow admins to update messages (e.g., mark as read, add reply)
+       allow update: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+       // Disallow direct deletion for now
+       allow delete: if false;
      }
 
-     // Settings Collection
-      match /settings/{settingId} {
-         // Allow read by any authenticated user (e.g., for client-side config)
-         allow read: if request.auth != null;
-         // Allow write only by admins
-         allow write: if request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
-      }
-
-      // Security Logs Collection
-      match /security_logs/{logId} {
-         // Only admins can read logs
-         allow read: if request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
-         // Disallow direct client writes; should be written by trusted server/functions
-         allow write: if false;
-      }
-
-      // Blocked IPs Collection
-      match /blocked_ips/{ipAddress} {
-         // Only admins can read/write blocked IPs
-         allow read, write: if request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
-      }
+      // Notifications collection rules
+     match /notifications/{notificationId} {
+       // Allow reading if global OR targeted to the requesting user
+       allow read: if request.auth != null && (resource.data.isGlobal == true || resource.data.targetUserId == request.auth.uid);
+       // Allow writing only if the user is an admin
+       allow write: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+       // Allow updates (e.g., mark as read) only by the target user or admin
+        allow update: if request.auth != null && (resource.data.targetUserId == request.auth.uid || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true);
+       // Disallow direct deletion for now
+       allow delete: if false;
+     }
 
   }
 }

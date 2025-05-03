@@ -1,5 +1,4 @@
 
-
 'use server';
 
 import { doc, updateDoc, getFirestore, serverTimestamp as firestoreServerTimestamp } from 'firebase/firestore'; // Added serverTimestamp
@@ -30,6 +29,10 @@ export const updateTypingStatus = async (
   // Get Firestore instance within the server action context
   let db;
   try {
+      // Validate Firebase app instance before getting Firestore
+      if (!app) {
+        throw new Error("Firebase app is not initialized.");
+      }
       db = getFirestore(app);
   } catch (initError: any) {
       const dbErrorMsg = `DB init error in updateTypingStatus: ${initError.message}`;
@@ -77,4 +80,3 @@ export const updateTypingStatus = async (
   }
 };
 
-```
