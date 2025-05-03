@@ -414,7 +414,9 @@ export default function AdminPage() {
     };
 
     // Pass the correct dbInstance state variable here
-    checkAdminAndFetchData(dbInstance);
+    if (dbInstance) {
+      checkAdminAndFetchData(dbInstance);
+    }
 
      // Ensure cleanup runs when dependencies change or component unmounts
      return () => {
@@ -993,7 +995,7 @@ export default function AdminPage() {
                   </CardHeader>
                   <CardContent className="space-y-4 pt-6">
                         {/* IP Blocking */}
-                        <form onSubmit={handleBlockIp} className="border p-4 rounded-md space-y-4">
+                        <form onSubmit={handleBlockIp} className="border p-4 rounded-md space-y-4"> {/* Corrected onSubmit */}
                            <h4 className="font-medium text-lg">IP Address Blocking</h4>
                             <div className="space-y-2">
                                 <Label htmlFor="ip-block">IP Address</Label>
@@ -1043,5 +1045,6 @@ export default function AdminPage() {
     </div>
   );
 }
+
 
 
