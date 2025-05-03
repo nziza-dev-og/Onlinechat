@@ -211,7 +211,8 @@ export default function AdminPage() {
         }
     };
 
-    checkAdminAndFetchData(firestoreInstance);
+    // Pass the correct dbInstance state variable here
+    checkAdminAndFetchData(dbInstance);
 
   }, [user, authLoading, dbInstance, toast]); // Rerun if user, auth state, or db instance changes
 
@@ -646,7 +647,7 @@ export default function AdminPage() {
                                     value={ipToBlock}
                                     onChange={(e) => setIpToBlock(e.target.value)}
                                     required
-                                    pattern="\b(?:\d{1,3}\.){3}\d{1,3}\b" // Basic IP validation pattern
+                                    pattern="\\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\b" // More accurate IPv4 pattern
                                     disabled={isBlockingIp}
                                     className="font-mono"
                                 />
