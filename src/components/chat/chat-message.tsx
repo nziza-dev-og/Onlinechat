@@ -6,7 +6,7 @@ import { format, formatDistanceToNow } from 'date-fns';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import Image from 'next/image';
-import { Reply } from 'lucide-react'; // Import Reply icon
+import { Reply, Mic } from 'lucide-react'; // Import Reply icon and Mic icon
 import { Button } from '@/components/ui/button'; // Import Button for reply action
 
 interface ChatMessageProps {
@@ -97,8 +97,12 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
 
          {/* Display Audio Player if audioUrl exists */}
          {message.audioUrl && (
-            <div className="my-2">
-                <audio controls src={message.audioUrl} preload="metadata" className="w-full max-w-xs h-10">
+            <div className={cn(
+                "my-2 p-2 rounded-md flex items-center gap-2",
+                 isSender ? "bg-accent/80" : "bg-muted/60" // Slightly different background
+            )}>
+                 <Mic className="h-4 w-4 flex-shrink-0 text-foreground/70" />
+                <audio controls src={message.audioUrl} preload="metadata" className="w-full max-w-xs h-9"> {/* Adjusted height */}
                   Your browser does not support the audio element.
                 </audio>
             </div>
