@@ -1,0 +1,105 @@
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Users collection: Allow users to read their own profile and write to it. Allow any authenticated user to read other profiles (needed for user list).
+    match /users/{userId} {
+      allow read: if request.auth != null; // Allow any logged-in user to read profiles
+      allow write: if request.auth != null && request.auth.uid == userId; // Allow user to write only their own profile
+    }
+
+    // Chats collection
+    match /chats/{chatId} {
+      // Allow read/write on the chat document itself only if user is a participant
+      allow read, write: if request.auth != null && chatId.split('_').includes(request.auth.uid);
+
+      // Messages subcollection within a chat
+      match /messages/{messageId} {
+        // Allow read if the user is a participant of the parent chat document
+        allow read: if request.auth != null && exists(/databases/$(database)/documents/chats/$(chatId)) && resource.data.participants.hasAny([request.auth.uid]);
+
+        // Allow create (send message) if user is authenticated and is the sender
+        allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
+
+        // Disallow update/delete for now to keep messages immutable
+        allow update, delete: if false;
+      }
+    }
+
+    // Posts collection
+    match /posts/{postId} {
+      // Allow read by any authenticated user
+      allow read: if request.auth != null;
+
+      // Allow create if user is authenticated and the post belongs to them
+      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
+
+      // Allow update (like/unlike count) by any authenticated user
+      // Restrict direct updates to fields other than likeCount/likedBy/commentCount if needed
+       allow update: if request.auth != null
+                    && request.resource.data.keys().hasOnly(['likeCount', 'likedBy', 'commentCount']); // Example: Only allow updating these fields
+
+      // Allow delete only by the post owner
+      allow delete: if request.auth != null && resource.data.uid == request.auth.uid;
+
+      // Comments subcollection
+       match /comments/{commentId} {
+          // Allow read by any authenticated user
+          allow read: if request.auth != null;
+          // Allow create if user is authenticated and comment belongs to them
+          allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
+          // Disallow update/delete for now
+          allow update, delete: if false;
+       }
+    }
+
+     // Notifications Collection
+     match /notifications/{notificationId} {
+         // Allow read for global notifications OR if the user is the target
+         allow read: if request.auth != null && (resource.data.isGlobal == true || resource.data.targetUserId == request.auth.uid);
+         // Allow create only by admin (assuming 'users/{adminUid}/isAdmin' check) - Needs isAdmin field in user profiles
+         allow create: if request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+          // Allow update only for 'isRead' field and only by the target user
+          allow update: if request.auth != null && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']) && resource.data.targetUserId == request.auth.uid;
+          // Allow delete only by admin (for cleanup)
+         allow delete: if request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+     }
+
+     // Admin Messages Collection (Messages *to* admins)
+     match /adminMessages/{messageId} {
+         // Allow read only by admins
+         allow read: if request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+         // Allow any authenticated user to create (send a message to admin)
+         allow create: if request.auth != null && request.resource.data.senderUid == request.auth.uid;
+         // Allow update only by admin (for marking as read or replying)
+         allow update: if request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+         // Allow delete only by admin
+         allow delete: if request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+     }
+
+     // Settings Collection
+      match /settings/{settingId} {
+         // Allow read by any authenticated user (e.g., for client-side config)
+         allow read: if request.auth != null;
+         // Allow write only by admins
+         allow write: if request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+      }
+
+      // Security Logs Collection
+      match /security_logs/{logId} {
+         // Only admins can read logs
+         allow read: if request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+         // Disallow direct client writes; should be written by trusted server/functions
+         allow write: if false;
+      }
+
+      // Blocked IPs Collection
+      match /blocked_ips/{ipAddress} {
+         // Only admins can read/write blocked IPs
+         allow read, write: if request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+      }
+
+  }
+}
