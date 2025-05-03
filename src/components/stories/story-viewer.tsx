@@ -139,11 +139,11 @@ export function StoryViewer({ stories }: StoryViewerProps) {
              className="p-0 max-w-md w-[95vw] h-[85vh] border-none bg-black shadow-none flex flex-col items-center justify-center outline-none focus:outline-none overflow-hidden rounded-lg"
              onEscapeKeyDown={handleCloseStory}
              // Removed onPointerDownOutside to allow clicking next/prev areas
-             aria-label="Story viewer" // Keep aria-label as fallback
-             aria-describedby={activeStory ? `story-caption-${activeStory.id}` : undefined} // Describe content if caption exists
+             aria-labelledby={activeStory ? `story-title-${activeStory.id}` : undefined} // Use aria-labelledby
+             aria-describedby={activeStory?.text ? `story-caption-${activeStory.id}` : undefined} // Describe content if caption exists
           >
              {/* Visually Hidden Title for Accessibility */}
-             <DialogTitle className={cn("sr-only")}>
+             <DialogTitle id={activeStory ? `story-title-${activeStory.id}` : undefined} className={cn("sr-only")}>
                Story by {activeStory?.displayName || 'User'}
              </DialogTitle>
              {activeStory && (
