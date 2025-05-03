@@ -17,9 +17,12 @@ import {
   increment,
   arrayUnion,
   arrayRemove,
-  where // Import where for filtering
+  where, // Import where for filtering
+  deleteDoc, // Import deleteDoc
+  getDoc, // Import getDoc for checking ownership
+  writeBatch, // Import writeBatch for atomic deletion of comments
 } from 'firebase/firestore';
-import type { Post, PostSerializable } from '@/types'; // Import PostSerializable
+import type { Post, PostSerializable, CommentSerializable } from '@/types'; // Import PostSerializable and CommentSerializable
 import { isFirebaseError } from '@/lib/firebase-errors';
 
 // Input type for creating a post, containing only serializable data.
@@ -205,10 +208,6 @@ export const unlikePost = async (postId: string, userId: string): Promise<void> 
     }
 };
 
-// TODO: Add functions for adding and fetching comments when comment feature is implemented.
-// addComment(postId: string, commentData: CommentInput): Promise<string>
-// fetchComments(postId: string, count: number): Promise<CommentSerializable[]>
-
 // Input type for adding a comment
 export interface CommentInput {
   postId: string;
@@ -218,7 +217,7 @@ export interface CommentInput {
   text: string;
 }
 
-// addComment function (implementation example)
+// addComment function
 export const addComment = async (commentData: CommentInput): Promise<string> => {
     if (!db) throw new Error("Database service not available.");
     if (!commentData.postId || !commentData.uid || !commentData.text?.trim()) {
@@ -243,6 +242,105 @@ export const addComment = async (commentData: CommentInput): Promise<string> => 
         return newCommentRef.id;
     } catch (error: any) {
         const msg = `Failed to add comment. Error: ${error.message || 'Unknown Firestore error'}`;
+        console.error("🔴 Firestore Error:", msg, error);
+        throw new Error(msg);
+    }
+};
+
+
+/**
+ * Deletes a post and all its associated comments.
+ * Checks if the user attempting the deletion is the owner of the post.
+ *
+ * @param postId - The ID of the post to delete.
+ * @param userId - The ID of the user attempting the deletion.
+ * @returns Promise<void>
+ * @throws Error if user is not authorized, db is not initialized, or deletion fails.
+ */
+export const deletePost = async (postId: string, userId: string): Promise<void> => {
+    if (!db) throw new Error("Database service not available.");
+    if (!postId || !userId) throw new Error("Post ID and User ID are required.");
+
+    const postRef = doc(db, 'posts', postId);
+    const commentsRef = collection(db, 'posts', postId, 'comments');
+
+    try {
+        // 1. Check ownership
+        const postSnap = await getDoc(postRef);
+        if (!postSnap.exists()) {
+            throw new Error("Post not found.");
+        }
+        const postData = postSnap.data();
+        if (postData.uid !== userId) {
+            console.warn(`Firestore: Unauthorized delete attempt on post ${postId} by user ${userId}. Owner is ${postData.uid}.`);
+            throw new Error("You are not authorized to delete this post.");
+        }
+
+        // 2. Delete comments using a batch write for atomicity
+        const batch = writeBatch(db);
+        const commentsQuerySnapshot = await getDocs(commentsRef);
+        commentsQuerySnapshot.forEach((commentDoc) => {
+            batch.delete(commentDoc.ref);
+        });
+
+        // 3. Delete the post document itself
+        batch.delete(postRef);
+
+        // 4. Commit the batch
+        await batch.commit();
+
+        console.log(`Firestore: Post ${postId} and its ${commentsQuerySnapshot.size} comments deleted by owner ${userId}.`);
+
+    } catch (error: any) {
+        const detailedErrorMessage = `Failed to delete post ${postId}. Error: ${error.message || 'Unknown Firestore error'}${error.code ? ` (Code: ${error.code})` : ''}`;
+        console.error("🔴 Detailed Firestore Error:", detailedErrorMessage, error);
+        // Re-throw the specific error message from ownership check or Firestore operation
+        throw new Error(error.message || detailedErrorMessage);
+    }
+};
+
+/**
+ * Fetches comments for a given post, ordered by timestamp.
+ *
+ * @param postId - The ID of the post whose comments are to be fetched.
+ * @param count - The maximum number of comments to fetch (default: 100).
+ * @returns Promise<CommentSerializable[]> - An array of comment objects.
+ * @throws Error if db is not initialized or fetch fails.
+ */
+export const fetchComments = async (postId: string, count: number = 100): Promise<CommentSerializable[]> => {
+    if (!db) throw new Error("Database service not available.");
+    if (!postId) throw new Error("Post ID is required to fetch comments.");
+
+    try {
+        const commentsQuery = query(
+            collection(db, 'posts', postId, 'comments'),
+            orderBy('timestamp', 'asc'),
+            limit(count)
+        );
+        const querySnapshot = await getDocs(commentsQuery);
+
+        const comments: CommentSerializable[] = querySnapshot.docs.map(doc => {
+            const data = doc.data();
+             if (!data.uid || !(data.timestamp instanceof Timestamp)) {
+                 console.warn("Skipping invalid comment document:", doc.id, data);
+                 return null;
+             }
+            return {
+                id: doc.id,
+                postId: postId,
+                uid: data.uid,
+                displayName: data.displayName ?? null,
+                photoURL: data.photoURL ?? null,
+                text: data.text ?? '',
+                timestamp: data.timestamp.toDate().toISOString(),
+            };
+        }).filter((comment): comment is CommentSerializable => comment !== null);
+
+        console.log(`Firestore: Fetched ${comments.length} comments for post ${postId}.`);
+        return comments;
+
+    } catch (error: any) {
+        const msg = `Failed to fetch comments for post ${postId}. Error: ${error.message || 'Unknown Firestore error'}`;
         console.error("🔴 Firestore Error:", msg, error);
         throw new Error(msg);
     }

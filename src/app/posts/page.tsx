@@ -81,7 +81,7 @@ export default function PostsPage() {
       );
   };
 
-   // Handler for optimistic comment count updates (placeholder)
+   // Handler for optimistic comment count updates
    const handleCommentAdded = (postId: string, newCommentCount: number) => {
         setPosts(prevPosts =>
             prevPosts.map(post =>
@@ -89,6 +89,12 @@ export default function PostsPage() {
             )
         );
     };
+
+   // Handler for optimistic post deletion
+   const handlePostDeleted = (postId: string) => {
+       console.log(`Optimistically removing post ${postId} from UI.`);
+       setPosts(prevPosts => prevPosts.filter(post => post.id !== postId));
+   };
 
   return (
     <div className="flex flex-col items-center min-h-screen bg-secondary py-8 px-4">
@@ -190,7 +196,8 @@ export default function PostsPage() {
                     key={post.id}
                     post={post}
                     onLikeChange={handleLikeChange}
-                    onCommentAdded={handleCommentAdded} // Pass down comment handler
+                    onCommentAdded={handleCommentAdded}
+                    onPostDeleted={handlePostDeleted} // Pass down delete handler
                  />
               ))}
            </AnimatePresence>

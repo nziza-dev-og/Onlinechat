@@ -8,19 +8,32 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import Image from 'next/image';
 import { cn } from '@/lib/utils';
-import { User, Image as ImageIcon, Video, Heart, MessageCircle } from 'lucide-react'; // Add Heart, MessageCircle
+import { User, Image as ImageIcon, Video, Heart, MessageCircle, Trash2, AlertTriangle, Loader2 } from 'lucide-react'; // Add Heart, MessageCircle, Trash2, AlertTriangle, Loader2
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/use-auth';
-import { likePost, unlikePost } from '@/lib/posts.service'; // Import like/unlike functions
+import { likePost, unlikePost, deletePost } from '@/lib/posts.service'; // Import like/unlike/delete functions
 import { useToast } from '@/hooks/use-toast';
 import { motion, AnimatePresence } from "framer-motion"; // Import animation library
-import { CommentSection } from './comment-section'; // Import CommentSection (to be created)
+import { CommentSection } from './comment-section'; // Import CommentSection
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+    AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"; // Import AlertDialog components
+
 
 interface PostCardProps {
   post: PostSerializable; // Expect PostSerializable with string timestamp
-  // Optimistic update callbacks (optional)
+  // Optimistic update callbacks
   onLikeChange?: (postId: string, liked: boolean, newLikeCount: number) => void;
-  onCommentAdded?: (postId: string, newCommentCount: number) => void; // Placeholder
+  onCommentAdded?: (postId: string, newCommentCount: number) => void;
+  onPostDeleted?: (postId: string) => void; // Callback for deletion
 }
 
 // Consistent Helper function to get initials
@@ -49,13 +62,15 @@ const formatTimestamp = (timestampISO: string | null | undefined): string => {
     }
 };
 
-export function PostCard({ post, onLikeChange, onCommentAdded }: PostCardProps) {
+export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: PostCardProps) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [isLiked, setIsLiked] = React.useState(post.likedBy?.includes(user?.uid ?? '') ?? false);
   const [likeCount, setLikeCount] = React.useState(post.likeCount ?? 0);
   const [isLiking, setIsLiking] = React.useState(false); // Prevent double clicks
+  const [isDeleting, setIsDeleting] = React.useState(false); // State for delete operation
   const [showComments, setShowComments] = React.useState(false); // State to toggle comments
+  const isOwner = user?.uid === post.uid; // Check if the current user owns the post
 
   // Update local state if the likedBy prop changes externally
   React.useEffect(() => {
@@ -100,6 +115,33 @@ export function PostCard({ post, onLikeChange, onCommentAdded }: PostCardProps) 
     }
   };
 
+  const handleDelete = async () => {
+     if (!isOwner || isDeleting) return;
+
+     setIsDeleting(true);
+     // Optimistic UI update - notify parent immediately
+     onPostDeleted?.(post.id);
+
+     try {
+         await deletePost(post.id, user.uid); // Call the delete service
+         toast({ title: "Post Deleted", description: "Your post has been successfully removed." });
+         // No need to revert on success, parent already removed it
+     } catch (error: any) {
+         console.error("Error deleting post:", error);
+         toast({
+             title: "Deletion Failed",
+             description: error.message || "Could not delete the post. Please try again.",
+             variant: "destructive",
+         });
+         // Note: Reverting optimistic delete is tricky as the parent state holds the list.
+         // A full refresh might be simpler, or the parent needs a way to re-add the post.
+         // For now, we'll just show the error. A manual refresh might be needed on failure.
+         setIsDeleting(false); // Reset deleting state on failure
+     }
+      // No finally block needed to set isDeleting to false here, as the component will unmount on success.
+  };
+
+
   const toggleCommentSection = () => {
      setShowComments(prev => !prev);
   };
@@ -108,8 +150,9 @@ export function PostCard({ post, onLikeChange, onCommentAdded }: PostCardProps) 
      <motion.div
          initial={{ opacity: 0, y: 20 }}
          animate={{ opacity: 1, y: 0 }}
-         exit={{ opacity: 0, y: -20 }} // Exit animation if wrapped in AnimatePresence
+         exit={{ opacity: 0, y: -20, transition: { duration: 0.2 } }} // Faster exit animation
          transition={{ duration: 0.3 }}
+         layout // Animate layout changes (like removal)
      >
         <Card className="w-full shadow-lg rounded-lg overflow-hidden border border-border/50 bg-card transition-shadow duration-300 hover:shadow-xl"> {/* Hover effect */}
           <CardHeader className="flex flex-row items-center gap-3 p-4 border-b bg-muted/20">
@@ -119,10 +162,48 @@ export function PostCard({ post, onLikeChange, onCommentAdded }: PostCardProps) 
                  {getInitials(post.displayName)}
               </AvatarFallback>
             </Avatar>
-            <div className="flex flex-col">
+            <div className="flex-1 flex flex-col"> {/* Use flex-1 to push timestamp to the right */}
               <span className="font-semibold text-sm text-card-foreground leading-tight">{post.displayName || 'Anonymous User'}</span>
               <span className="text-xs text-muted-foreground leading-tight">{formatTimestamp(post.timestamp)}</span>
             </div>
+             {/* Delete Button (only for owner) */}
+             {isOwner && (
+                 <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                         <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-muted-foreground hover:text-destructive h-8 w-8"
+                            disabled={isDeleting}
+                         >
+                            {isDeleting ? <Loader2 className="h-4 w-4 animate-spin"/> : <Trash2 className="h-4 w-4" />}
+                            <span className="sr-only">Delete post</span>
+                        </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                        <AlertDialogHeader>
+                             <AlertDialogTitle className="flex items-center gap-2">
+                                 <AlertTriangle className="text-destructive"/> Are you sure?
+                             </AlertDialogTitle>
+                            <AlertDialogDescription>
+                                This action cannot be undone. This will permanently delete your post
+                                and all its comments.
+                            </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+                             <AlertDialogAction
+                                onClick={handleDelete}
+                                disabled={isDeleting}
+                                className={buttonVariants({ variant: "destructive" })} // Use destructive variant
+                            >
+                                {isDeleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                                Delete Post
+                            </AlertDialogAction>
+                        </AlertDialogFooter>
+                    </AlertDialogContent>
+                 </AlertDialog>
+             )}
           </CardHeader>
 
           <CardContent className="p-5 space-y-4">
@@ -212,7 +293,6 @@ export function PostCard({ post, onLikeChange, onCommentAdded }: PostCardProps) 
                      transition={{ duration: 0.3, ease: "easeInOut" }}
                      className="overflow-hidden border-t"
                  >
-                     {/* CommentSection component will go here */}
                      <CommentSection postId={post.id} onCommentAdded={onCommentAdded} />
                  </motion.div>
              )}
@@ -222,43 +302,3 @@ export function PostCard({ post, onLikeChange, onCommentAdded }: PostCardProps) 
      </motion.div>
   );
 }
-
-// Placeholder for CommentSection component
-// Create this file: src/components/posts/comment-section.tsx
-/*
-import React from 'react';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { Send } from 'lucide-react';
-// Import hooks and types as needed
-
-interface CommentSectionProps {
-    postId: string;
-    onCommentAdded?: (postId: string, newCommentCount: number) => void;
-}
-
-export const CommentSection = ({ postId, onCommentAdded }: CommentSectionProps) => {
-    // State for comments, loading, input, etc.
-    // Fetch comments for postId
-    // Handle comment submission
-
-    return (
-        <div className="p-4 space-y-4 bg-background">
-            <p className="text-sm font-medium text-muted-foreground">Comments</p>
-            {/* Comment List Placeholder *}
-            <div className="space-y-3 max-h-60 overflow-y-auto p-1">
-                <p className="text-xs text-center text-muted-foreground italic">No comments yet.</p>
-                {/* Map through fetched comments here *}
-            </div>
-            {/* Comment Input Form *}
-            <form className="flex items-center gap-2 pt-2 border-t">
-                <Input placeholder="Add a comment..." className="flex-1 h-9" />
-                <Button type="submit" size="icon" className="h-9 w-9">
-                    <Send className="h-4 w-4" />
-                </Button>
-            </form>
-        </div>
-    );
-};
-*/
-
