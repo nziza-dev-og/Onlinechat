@@ -9,7 +9,7 @@ import { getDatabase, type Database } from "firebase/database"; // Import RTDB f
 // IMPORTANT: Hardcoding credentials directly in source code is generally NOT recommended for security reasons.
 // This change was made based on a specific user request. Consider using environment variables for production.
 const firebaseConfig: FirebaseOptions = {
-    apiKey: "AIzaSyDR5ESnHuv6bsin9jFrEm3gTbMdySVpGZE",
+    apiKey: "AIzaSyDR5ESnHuv6bsin9jFrEm3gTbMdySVpGZE", // This is a public key, but sensitive in some contexts
     authDomain: "chating-class.firebaseapp.com",
     projectId: "chating-class",
     // Corrected storageBucket format: projectId.appspot.com
@@ -42,30 +42,36 @@ let firebaseInitializationError: string | null = null;
 try {
     // --- Configuration Validation ---
     let configError = null;
-    if (!firebaseConfig.apiKey || firebaseConfig.apiKey === 'YOUR_FIREBASE_API_KEY') {
-        configError = "Firebase API Key (NEXT_PUBLIC_FIREBASE_API_KEY) is not defined or is set to the placeholder value. Please check your environment variables (e.g., .env.local or deployment settings).";
-    } else if (!firebaseConfig.projectId) {
-        configError = "Firebase Project ID (NEXT_PUBLIC_FIREBASE_PROJECT_ID) is not defined. Check environment variables.";
-    } else if (!firebaseConfig.authDomain) {
-         configError = "Firebase Auth Domain (NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN) is not defined. Check environment variables.";
-    } else if (!firebaseConfig.storageBucket || !firebaseConfig.storageBucket.endsWith('.appspot.com')) {
-        // Check if storageBucket exists and has the correct format
+    // **IMPORTANT**: Replace "YOUR_FIREBASE_API_KEY" check with a check against the actual hardcoded key if necessary,
+    // or ideally remove this check if relying solely on hardcoded values. For now, checking for null/empty.
+    if (!firebaseConfig.apiKey) {
+        configError = "Firebase API Key (NEXT_PUBLIC_FIREBASE_API_KEY) is not defined. Please check your environment variables (e.g., .env.local file for local development, or your hosting provider's settings for deployment). Make sure the variable name is exactly 'NEXT_PUBLIC_FIREBASE_API_KEY' and the value is your actual Firebase API key.";
+        console.error("🔴 FATAL Firebase Config Error:", configError);
+        throw new Error(configError); // API Key is critical, throw immediately
+    }
+    // Add checks for other critical values if needed (projectId, authDomain)
+    // Example (can be adapted):
+    else if (!firebaseConfig.projectId) {
+         configError = "Firebase Project ID (NEXT_PUBLIC_FIREBASE_PROJECT_ID) is not defined. Check environment variables.";
+         console.error("🔴 FATAL Firebase Config Error:", configError);
+         throw new Error(configError); // Project ID is critical
+    }
+     else if (!firebaseConfig.authDomain) {
+          configError = "Firebase Auth Domain (NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN) is not defined. Check environment variables.";
+          console.error("🔴 FATAL Firebase Config Error:", configError);
+          throw new Error(configError); // Auth Domain is critical
+     }
+
+    // Check non-critical but important values
+    if (!firebaseConfig.storageBucket || !firebaseConfig.storageBucket.endsWith('.appspot.com')) {
         configError = `Firebase Storage Bucket (NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET) is missing or has an incorrect format (should be 'your-project-id.appspot.com'). Current value: ${firebaseConfig.storageBucket}`;
-    } else if (!firebaseConfig.databaseURL) { // Check for RTDB URL
+        console.warn("🟡 Firebase Config Warning:", configError); // Warn but don't throw
+    }
+    if (!firebaseConfig.databaseURL) {
         configError = "Firebase Realtime Database URL (NEXT_PUBLIC_FIREBASE_DATABASE_URL) is not defined. Check environment variables.";
+        console.warn("🟡 Firebase Config Warning:", configError); // Warn but don't throw
     }
 
-    if (configError) {
-        firebaseInitializationError = configError;
-        console.error("🔴 FATAL Firebase Config Error:", firebaseInitializationError);
-        // Throw error only if critical keys like apiKey or projectId are missing
-        if (configError.includes('API Key') || configError.includes('Project ID')) {
-            throw new Error(firebaseInitializationError);
-        } else {
-            // Log warning for non-critical missing configs but allow initialization
-            console.warn("🟡 Firebase Config Warning:", firebaseInitializationError);
-        }
-    }
 
     // Initialize Firebase App.
     // This guards against re-initialization in hot-reloading environments.
@@ -117,4 +123,5 @@ if (!storage) console.warn("🟡 Firebase Warning: Storage service is unavailabl
 if (!rtdb) console.warn("🟡 Firebase Warning: Realtime Database service is unavailable. Signaling/Video calls will fail."); // Add RTDB check
 
 // Export the initialized services (they might be undefined if initialization failed)
-export { app, auth, db, storage, rtdb }; // Export rtdb
+export { app, auth, db, storage, rtdb, firebaseInitializationError }; // Export rtdb and error
+

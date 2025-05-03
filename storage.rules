@@ -1,0 +1,36 @@
+
+rules_version = '2';
+
+// Allow read/write access to authenticated users
+// Consider more granular rules for production (e.g., based on user ID or file path)
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Allow read access to anyone (e.g., for profile pictures, shared images)
+    // match /{allPaths=**} {
+    //   allow read;
+    // }
+
+    // Allow write access only to authenticated users
+    // You might want to restrict this further, e.g., only allow users to write to their own folder:
+    // match /users/{userId}/{allPaths=**} {
+    //   allow write: if request.auth != null && request.auth.uid == userId;
+    // }
+    // Or allow writing to specific paths like chat files:
+    match /chats/{chatId}/{fileType}/{allPaths=**} {
+       allow read, write: if request.auth != null; // Allow any authenticated user to read/write chat files
+    }
+     match /profilePictures/{allPaths=**} {
+        allow read; // Allow anyone to read profile pictures
+        allow write: if request.auth != null; // Allow authenticated users to write (might want to restrict to owner)
+     }
+
+    // Default deny all other paths if not matched above
+    // match /{allPaths=**} {
+    //  allow read, write: if false;
+    // }
+     // More permissive rule for testing/initial setup:
+     match /{allPaths=**} {
+       allow read, write: if request.auth != null;
+     }
+  }
+}
