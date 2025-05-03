@@ -9,7 +9,7 @@ import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import Image from 'next/image';
 import { cn } from '@/lib/utils';
 import { User, Image as ImageIcon, Video, Heart, MessageCircle, Trash2, AlertTriangle, Loader2 } from 'lucide-react'; // Add Heart, MessageCircle, Trash2, AlertTriangle, Loader2
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button'; // Import buttonVariants
 import { useAuth } from '@/hooks/use-auth';
 import { likePost, unlikePost, deletePost } from '@/lib/posts.service'; // Import like/unlike/delete functions
 import { useToast } from '@/hooks/use-toast';
@@ -195,7 +195,7 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
                              <AlertDialogAction
                                 onClick={handleDelete}
                                 disabled={isDeleting}
-                                className={buttonVariants({ variant: "destructive" })} // Use destructive variant
+                                className={cn(buttonVariants({ variant: "destructive" }))} // Use cn with buttonVariants
                             >
                                 {isDeleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                                 Delete Post
