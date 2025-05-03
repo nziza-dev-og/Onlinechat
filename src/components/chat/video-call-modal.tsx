@@ -29,7 +29,7 @@ const getInitials = (name: string | null | undefined): string => {
 const configuration: RTCConfiguration = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        // Consider adding TURN servers for better connectivity in restricted networks
+        // Add TURN servers here if needed for NAT traversal
         // { urls: 'turn:your-turn-server.com', username: 'user', credential: 'password' }
     ]
 };
@@ -42,8 +42,10 @@ interface VideoCallModalProps {
   onClose: () => void;
 }
 
+type CallStatus = 'idle' | 'checking_perms' | 'perms_denied' | 'ready' | 'calling' | 'receiving' | 'connecting' | 'in_call' | 'error' | 'ended';
+
 export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClose }: VideoCallModalProps) {
-  const [callStatus, setCallStatus] = useState<'idle' | 'checking_perms' | 'perms_denied' | 'ready' | 'calling' | 'receiving' | 'connecting' | 'in_call' | 'error' | 'ended'>('idle');
+  const [callStatus, setCallStatus] = useState<CallStatus>('idle');
   const [isMicMuted, setIsMicMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
@@ -56,8 +58,21 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const callSignalingRef = useRef<DatabaseReference | null>(null); // Ref for the RTDB signaling path
   const messagesListenerUnsubscribe = useRef<RtdbUnsubscribe | null>(null); // Ref for RTDB listener cleanup
+  const callEndTimeoutRef = useRef<NodeJS.Timeout | null>(null); // Timeout for missed call/auto-close
 
   const { toast } = useToast();
+
+  // --- Helper to safely update status ---
+  const updateStatus = useCallback((newStatus: CallStatus) => {
+    setCallStatus((prevStatus) => {
+      // Avoid setting to 'error' or 'ended' if already in a final state
+      if ((prevStatus === 'error' || prevStatus === 'ended') && (newStatus === 'error' || newStatus === 'ended')) {
+        return prevStatus;
+      }
+      console.log(`Call Status Transition: ${prevStatus} -> ${newStatus}`);
+      return newStatus;
+    });
+  }, []);
 
 
   // --- Cleanup Functions ---
@@ -83,85 +98,86 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
     }
   }, []);
 
-  // Detach RTDB listener without removing data (used internally)
+  // Detach RTDB listener
    const detachListener = useCallback(() => {
        if (messagesListenerUnsubscribe.current) {
-           messagesListenerUnsubscribe.current(); // Firebase V9 uses the function directly
+           messagesListenerUnsubscribe.current();
            messagesListenerUnsubscribe.current = null;
            console.log("RTDB messages listener detached.");
        }
-       // Also nullify the database reference itself if detaching
-       // callSignalingRef.current = null;
+       callSignalingRef.current = null; // Clear the ref after detaching
    }, []);
 
-
-  // Define handleEndCall function first
-   const handleEndCall = useCallback(() => {
-       if (callStatus !== 'idle' && callStatus !== 'ended') {
-           console.log("Ending call explicitly...");
-           // Check if call was in a state where it could have been missed
-           if (callStatus === 'calling' || callStatus === 'receiving') {
-               setShowMissedCall(true); // Show missed call message briefly
-               toast({ title: "Call Ended", description: `Missed call with ${partnerUser.displayName || 'User'}.` });
-               setTimeout(() => setShowMissedCall(false), 4000); // Hide after 4s
-           } else if (callStatus === 'in_call') {
-                toast({ title: "Call Ended", description: `Call with ${partnerUser.displayName || 'User'} ended.` });
-           }
-            // Perform cleanup, including stopping streams, closing PC, detaching listener
-           stopLocalStream();
-           closePeerConnection();
-           setRemoteStream(null);
-           if (remoteVideoRef.current) {
-               remoteVideoRef.current.srcObject = null;
-           }
-           detachListener(); // Detach listener
-
-           // Remove signaling data *after* other cleanup, only if call was active/being setup
-           if (['calling', 'receiving', 'connecting', 'in_call'].includes(callStatus)) {
-              removeCallSignalingData(chatId).catch(err => console.error("Error removing signaling data during explicit end:", err));
-           }
-
-           setCallStatus('ended'); // Set to a final 'ended' state before closing
-           setIsCaller(false);
-           onClose(); // Close the modal
-       } else if (callStatus === 'idle' || callStatus === 'ended') {
-           console.log("Attempted to end call but already idle or ended.");
-           // Minimal cleanup if already idle/ended, don't remove RTDB data
-           stopLocalStream();
-           closePeerConnection();
-           detachListener();
-           setCallStatus('ended'); // Ensure it's marked ended
-           onClose(); // Ensure modal closes if somehow open
-       }
-   }, [callStatus, stopLocalStream, closePeerConnection, detachListener, chatId, toast, partnerUser.displayName, onClose]);
-
-
-  const cleanup = useCallback((isEndingCall = false) => {
-    console.log("Running video call cleanup...");
+  const cleanup = useCallback((isEndingCallExplicitly = false) => {
+    console.log(`Running video call cleanup (Explicit End: ${isEndingCallExplicitly}). Current status: ${callStatusRef.current}`);
     stopLocalStream();
     closePeerConnection();
-    setRemoteStream(null);
+    setRemoteStream(null); // Clear remote stream state
     if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = null;
+        remoteVideoRef.current.srcObject = null; // Clear video element source
     }
-    detachListener(); // Detach listener without removing data initially
+    detachListener(); // Always detach listener
 
-    // Remove signaling data only if specifically ending the call and were involved
-    if (isEndingCall && ['calling', 'receiving', 'connecting', 'in_call'].includes(callStatus)) {
+    // Clear any pending timeouts
+    if (callEndTimeoutRef.current) {
+      clearTimeout(callEndTimeoutRef.current);
+      callEndTimeoutRef.current = null;
+    }
+
+    // Remove signaling data only if explicitly ending the call AND the call was in an active state
+    const wasCallActive = ['calling', 'receiving', 'connecting', 'in_call'].includes(callStatusRef.current);
+    if (isEndingCallExplicitly && wasCallActive) {
+       console.log(`Removing RTDB data for call ${chatId} due to explicit end.`);
        removeCallSignalingData(chatId).catch(err => console.error("Error removing signaling data during cleanup:", err));
-    } else {
-         callSignalingRef.current = null; // Clear ref anyway if not removing data
     }
 
-    setCallStatus('idle'); // Reset status
     setIsCaller(false); // Reset caller status
-    setShowMissedCall(false); // Reset missed call flag
-  }, [stopLocalStream, closePeerConnection, detachListener, callStatus, chatId]);
+    setShowMissedCall(false);
+    updateStatus('idle'); // Reset status *after* cleanup
+  }, [stopLocalStream, closePeerConnection, detachListener, chatId, updateStatus]);
+
+   // Use a ref to track the latest callStatus inside callbacks that might have stale closures
+   const callStatusRef = useRef(callStatus);
+   useEffect(() => {
+       callStatusRef.current = callStatus;
+   }, [callStatus]);
+
+   const handleEndCall = useCallback(() => {
+    console.log(`handleEndCall triggered. Current status: ${callStatusRef.current}`);
+    const currentStatus = callStatusRef.current; // Use the ref value
+
+    if (currentStatus !== 'idle' && currentStatus !== 'ended') {
+      console.log("Ending call explicitly...");
+
+      const couldHaveBeenMissed = currentStatus === 'calling' || currentStatus === 'receiving';
+      const wasConnected = currentStatus === 'in_call';
+
+      // Show toast based on state before cleanup
+      if (couldHaveBeenMissed) {
+        setShowMissedCall(true); // Show missed call message briefly in UI
+        toast({ title: "Call Missed/Ended", description: `Call with ${partnerUser.displayName || 'User'} was not connected.` });
+        // Set a timeout to hide the missed call UI element if needed, or just rely on modal close
+        if (callEndTimeoutRef.current) clearTimeout(callEndTimeoutRef.current);
+        callEndTimeoutRef.current = setTimeout(() => setShowMissedCall(false), 4000);
+      } else if (wasConnected) {
+        toast({ title: "Call Ended", description: `Call with ${partnerUser.displayName || 'User'} ended.` });
+      }
+
+      cleanup(true); // Perform full cleanup, including RTDB removal
+
+      updateStatus('ended'); // Set final 'ended' state
+      onClose(); // Close the modal
+    } else {
+      console.log("Attempted to end call but already idle or ended.");
+      cleanup(false); // Perform cleanup without removing RTDB data
+      updateStatus('ended'); // Ensure it's marked ended
+      onClose(); // Ensure modal closes
+    }
+  }, [cleanup, toast, partnerUser.displayName, onClose, updateStatus]); // Dependencies for handleEndCall
 
   // --- End Cleanup Functions ---
 
-
-  // --- RTDB Signaling Functions ---
+  // --- RTDB Signaling ---
   const sendSignalingMessage = useCallback(async (message: Omit<SignalingMessage, 'senderId' | 'timestamp'>) => {
     if (!currentUser?.uid) {
         console.error("Cannot send signaling message: User ID missing.");
@@ -169,137 +185,139 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
     }
     try {
       await sendSignalingMessageRTDB(chatId, message, currentUser.uid);
-      // console.log(`RTDB: Sent ${message.type} message.`);
      } catch (error: any) {
         console.error(`RTDB: Error sending ${message.type} message:`, error);
         toast({ variant: "destructive", title: "Signaling Error", description: `Could not send ${message.type}. Call may fail.` });
-        // Consider ending the call on signaling failure
         handleEndCall();
      }
   }, [chatId, currentUser?.uid, toast, handleEndCall]);
+  // --- End RTDB Signaling ---
 
-   // --- WebRTC Peer Connection Setup --- - Define initializePeerConnection before setupSignalingListener
-    const initializePeerConnection = useCallback(async (caller: boolean) => {
-        console.log(`Initializing PeerConnection. Is caller: ${caller}`);
-         if (!localStream) {
-             console.error("Cannot initialize PeerConnection: Local stream not available.");
-             setCallStatus('error');
-             toast({ variant: "destructive", title: "Call Error", description: "Camera/Mic stream failed." });
-             handleEndCall();
-             return null;
-         }
-        if (peerConnectionRef.current) {
-            console.warn("PeerConnection already exists. Closing previous one.");
-            closePeerConnection();
-        }
 
-        try {
-            const pc = new RTCPeerConnection(configuration);
-            peerConnectionRef.current = pc;
-            setIsCaller(caller);
-
-            // Add local stream tracks
-            localStream.getTracks().forEach(track => {
-                try {
-                    pc.addTrack(track, localStream);
-                    console.log(`WebRTC: Added local ${track.kind} track.`);
-                } catch (addTrackError) {
-                     console.error(`WebRTC: Error adding local ${track.kind} track:`, addTrackError);
-                     // Handle specific errors if needed
-                }
-            });
-
-            // Handle incoming remote tracks
-            pc.ontrack = (event) => {
-                console.log(`WebRTC: Received remote track (${event.track.kind}). Streams:`, event.streams);
-                if (event.streams && event.streams[0]) {
-                    const incomingStream = event.streams[0];
-                    console.log("WebRTC: Assigning remote stream:", incomingStream.id);
-                    setRemoteStream(incomingStream);
-                    if (remoteVideoRef.current) {
-                        // Ensure srcObject is not set to the same stream again unnecessarily
-                        if (remoteVideoRef.current.srcObject !== incomingStream) {
-                             remoteVideoRef.current.srcObject = incomingStream;
-                             remoteVideoRef.current.play().catch(e => console.error("Remote video play failed:", e)); // Attempt to play
-                        }
-                    }
-                    // Move to 'in_call' status once the first remote track is received
-                     if (callStatus !== 'in_call') {
-                        setCallStatus('in_call');
-                        toast({ title: 'Call Connected', description: `Connected with ${partnerUser.displayName || 'User'}` });
-                     }
-                } else {
-                    console.warn("WebRTC: Remote track received but no stream associated.");
-                    // If remoteStream is already set, maybe add track to it? More complex handling.
-                }
-            };
-
-            // Handle ICE candidates
-            pc.onicecandidate = (event) => {
-                if (event.candidate) {
-                    // console.log("WebRTC: Generated ICE candidate:", event.candidate.type);
-                    sendSignalingMessage({ type: 'candidate', payload: event.candidate.toJSON() });
-                } else {
-                    console.log("WebRTC: All ICE candidates generated.");
-                    // Optionally send a null candidate to signal end
-                    sendSignalingMessage({ type: 'candidate', payload: null });
-                }
-            };
-
-            // Handle connection state changes
-            pc.oniceconnectionstatechange = () => {
-                const currentState = pc.iceConnectionState;
-                console.log(`WebRTC: ICE Connection State: ${currentState}`);
-                switch (currentState) {
-                    case 'connected':
-                        // Often implies connection, but 'completed' is more definitive for media flow.
-                        // We rely on 'ontrack' to set 'in_call' state.
-                        break;
-                    case 'completed':
-                         console.log("WebRTC: ICE Connection Completed - Media should be flowing.");
-                          if (callStatus !== 'in_call') {
-                             // This might be redundant if ontrack already set it, but safe fallback.
-                             setCallStatus('in_call');
-                          }
-                          break;
-                    case 'disconnected':
-                         console.warn("WebRTC: ICE Disconnected. Attempting to reconnect...");
-                         // Consider UI feedback for temporary disconnection
-                         break;
-                    case 'failed':
-                         console.error("WebRTC: ICE Connection Failed.");
-                         setCallStatus('error');
-                         toast({ variant: "destructive", title: "Connection Failed", description: "Could not establish connection." });
-                         handleEndCall();
-                         break;
-                    case 'closed':
-                         console.log("WebRTC: ICE Connection Closed.");
-                          // Check callStatus before ending to avoid duplicate calls during manual hangup
-                         if (callStatus !== 'idle' && callStatus !== 'ended') {
-                              handleEndCall();
-                         }
-                         break;
-                     case 'checking':
-                          console.log("WebRTC: ICE checking...");
-                          if (!['in_call', 'connecting'].includes(callStatus)) setCallStatus('connecting'); // Update status if not already connecting/in_call
-                          break;
-                }
-            };
-
-            return pc; // Return the created connection
-
-        } catch (error) {
-            console.error("Error initializing PeerConnection:", error);
-            setCallStatus('error');
-            toast({ variant: "destructive", title: "WebRTC Error", description: "Failed to initialize call connection." });
-            handleEndCall();
+  // --- WebRTC Peer Connection Setup ---
+   const initializePeerConnection = useCallback(async (isInitiator: boolean) => {
+       console.log(`Initializing PeerConnection. Is initiator: ${isInitiator}`);
+        if (!localStream) {
+            console.error("Cannot initialize PeerConnection: Local stream not available.");
+            updateStatus('error');
+            toast({ variant: "destructive", title: "Call Error", description: "Camera/Mic stream failed." });
+            handleEndCall(); // Trigger full cleanup and close
             return null;
         }
-    }, [localStream, toast, handleEndCall, closePeerConnection, sendSignalingMessage, callStatus, partnerUser.displayName]);
-    // --- End WebRTC Peer Connection Setup ---
+       if (peerConnectionRef.current) {
+           console.warn("PeerConnection already exists. Closing previous one.");
+           closePeerConnection();
+       }
 
+       try {
+           const pc = new RTCPeerConnection(configuration);
+           peerConnectionRef.current = pc;
+           setIsCaller(isInitiator); // Set caller status based on who initializes first
+
+           // Add local stream tracks
+           localStream.getTracks().forEach(track => {
+               try {
+                   pc.addTrack(track, localStream);
+                   console.log(`WebRTC: Added local ${track.kind} track.`);
+               } catch (addTrackError) {
+                    console.error(`WebRTC: Error adding local ${track.kind} track:`, addTrackError);
+               }
+           });
+
+           // Handle incoming remote tracks
+           pc.ontrack = (event) => {
+               console.log(`WebRTC: Received remote track (${event.track.kind}). Streams:`, event.streams);
+               if (event.streams && event.streams[0]) {
+                   const incomingStream = event.streams[0];
+                   setRemoteStream(prevStream => {
+                       // Prevent setting the same stream multiple times
+                       if (prevStream?.id === incomingStream.id) return prevStream;
+                       console.log("WebRTC: Assigning remote stream:", incomingStream.id);
+                       return incomingStream;
+                   });
+               } else {
+                   console.warn("WebRTC: Remote track received but no stream associated.");
+               }
+           };
+
+            // Assign stream to video element when remoteStream state updates
+            useEffect(() => {
+                if (remoteStream && remoteVideoRef.current) {
+                     if (remoteVideoRef.current.srcObject !== remoteStream) {
+                        remoteVideoRef.current.srcObject = remoteStream;
+                        remoteVideoRef.current.play().catch(e => console.error("Remote video play failed:", e));
+                        console.log("WebRTC: Remote stream assigned to video element.");
+                        updateStatus('in_call'); // Update status when remote stream is ready to play
+                    }
+                } else if (!remoteStream && remoteVideoRef.current) {
+                    remoteVideoRef.current.srcObject = null; // Clear source if stream becomes null
+                }
+            }, [remoteStream, updateStatus]);
+
+
+           // Handle ICE candidates
+           pc.onicecandidate = (event) => {
+               if (event.candidate) {
+                   sendSignalingMessage({ type: 'candidate', payload: event.candidate.toJSON() });
+               } else {
+                   console.log("WebRTC: End of ICE candidates.");
+                   // Optionally send null candidate if required by signaling protocol
+                   // sendSignalingMessage({ type: 'candidate', payload: null });
+               }
+           };
+
+           // Handle connection state changes
+           pc.oniceconnectionstatechange = () => {
+               const currentState = pc.iceConnectionState;
+               console.log(`WebRTC: ICE Connection State: ${currentState}`);
+               switch (currentState) {
+                   case 'checking':
+                       if (callStatusRef.current !== 'in_call') updateStatus('connecting');
+                       break;
+                   case 'connected':
+                       // Connection established, media might start flowing
+                       // 'in_call' state is set via ontrack usually
+                       break;
+                   case 'completed':
+                       // Media should definitely be flowing
+                       if (callStatusRef.current !== 'in_call') updateStatus('in_call');
+                       break;
+                   case 'disconnected':
+                        console.warn("WebRTC: ICE Disconnected. Attempting to reconnect...");
+                        // Consider temporary UI feedback, connection might recover
+                        break;
+                   case 'failed':
+                        console.error("WebRTC: ICE Connection Failed.");
+                        toast({ variant: "destructive", title: "Connection Failed", description: "Could not establish connection." });
+                        updateStatus('error');
+                        handleEndCall();
+                        break;
+                   case 'closed':
+                        console.log("WebRTC: ICE Connection Closed.");
+                        // Only trigger end call if not already ending/idle to avoid loops
+                        if (callStatusRef.current !== 'idle' && callStatusRef.current !== 'ended') {
+                            handleEndCall();
+                        }
+                        break;
+                    default:
+                         // 'new' state
+                        break;
+               }
+           };
+
+           return pc; // Return the created connection
+
+       } catch (error) {
+           console.error("Error initializing PeerConnection:", error);
+           toast({ variant: "destructive", title: "WebRTC Error", description: "Failed to initialize call connection." });
+           updateStatus('error');
+           handleEndCall();
+           return null;
+       }
+   }, [localStream, toast, handleEndCall, closePeerConnection, sendSignalingMessage, updateStatus, remoteStream]); // Added remoteStream to dependency
+
+   // --- Signaling Listener Setup ---
    const setupSignalingListener = useCallback(() => {
-       // Ensure RTDB is initialized
        if (!rtdb) {
            console.error("RTDB: Realtime Database not initialized. Cannot set up listener.");
             toast({ variant: "destructive", title: "Internal Error", description: "Signaling service unavailable." });
@@ -315,67 +333,63 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
        console.log(`RTDB: Setting up listener for messages at calls/${chatId}/messages`);
 
        messagesListenerUnsubscribe.current = onValue(callSignalingRef.current, (snapshot: DataSnapshot) => {
+           const currentStatus = callStatusRef.current; // Get current status
+
            if (!snapshot.exists()) {
                console.log(`RTDB: No signaling data found for call ${chatId} or data removed.`);
-               // If data is removed and we are in call, it might mean the other user hung up
-                if (['in_call', 'connecting', 'calling', 'receiving'].includes(callStatus)) {
+                // If call was active, assume the other user hung up.
+                if (['in_call', 'connecting', 'calling', 'receiving'].includes(currentStatus)) {
                    console.log("RTDB: Signaling data removed, assuming call ended by other party.");
-                   if (!showMissedCall) { // Avoid duplicate toasts if already showing missed call
-                        toast({ title: "Call Ended", description: "The other user left the call." });
-                   }
-                   handleEndCall();
+                    // Check showMissedCall state here if needed
+                   toast({ title: "Call Ended", description: "The other user left the call." });
+                   handleEndCall(); // Trigger full cleanup
                }
                return;
            }
 
            const messages = snapshot.val();
-           // Iterate over messages using object keys (Firebase auto-generated keys)
+           if (!messages) return; // No messages yet
+
            Object.keys(messages).forEach(async key => {
                const message = messages[key] as SignalingMessage;
 
-               // Ignore own messages, messages without payload, or messages already processed? (Difficult without tracking)
+               // Ignore own messages or messages without payload
                if (message.senderId === currentUser?.uid || !message.payload) {
                    return;
                }
-                // console.log(`RTDB: Received message type: ${message.type} from ${message.senderId}`);
 
-               if (!peerConnectionRef.current) {
-                   console.warn("Received signaling message but peer connection is not initialized.");
-                   // If receiving an offer, initialize connection here
-                   if (message.type === 'offer' && callStatus === 'ready') { // Only initialize if ready
-                       await initializePeerConnection(false); // Initialize as receiver
-                   } else {
-                       console.warn(`Ignoring ${message.type} because peer connection not ready or call status is ${callStatus}.`);
-                       return; // Cannot process other messages without peer connection
-                   }
-               }
-               // Ensure peerConnection exists now
-               const pc = peerConnectionRef.current;
-               if (!pc) {
-                  console.error("Peer connection still null after potential initialization.");
-                  return;
-               }
-
+                // Initialize PC if needed (e.g., receiving offer when ready)
+                let pc = peerConnectionRef.current;
+                 if (!pc && message.type === 'offer' && currentStatus === 'ready') {
+                    console.log("Initializing PeerConnection as receiver upon receiving offer...");
+                    pc = await initializePeerConnection(false); // Initialize as receiver
+                    if (!pc) {
+                        console.error("Failed to initialize PeerConnection as receiver.");
+                        return; // Stop processing if initialization failed
+                    }
+                 } else if (!pc) {
+                     console.warn(`Ignoring signaling message type ${message.type} because PeerConnection is not ready or call status is ${currentStatus}.`);
+                     return;
+                 }
 
                try {
                    switch (message.type) {
                        case 'offer':
                             if (pc.signalingState !== 'stable') {
-                                console.warn(`Received offer in non-stable state: ${pc.signalingState}. Potential glare, handling might be needed.`);
-                                // Basic glare handling: If we are caller and they send offer, maybe ignore or re-negotiate.
-                                // For simplicity, we might just ignore if not stable.
+                                console.warn(`Received offer in non-stable state: ${pc.signalingState}. Potential glare.`);
+                                // Handle glare if necessary (e.g., based on role)
                                 return;
                             }
                             console.log("RTDB: Received offer");
-                            setCallStatus('receiving'); // Show UI indicating incoming call
+                            updateStatus('receiving');
                             await pc.setRemoteDescription(new RTCSessionDescription(message.payload));
                             console.log("WebRTC: Remote description (offer) set.");
-                            setCallStatus('connecting'); // Update status
                             const answer = await pc.createAnswer();
                             console.log("WebRTC: Answer created.");
                             await pc.setLocalDescription(answer);
                             console.log("WebRTC: Local description (answer) set.");
                             sendSignalingMessage({ type: 'answer', payload: pc.localDescription!.toJSON() });
+                            // Status moved to 'connecting' or 'in_call' by ICE/ontrack
                             break;
 
                        case 'answer':
@@ -386,27 +400,22 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
                             console.log("RTDB: Received answer");
                             await pc.setRemoteDescription(new RTCSessionDescription(message.payload));
                             console.log("WebRTC: Remote description (answer) set.");
-                             setCallStatus('connecting'); // Still connecting until ICE completes
-                            // Connection should establish after ICE candidates are exchanged
+                            // Status moved to 'connecting' or 'in_call' by ICE/ontrack
                             break;
 
                        case 'candidate':
-                            if (message.payload && pc.remoteDescription) { // Only add candidate if remote description is set
-                                // console.log("RTDB: Received ICE candidate");
+                            if (message.payload && pc.remoteDescription) {
                                 await pc.addIceCandidate(new RTCIceCandidate(message.payload));
-                                // console.log("WebRTC: ICE candidate added.");
                             } else if (!message.payload) {
-                                console.log("RTDB: Received end-of-candidates signal.");
-                                // Handle potential end-of-candidates signal if needed
+                                console.log("RTDB: Received end-of-candidates signal (null candidate).");
                             } else {
-                                console.warn("RTDB: Received ICE candidate but remote description is not set yet. Buffering or ignoring might be needed.");
-                                // Basic implementation: Ignore if remote description isn't set.
+                                console.warn("RTDB: Received ICE candidate but remote description is not set yet. Buffering may be needed for robust handling.");
                             }
                             break;
                    }
                } catch (error) {
                    console.error(`Error handling signaling message type ${message.type}:`, error);
-                   setCallStatus('error');
+                   updateStatus('error');
                    toast({ variant: "destructive", title: "WebRTC Error", description: `Failed to process ${message.type}.` });
                    handleEndCall();
                }
@@ -415,86 +424,96 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
            console.error(`RTDB: Error listening for signaling messages at calls/${chatId}/messages:`, error);
            toast({ variant: "destructive", title: "Signaling Error", description: "Lost connection to signaling server." });
            handleEndCall();
-           detachListener(); // Clear ref on error
+           detachListener();
        });
 
-   }, [chatId, currentUser?.uid, callStatus, toast, handleEndCall, sendSignalingMessage, detachListener]); // Removed initializePeerConnection from here
-   // --- End RTDB Signaling Functions ---
+   }, [chatId, currentUser?.uid, toast, handleEndCall, sendSignalingMessage, detachListener, initializePeerConnection, updateStatus]); // Removed callStatus, initializePeerConnection
 
 
-  // Get Media Permissions when modal opens
-  useEffect(() => {
-    if (!isOpen) {
-       // Use cleanup(false) to avoid removing RTDB data on simple close unless call ended
-      cleanup(false);
-      return;
-    }
+   // --- Main Effect for Modal Open/Close and Permissions ---
+   useEffect(() => {
+       if (!isOpen) {
+           cleanup(callStatusRef.current !== 'idle' && callStatusRef.current !== 'ended'); // Pass true if call was active before closing
+           return;
+       }
 
-    let isMounted = true;
-    setCallStatus('idle'); // Reset status on open
+       let isMounted = true;
+       updateStatus('idle'); // Reset status on open
 
-    const requestMedia = async () => {
-      // Only request if idle or error state
-      if (!['idle', 'error', 'ended'].includes(callStatus) && localStream) {
-          console.log("Media stream already exists or call in progress.");
-          return;
-      }
+       const requestMediaAndSetup = async () => {
+           // Ensure cleanup of any previous state before starting
+           cleanup(false); // Don't remove RTDB on open, just clean local state
 
-      console.log("Requesting media permissions...");
-      setCallStatus('checking_perms');
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        if (!isMounted) {
-          stream.getTracks().forEach(track => track.stop());
-          return;
-        }
-        console.log("Media access granted.");
-        setLocalStream(stream);
-        setCallStatus('ready');
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
-          localVideoRef.current.play().catch(e => console.error("Local video play failed:", e));
-        }
-        // --- Setup listener ONLY AFTER permissions are granted and ready ---
-        setupSignalingListener(); // Initialize listener now
-        // --- End Setup listener ---
+           updateStatus('checking_perms');
+           try {
+               console.log("Requesting media permissions...");
+               const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+               if (!isMounted) {
+                   stream.getTracks().forEach(track => track.stop());
+                   return;
+               }
+               console.log("Media access granted.");
+               setLocalStream(stream);
+                if (localVideoRef.current) {
+                    localVideoRef.current.srcObject = stream;
+                    localVideoRef.current.play().catch(e => console.error("Local video play failed:", e));
+                }
+               updateStatus('ready'); // Media ready, before listener setup
+               setupSignalingListener(); // Setup listener *after* getting media
 
-      } catch (error: any) {
-        console.error("Error accessing camera/mic:", error.name, error.message);
-        if (!isMounted) return;
-        setCallStatus('perms_denied');
-        toast({
-          variant: 'destructive',
-          title: 'Permissions Required',
-          description: `Could not access camera/microphone: ${error.message}. Please enable permissions.`,
-          duration: 7000,
-        });
-      }
-    };
+           } catch (error: any) {
+               console.error("Error accessing camera/mic:", error.name, error.message);
+               if (!isMounted) return;
+               updateStatus('perms_denied');
+               toast({
+                   variant: 'destructive',
+                   title: 'Permissions Required',
+                   description: `Could not access camera/microphone: ${error.message}. Please enable permissions.`,
+                   duration: 7000,
+               });
+               // Automatically close if permissions denied after a delay
+               if (callEndTimeoutRef.current) clearTimeout(callEndTimeoutRef.current);
+               callEndTimeoutRef.current = setTimeout(() => handleEndCall(), 3000);
+           }
+       };
 
-    requestMedia();
+       requestMediaAndSetup();
 
-    return () => {
-      isMounted = false;
-      // Cleanup runs when isOpen becomes false *or* dependencies change
-      cleanup(false); // Don't remove RTDB data on unmount unless call explicitly ended
-      console.log("Video call modal effect cleanup on unmount/close.");
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, toast, setupSignalingListener]); // Added setupSignalingListener dependency
+       return () => {
+           isMounted = false;
+           console.log("Video call modal effect cleanup on unmount/close.");
+           // Cleanup should handle stopping streams, closing PC, detaching listener
+           // Determine if RTDB data needs removal based on the status *before* cleanup
+           const shouldRemoveRtdb = callStatusRef.current !== 'idle' && callStatusRef.current !== 'ended';
+           cleanup(shouldRemoveRtdb);
+       };
+   }, [isOpen, toast, setupSignalingListener, handleEndCall, cleanup, updateStatus]); // Dependencies for main effect
 
 
+  // --- Call Initiation ---
   const handleStartCall = async () => {
     if (callStatus !== 'ready' || !localStream) {
       toast({ variant: 'destructive', title: 'Cannot Start Call', description: 'Permissions denied or media stream not available.' });
       return;
     }
 
-    const pc = await initializePeerConnection(true); // Initialize as caller
-    if (!pc) return; // Initialization failed
-
-    setCallStatus('calling');
+    updateStatus('calling'); // Update status optimistically
     console.log(`Initiating call in chat ${chatId} to ${partnerUser.uid}...`);
+
+    // Ensure previous signaling data is cleared before starting a new call
+    try {
+        await removeCallSignalingData(chatId);
+        console.log("Previous signaling data cleared (if any).");
+    } catch (clearError) {
+        console.warn("Could not clear previous signaling data:", clearError);
+        // Proceed with caution, might lead to issues if old data lingers
+    }
+    // Re-setup listener after clearing data
+    setupSignalingListener();
+
+
+    const pc = await initializePeerConnection(true); // Initialize as initiator
+    if (!pc) return; // Initialization failed, error handled within initializePeerConnection
 
      // --- WebRTC Offer Creation ---
      try {
@@ -504,74 +523,58 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
          console.log("WebRTC: Local description (offer) set.");
          // Send offer via RTDB
          sendSignalingMessage({ type: 'offer', payload: pc.localDescription!.toJSON() });
+         // Status updated to 'calling' above
      } catch (error) {
          console.error("Error creating or sending offer:", error);
-         setCallStatus('error');
          toast({ variant: "destructive", title: "Call Error", description: "Failed to create call offer." });
+         updateStatus('error');
          handleEndCall();
      }
   };
 
-  // Renamed to make distinct from onClose prop
-  const handleHangUp = useCallback(() => {
-    console.log("Hang up button clicked.");
-    handleEndCall(); // Use the main cleanup and state reset logic
-  }, [handleEndCall]);
-
-
-  // Close modal if call status becomes error or denied while open
-  useEffect(() => {
-    if (isOpen && (callStatus === 'perms_denied' || callStatus === 'error')) {
-      const timer = setTimeout(() => {
-        if (isOpen) handleHangUp(); // Use hangup to ensure modal closes too
-      }, 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [callStatus, isOpen, handleHangUp]);
-
-
+  // --- Media Toggles ---
   const toggleMic = () => {
     if (localStream) {
-      const audioTracks = localStream.getAudioTracks();
-      if (audioTracks.length > 0) {
-        audioTracks[0].enabled = !audioTracks[0].enabled;
-        setIsMicMuted(!audioTracks[0].enabled);
-        console.log(`Microphone ${audioTracks[0].enabled ? 'unmuted' : 'muted'}`);
-      }
+      localStream.getAudioTracks().forEach(track => {
+        track.enabled = !track.enabled;
+        setIsMicMuted(!track.enabled);
+        console.log(`Microphone ${track.enabled ? 'unmuted' : 'muted'}`);
+      });
     }
   };
 
   const toggleCamera = () => {
     if (localStream) {
-      const videoTracks = localStream.getVideoTracks();
-      if (videoTracks.length > 0) {
-        videoTracks[0].enabled = !videoTracks[0].enabled;
-        setIsCameraOff(!videoTracks[0].enabled);
-        console.log(`Camera ${videoTracks[0].enabled ? 'on' : 'off'}`);
-      }
+      localStream.getVideoTracks().forEach(track => {
+        track.enabled = !track.enabled;
+        setIsCameraOff(!track.enabled);
+        console.log(`Camera ${track.enabled ? 'on' : 'off'}`);
+      });
     }
   };
 
+  // --- UI Description Logic ---
   const getDialogDescription = () => {
     switch (callStatus) {
       case 'checking_perms':
         return <><Loader2 className="mr-1 h-4 w-4 animate-spin" /> Requesting permissions...</>;
       case 'perms_denied':
-        return <><AlertCircle className="mr-1 h-4 w-4 text-destructive" /> Permissions denied.</>;
+        return <><AlertCircle className="mr-1 h-4 w-4 text-destructive" /> Permissions denied. Allow access to proceed.</>;
       case 'ready':
         return 'Ready to call.';
       case 'calling':
         return <><Loader2 className="mr-1 h-4 w-4 animate-spin" /> Calling {partnerUser.displayName || 'User'}...</>;
-       case 'receiving': // Added state for receiver side
+       case 'receiving':
+           // The accept button is shown in this state
            return `Incoming call from ${partnerUser.displayName || 'User'}...`;
-       case 'connecting': // State while ICE/SDP exchange happens
+       case 'connecting':
            return <><Loader2 className="mr-1 h-4 w-4 animate-spin"/> Connecting...</>;
       case 'in_call':
-        return <span className="text-green-600">Connected</span>;
+        return <span className="text-green-600 font-medium">Connected</span>;
        case 'ended':
            return showMissedCall ? `Missed call with ${partnerUser.displayName || 'User'}` : 'Call ended.';
       case 'error':
-        return <span className="text-destructive">Call error.</span>;
+        return <span className="text-destructive">Call error occurred.</span>;
       case 'idle':
       default:
         return 'Initializing...';
@@ -580,14 +583,13 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
 
 
   return (
-    // Use handleHangUp for onOpenChange when closing via overlay click or escape key
-    <Dialog open={isOpen} onOpenChange={(open) => !open && handleHangUp()}>
+    <Dialog open={isOpen} onOpenChange={(open) => !open && handleEndCall()}>
       <DialogContent className="sm:max-w-[80vw] md:max-w-[70vw] lg:max-w-[60vw] xl:max-w-[50vw] p-0 overflow-hidden grid grid-rows-[auto_1fr_auto] h-[80vh]">
         <DialogHeader className="p-4 border-b bg-background">
           <DialogTitle className="text-lg flex items-center gap-2">
             Video Call with {partnerUser.displayName || 'User'}
           </DialogTitle>
-          <DialogDescription className="flex items-center text-sm">
+          <DialogDescription className="flex items-center text-sm min-h-[20px]"> {/* Added min-height */}
             {getDialogDescription()}
           </DialogDescription>
         </DialogHeader>
@@ -596,29 +598,30 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
         <div className="relative grid grid-cols-1 bg-black overflow-hidden h-full">
           {/* Remote Video Feed */}
           <div className="relative flex items-center justify-center bg-muted/80 w-full h-full overflow-hidden">
-             {/* Render video only if remoteStream exists */}
-             {remoteStream && (
+             {remoteStream && callStatus === 'in_call' ? (
                 <video
                    ref={remoteVideoRef}
                    autoPlay
                    playsInline
                    className="w-full h-full object-cover"
-                   onLoadedMetadata={(e) => e.currentTarget.play().catch(err => console.warn("Remote play prevented:", err))} // Try playing when metadata loads
+                   onLoadedMetadata={(e) => e.currentTarget.play().catch(err => console.warn("Remote play prevented:", err))}
                 />
+             ) : (
+               <div className="absolute inset-0 flex flex-col items-center justify-center z-10 bg-gradient-to-b from-black/30 to-black/70">
+                 <Avatar className="h-24 w-24 mb-2 border-4 border-background/50">
+                   <AvatarImage src={partnerUser.photoURL || undefined} alt={partnerUser.displayName || 'User'} data-ai-hint="video call partner avatar" />
+                   <AvatarFallback className="text-3xl">{getInitials(partnerUser.displayName)}</AvatarFallback>
+                 </Avatar>
+                 <p className="text-white/80 font-medium mt-2 bg-black/50 px-2 py-1 rounded">{partnerUser.displayName || 'User'}</p>
+                  {/* Show specific status text */}
+                  {callStatus === 'calling' && <p className="text-white/70 text-sm mt-1">Ringing...</p>}
+                  {(callStatus === 'ended' && showMissedCall) && <p className="text-yellow-400 text-sm mt-1">Missed Call</p>}
+                  {callStatus === 'receiving' && <p className="text-white/70 text-sm mt-1">Incoming call...</p>}
+                  {callStatus === 'connecting' && <p className="text-white/70 text-sm mt-1">Connecting...</p>}
+                  {callStatus === 'ended' && !showMissedCall && <p className="text-white/70 text-sm mt-1">Call Ended</p>}
+                  {callStatus === 'error' && <p className="text-red-400 text-sm mt-1">Error</p>}
+               </div>
              )}
-            {/* Show partner avatar if remote video is off or not yet connected/ended */}
-             {( !remoteStream || callStatus === 'ended' ) && callStatus !== 'in_call' && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center z-10 bg-gradient-to-b from-black/30 to-black/70">
-                <Avatar className="h-24 w-24 mb-2 border-4 border-background/50">
-                  <AvatarImage src={partnerUser.photoURL || undefined} alt={partnerUser.displayName || 'User'} data-ai-hint="video call partner avatar" />
-                  <AvatarFallback className="text-3xl">{getInitials(partnerUser.displayName)}</AvatarFallback>
-                </Avatar>
-                <p className="text-white/80 font-medium mt-2 bg-black/50 px-2 py-1 rounded">{partnerUser.displayName || 'User'}</p>
-                 {callStatus === 'calling' && <p className="text-white/70 text-sm mt-1">Ringing...</p>}
-                 {callStatus === 'ended' && showMissedCall && <p className="text-yellow-400 text-sm mt-1">Missed Call</p>}
-                 {callStatus === 'receiving' && <p className="text-white/70 text-sm mt-1">Incoming call...</p>}
-              </div>
-            )}
           </div>
 
           {/* Local Video Feed */}
@@ -630,7 +633,6 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
                  playsInline
                  muted
                  className="w-full h-full object-cover"
-                 // Attempt play on load
                  onLoadedMetadata={(e) => e.currentTarget.play().catch(err => console.warn("Local play prevented:", err))}
                />
             ) : (
@@ -638,8 +640,7 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
                 {callStatus === 'checking_perms' && <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />}
                 {callStatus === 'perms_denied' && <AlertCircle className="h-8 w-8 text-destructive" />}
                  {(['ready', 'calling', 'receiving', 'connecting', 'in_call'].includes(callStatus)) && isCameraOff && <VideoOff className="h-8 w-8 text-muted-foreground" />}
-                 {/* Show avatar initially or if camera is off during active states */}
-                 {(callStatus === 'idle' || callStatus === 'ended' || (['ready', 'calling', 'receiving', 'connecting', 'in_call'].includes(callStatus) && isCameraOff) || callStatus === 'error') && (
+                 {(!localStream || callStatus === 'idle' || callStatus === 'ended' || (['ready', 'calling', 'receiving', 'connecting', 'in_call'].includes(callStatus) && isCameraOff) || callStatus === 'error') && (
                     <Avatar className="h-12 w-12">
                          <AvatarImage src={currentUser.photoURL || undefined} />
                          <AvatarFallback>{getInitials(currentUser.displayName)}</AvatarFallback>
@@ -651,90 +652,78 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
         </div>
 
         {/* Call Controls */}
-        <DialogFooter className="p-4 border-t bg-background flex flex-row justify-center gap-4">
-           {/* Mic/Cam controls available once stream is ready and call is potentially active */}
-          {(['ready', 'calling', 'receiving', 'connecting', 'in_call'].includes(callStatus)) && localStream && (
+        <DialogFooter className="p-4 border-t bg-background flex flex-row justify-center items-center gap-4 min-h-[72px]"> {/* Added min-height */}
+           {/* Mic/Cam controls: Available once media is ready */}
+          {localStream && callStatus !== 'idle' && callStatus !== 'checking_perms' && callStatus !== 'perms_denied' && callStatus !== 'ended' && callStatus !== 'error' && (
             <>
-              <Button variant={isMicMuted ? "destructive" : "secondary"} size="icon" onClick={toggleMic} aria-label={isMicMuted ? "Unmute microphone" : "Mute microphone"} className="rounded-full h-12 w-12">
-                {isMicMuted ? <MicOff className="h-6 w-6" /> : <Mic className="h-6 w-6" />}
+              <Button variant={isMicMuted ? "secondary" : "outline"} size="icon" onClick={toggleMic} aria-label={isMicMuted ? "Unmute microphone" : "Mute microphone"} className="rounded-full h-11 w-11">
+                {isMicMuted ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
               </Button>
-              <Button variant={isCameraOff ? "destructive" : "secondary"} size="icon" onClick={toggleCamera} aria-label={isCameraOff ? "Turn camera on" : "Turn camera off"} className="rounded-full h-12 w-12">
-                {isCameraOff ? <VideoOff className="h-6 w-6" /> : <Video className="h-6 w-6" />}
+              <Button variant={isCameraOff ? "secondary" : "outline"} size="icon" onClick={toggleCamera} aria-label={isCameraOff ? "Turn camera on" : "Turn camera off"} className="rounded-full h-11 w-11">
+                {isCameraOff ? <VideoOff className="h-5 w-5" /> : <Video className="h-5 w-5" />}
               </Button>
             </>
           )}
 
-          {/* Start Call / Accept Call Button */}
-          {callStatus === 'ready' && ( // Only show start when 'ready'
-                <Button
-                    variant="default"
-                    size="icon"
-                    onClick={handleStartCall}
-                    className="rounded-full h-12 w-12 bg-green-600 hover:bg-green-700"
-                    aria-label="Start call"
-                >
-                    <Phone className="h-6 w-6" />
-                </Button>
-           )}
-           {callStatus === 'receiving' && ( // Specific button for accepting
-                <Button
-                    variant="default"
-                    size="icon"
-                    onClick={async () => {
-                       console.log("Accepting call...");
-                       if (!peerConnectionRef.current) {
-                           console.error("Cannot accept call, PeerConnection not initialized.");
-                           toast({ variant: "destructive", title: "Error", description: "Could not accept call." });
-                           handleEndCall();
-                           return;
-                       }
-                       // Answer logic is handled by the listener upon receiving offer
-                       // Here we just signify connection attempt starts from user accepting.
-                       setCallStatus('connecting');
-                       // The answer is sent by the onValue listener when it processes the offer.
-                    }}
-                    className="rounded-full h-12 w-12 bg-green-600 hover:bg-green-700"
-                    aria-label="Accept call"
-                >
-                    <Phone className="h-6 w-6" />
-                </Button>
-           )}
+           {/* Start Call Button (only when 'ready') */}
+           {callStatus === 'ready' && (
+                 <Button
+                     variant="default"
+                     size="icon"
+                     onClick={handleStartCall}
+                     className="rounded-full h-12 w-12 bg-green-600 hover:bg-green-700"
+                     aria-label="Start call"
+                 >
+                     <Phone className="h-6 w-6" />
+                 </Button>
+            )}
+
+            {/* Accept Call Button (only when 'receiving') */}
+           {callStatus === 'receiving' && (
+                 <Button
+                     variant="default"
+                     size="icon"
+                     onClick={() => {
+                        // Answer logic is handled by the signaling listener processing the offer.
+                        // Clicking accept just changes UI state.
+                        console.log("User clicked Accept Call.");
+                        updateStatus('connecting');
+                     }}
+                     className="rounded-full h-12 w-12 bg-green-600 hover:bg-green-700"
+                     aria-label="Accept call"
+                 >
+                     <Phone className="h-6 w-6" />
+                 </Button>
+            )}
 
 
-          {/* Calling / Connecting Indicator Button */}
+          {/* Calling / Connecting Indicator */}
           {(callStatus === 'calling' || callStatus === 'connecting') && (
             <Button
-              variant="default"
+              variant="ghost"
               size="icon"
               disabled
-              className="rounded-full h-12 w-12 bg-yellow-500 hover:bg-yellow-600 cursor-not-allowed"
-              aria-label={callStatus === 'calling' ? "Calling" : "Connecting"}
+              className="rounded-full h-12 w-12 text-yellow-500 cursor-not-allowed"
+              aria-label={callStatus === 'calling' ? "Calling..." : "Connecting..."}
             >
               <Loader2 className="h-6 w-6 animate-spin" />
             </Button>
           )}
 
 
-          {/* End Call Button */}
-           {/* Show hang up unless idle, checking perms, perms denied, ended or error */}
-           {callStatus !== 'idle' && callStatus !== 'checking_perms' && callStatus !== 'perms_denied' && callStatus !== 'ended' && callStatus !== 'error' && (
+          {/* End Call Button: Available in most active states */}
+           {['ready', 'calling', 'receiving', 'connecting', 'in_call'].includes(callStatus) && (
             <Button variant="destructive" size="icon" onClick={handleHangUp} className="rounded-full h-12 w-12" aria-label="End call">
               <PhoneOff className="h-6 w-6" />
             </Button>
            )}
 
-
-          {/* Placeholder/Disabled buttons for other states */}
-          {(callStatus === 'idle' || callStatus === 'checking_perms') && (
-            <Button variant="secondary" size="icon" disabled className="rounded-full h-12 w-12" aria-label="Initializing call">
-              <Loader2 className="h-6 w-6 animate-spin" />
-            </Button>
-          )}
-           {(callStatus === 'perms_denied' || callStatus === 'error' || callStatus === 'ended') && (
-             <Button variant="destructive" size="icon" onClick={handleHangUp} className="rounded-full h-12 w-12" aria-label="Close">
-                  <PhoneOff className="h-6 w-6" /> {/* Still allow closing */}
+           {/* Close Button: Available in final/error states */}
+           {(callStatus === 'ended' || callStatus === 'error' || callStatus === 'perms_denied') && (
+             <Button variant="secondary" size="icon" onClick={onClose} className="rounded-full h-12 w-12" aria-label="Close">
+                  <X className="h-6 w-6" />
              </Button>
-          )}
+           )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
