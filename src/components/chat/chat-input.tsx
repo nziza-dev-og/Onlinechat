@@ -20,6 +20,7 @@ import EmojiPicker, { EmojiClickData, Theme as EmojiTheme } from 'emoji-picker-r
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useTheme } from "next-themes";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage"; // Import specific storage functions if needed for direct use
+import type { UploadTaskSnapshot } from 'firebase/storage'; // Import specific types
 
 interface ChatInputProps {
   chatId: string | null;
@@ -179,7 +180,8 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
     } finally {
         setIsCheckingPermission(false);
     }
-  }, [browserSupportsMedia, recording, toast]); // Added recording and toast
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [browserSupportsMedia, toast]); // Removed 'recording' dependency to avoid potential loops
 
   // Request microphone permission and get stream
   const getMicStream = async (): Promise<MediaStream | null> => {
@@ -265,8 +267,6 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
                 console.log("Audio Blob created:", blobMimeType, audioBlob.size);
                 if (audioBlob.size > 0) {
                      audioBlobToUploadRef.current = audioBlob; // Store blob in ref for sending
-                     // Trigger send message automatically after stopping (or add a preview step if needed)
-                     // For now, let's just set the ref, send will check it.
                      // Consider adding a visual indicator that audio is ready to send
                      setMessage("Voice note recorded"); // Set placeholder text
                 } else {
@@ -790,4 +790,5 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
     </div>
   );
 }
+
 
