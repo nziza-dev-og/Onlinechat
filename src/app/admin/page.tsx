@@ -16,7 +16,7 @@ import { formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { getFirestore, doc, getDoc, type Firestore, collection, query, where, onSnapshot, type Unsubscribe } from 'firebase/firestore'; // Added collection, query, where, onSnapshot, Unsubscribe
 import { app } from '@/lib/firebase';
 import { getOnlineUsersCount, getAdminMessages } from '@/lib/admin.service'; // Added getAdminMessages import
-import { sendGlobalNotification, sendTargetedNotification } from '@/lib/notification.service'; // Import specific notification services
+import { sendGlobalNotification, sendTargetedNotification, sendAdminReply } from '@/lib/notification.service'; // Import specific notification services, added sendAdminReply
 import { Textarea } from '@/components/ui/textarea'; // Import Textarea
 import { Label } from '@/components/ui/label'; // Import Label
 import { Switch } from "@/components/ui/switch"; // Import Switch for settings/security
@@ -109,6 +109,7 @@ export default function AdminPage() {
 
   const { toast } = useToast();
   const userListListenerUnsubscribeRef = React.useRef<Unsubscribe | null>(null); // Ref for user list listener
+  const adminMessagesListenerUnsubscribeRef = React.useRef<Unsubscribe | null>(null); // Ref for admin messages listener
 
    // Initialize Firestore instance on mount
    React.useEffect(() => {
@@ -158,11 +159,16 @@ export default function AdminPage() {
       return;
     }
 
-    // Cleanup previous listener if it exists
+    // Cleanup previous listeners if they exist
      if (userListListenerUnsubscribeRef.current) {
         console.log("AdminPage: Cleaning up previous user list listener before new setup.");
         userListListenerUnsubscribeRef.current();
         userListListenerUnsubscribeRef.current = null;
+     }
+     if (adminMessagesListenerUnsubscribeRef.current) {
+        console.log("AdminPage: Cleaning up previous admin messages listener before new setup.");
+        adminMessagesListenerUnsubscribeRef.current();
+        adminMessagesListenerUnsubscribeRef.current = null;
      }
 
     console.log("AdminPage: Checking admin status and fetching data...");
@@ -186,9 +192,58 @@ export default function AdminPage() {
                 // --- Fetch Data Concurrently ---
                 const requestsPromise = getPasswordChangeRequests(user.uid).catch(err => { console.error("Req Fetch Err:", err); throw err; });
                 const analyticsPromise = getOnlineUsersCount().catch(err => { console.error("Analytics Err:", err); throw err; });
-                const messagesPromise = getAdminMessages(user.uid).catch(err => { console.error("Admin Msg Err:", err); throw err; });
+                // Removed direct fetch, will use listener instead
+                // const messagesPromise = getAdminMessages(user.uid).catch(err => { console.error("Admin Msg Err:", err); throw err; });
 
-                 // --- User List Listener (for notifications) ---
+                 // --- Setup Admin Messages Listener ---
+                 console.log("AdminPage: Setting up admin messages listener.");
+                 const messagesQuery = query(collection(firestoreInstance, 'adminMessages'), orderBy('timestamp', 'desc'), limit(50));
+                 adminMessagesListenerUnsubscribeRef.current = onSnapshot(messagesQuery, (snapshot) => {
+                      const fetchedMessages: AdminMessage[] = snapshot.docs.map(doc => {
+                         const data = doc.data();
+                         // More robust timestamp check for messages
+                         let timestampISO: string | null = null;
+                         if (data.timestamp instanceof Timestamp) {
+                             timestampISO = data.timestamp.toDate().toISOString();
+                         } else if (data.timestamp && typeof data.timestamp.toDate === 'function') {
+                             try { timestampISO = data.timestamp.toDate().toISOString(); } catch { /* ignore */ }
+                         } else if (typeof data.timestamp === 'string') {
+                             try { const parsedDate = parseISO(data.timestamp); timestampISO = parsedDate.toISOString(); } catch { /* ignore */ }
+                         } else if (typeof data.timestamp?.seconds === 'number') { // Handle plain objects from Firestore
+                             try { timestampISO = new Timestamp(data.timestamp.seconds, data.timestamp.nanoseconds).toDate().toISOString(); } catch { /* ignore */ }
+                         }
+
+                          if (!timestampISO || !data.senderUid) {
+                             console.warn("Skipping invalid admin message document (missing timestamp or senderUid):", doc.id, data);
+                             return null;
+                          }
+                         return {
+                             id: doc.id,
+                             senderUid: data.senderUid,
+                             senderName: data.senderName ?? null,
+                             senderEmail: data.senderEmail ?? null,
+                             message: data.message ?? '',
+                             timestamp: timestampISO,
+                             isRead: data.isRead ?? false,
+                             // Include reply fields if available
+                             reply: data.reply ?? null,
+                             repliedAt: data.repliedAt ? formatTimestamp(data.repliedAt) : null, // Format if exists
+                             repliedBy: data.repliedBy ?? null,
+                         };
+                      }).filter((msg): msg is AdminMessage => msg !== null); // Filter out invalid docs
+                      setAdminMessages(fetchedMessages);
+                      setLoadingAdminMessages(false);
+                      console.log(`Admin: Admin messages updated (${fetchedMessages.length} messages)`);
+                 }, (error) => {
+                     console.error("Error fetching admin messages:", error);
+                     toast({ title: "Messages Error", description: "Could not load admin messages.", variant: "destructive" });
+                     setAdminMessages([]);
+                     setLoadingAdminMessages(false);
+                     adminMessagesListenerUnsubscribeRef.current = null; // Clear ref on error
+                 });
+
+
+                 // --- Setup User List Listener (for notifications) ---
                  console.log("AdminPage: Setting up user list listener.");
                  const usersQuery = query(collection(firestoreInstance, 'users'), where('uid', '!=', user.uid)); // Exclude self
                  // Store the unsubscribe function in the ref
@@ -207,25 +262,22 @@ export default function AdminPage() {
                      userListListenerUnsubscribeRef.current = null;
                  });
 
-                // Await results and set state
+                // Await results for non-listener fetches
                  try {
-                     const [fetchedRequests, onlineCount, fetchedMessages] = await Promise.all([requestsPromise, analyticsPromise, messagesPromise]);
+                     const [fetchedRequests, onlineCount] = await Promise.all([requestsPromise, analyticsPromise]);
                      setRequests(fetchedRequests);
                      setOnlineUsers(onlineCount);
-                     setAdminMessages(fetchedMessages);
                  } catch (batchError: any) {
-                     console.error("Error fetching admin data batch:", batchError);
+                     console.error("Error fetching initial admin data batch:", batchError);
                       // Handle specific errors if needed, or show a general error
                      toast({ title: "Data Fetch Error", description: "Could not load some admin data.", variant: "destructive" });
                       // Set sensible defaults on error
                      if (!requests.length) setRequests([]);
                      if (onlineUsers === null) setOnlineUsers(0);
-                     if (!adminMessages.length) setAdminMessages([]);
                  } finally {
                     setLoadingRequests(false);
                     setLoadingAnalytics(false);
-                    setLoadingAdminMessages(false);
-                    // User list loading is handled by its listener
+                    // Message and User list loading are handled by their listeners
                  }
 
                 // TODO: Fetch initial settings values from config service
@@ -258,8 +310,9 @@ export default function AdminPage() {
             setLoadingAdminMessages(false);
             setLoadingUserList(false);
         } finally {
-             // setLoadingUserList might already be false, but ensure it is
+             // Ensure these are false, though listeners might set them earlier
              setLoadingUserList(false);
+             setLoadingAdminMessages(false);
         }
     };
 
@@ -273,6 +326,11 @@ export default function AdminPage() {
             userListListenerUnsubscribeRef.current();
             userListListenerUnsubscribeRef.current = null;
          }
+          if (adminMessagesListenerUnsubscribeRef.current) {
+            console.log("AdminPage: Cleaning up admin messages listener in useEffect return.");
+            adminMessagesListenerUnsubscribeRef.current();
+            adminMessagesListenerUnsubscribeRef.current = null;
+          }
      };
 
   }, [user, authLoading, dbInstance, toast]); // Rerun if user, auth state, or db instance changes
@@ -377,23 +435,24 @@ export default function AdminPage() {
         }
    };
 
-   // Handle sending reply to admin message (Placeholder)
+   // Handle sending reply to admin message
    const handleSendReply = async (e: React.FormEvent) => {
        e.preventDefault();
        if (!replyingToAdminMessage || !replyText.trim() || isSendingReply || !user) return;
 
        setIsSendingReply(true);
-       console.log(`Replying to message ${replyingToAdminMessage.id} from ${replyingToAdminMessage.senderUid} with text: ${replyText}`);
+       console.log(`Admin: Replying to message ${replyingToAdminMessage.id} from ${replyingToAdminMessage.senderUid} with text: ${replyText}`);
        try {
-           // TODO: Implement actual reply logic (e.g., send reply via a service)
-           // await sendAdminReply(replyingToAdminMessage.id, replyText, user.uid);
-           await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate network
-           toast({ title: 'Reply Sent (Placeholder)' });
+           // Call the actual reply service
+           await sendAdminReply(replyingToAdminMessage.id, replyText.trim(), user.uid);
+           toast({ title: 'Reply Sent Successfully' });
            setReplyText('');
            setReplyingToAdminMessage(null); // Clear reply state
-           // Optionally update the message state in UI (mark as replied?)
+
+           // Listener will update the message state in UI
        } catch (error: any) {
-           toast({ title: 'Reply Failed', description: error.message, variant: 'destructive' });
+           console.error("Error sending admin reply:", error);
+           toast({ title: 'Reply Failed', description: error.message || 'Could not send the reply.', variant: 'destructive' });
        } finally {
            setIsSendingReply(false);
        }
@@ -589,8 +648,17 @@ export default function AdminPage() {
                                      <span>{formatTimestamp(msg.timestamp)}</span>
                                  </div>
                                  <p className="text-sm text-foreground mb-3">{msg.message}</p>
-                                 {/* Reply Section (Conditional) */}
-                                 {replyingToAdminMessage?.id === msg.id ? (
+                                  {/* Display Reply if it exists */}
+                                  {msg.reply && (
+                                      <div className="mt-3 pt-3 border-t border-dashed">
+                                           <p className="text-xs text-muted-foreground mb-1">
+                                               Replied by: You ({formatTimestamp(msg.repliedAt)})
+                                           </p>
+                                           <p className="text-sm text-foreground italic bg-primary/10 p-2 rounded">{msg.reply}</p>
+                                      </div>
+                                  )}
+                                 {/* Reply Section (Conditional - Show if not already replied) */}
+                                 {!msg.reply && replyingToAdminMessage?.id === msg.id ? (
                                      <form onSubmit={handleSendReply} className="mt-3 space-y-2">
                                          <Label htmlFor={`reply-${msg.id}`}>Your Reply</Label>
                                          <Textarea
@@ -612,11 +680,13 @@ export default function AdminPage() {
                                          </div>
                                      </form>
                                  ) : (
+                                     !msg.reply && // Only show reply button if not already replied
                                      <Button
                                          variant="outline"
                                          size="sm"
                                          onClick={() => setReplyingToAdminMessage(msg)}
                                          disabled={!!replyingToAdminMessage || isSendingReply} // Disable if already replying to another msg
+                                         className="mt-2"
                                      >
                                          Reply
                                      </Button>
