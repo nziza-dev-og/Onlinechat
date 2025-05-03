@@ -1,7 +1,8 @@
 
+
 'use server';
 
-import { doc, updateDoc, getFirestore } from 'firebase/firestore';
+import { doc, updateDoc, getFirestore, serverTimestamp as firestoreServerTimestamp } from 'firebase/firestore'; // Added serverTimestamp
 import { app } from '@/lib/firebase'; // Import the initialized app instance
 import { isFirebaseError } from '@/lib/firebase-errors';
 
@@ -21,40 +22,59 @@ export const updateTypingStatus = async (
 ): Promise<void> => {
   if (!chatId || !userId) {
     console.error("🔴 updateTypingStatus Error: Chat ID and User ID are required.");
-    throw new Error("Chat ID and User ID are required.");
+    // Consider not throwing, but logging, depending on how critical typing status is
+    return;
+    // throw new Error("Chat ID and User ID are required.");
   }
 
   // Get Firestore instance within the server action context
-  const db = getFirestore(app);
-  if (!db) {
-    const dbErrorMsg = "Database service (db) could not be initialized in updateTypingStatus.";
-    console.error("🔴 updateTypingStatus Error:", dbErrorMsg);
-    throw new Error(dbErrorMsg);
+  let db;
+  try {
+      db = getFirestore(app);
+  } catch (initError: any) {
+      const dbErrorMsg = `DB init error in updateTypingStatus: ${initError.message}`;
+      console.error("🔴 updateTypingStatus Error:", dbErrorMsg, initError);
+      // Consider not throwing, but logging
+      return;
+      // throw new Error(dbErrorMsg);
   }
 
   const chatRef = doc(db, 'chats', chatId);
 
   // Use dot notation to update a specific field within the 'typing' map
-  const updateData = {
+  // Also update a general lastModified field for the chat
+  const updateData: Record<string, any> = {
     [`typing.${userId}`]: isTyping,
+    // Optionally update a lastModified timestamp for the chat document
+    // lastModified: firestoreServerTimestamp()
   };
 
   try {
-    console.log(`Firestore: Updating typing status for user ${userId} in chat ${chatId} to ${isTyping}`);
+    // console.log(`Firestore: Updating typing status for user ${userId} in chat ${chatId} to ${isTyping}`);
     await updateDoc(chatRef, updateData);
     // console.log(`Firestore: Typing status updated successfully for user ${userId} in chat ${chatId}.`);
   } catch (error: any) {
-    const detailedErrorMessage = `Failed to update typing status for user ${userId} in chat ${chatId}. Error: ${error.message || 'Unknown Firestore error'}${error.code ? ` (Code: ${error.code})` : ''}. Data attempted: ${JSON.stringify(updateData)}`;
-    console.error("🔴 Detailed Firestore Update Error:", detailedErrorMessage, error);
+    const baseErrorMessage = `Failed to update typing status for user ${userId} in chat ${chatId}.`;
+    let firestoreErrorDetails = 'Unknown Firestore error';
+    let errorCode = 'unknown';
 
-     // Avoid throwing generic error, let the caller handle UI feedback if necessary
-     // throw new Error(detailedErrorMessage);
-
-     // Check if it's a specific Firebase error (like permissions) if needed
-     if (isFirebaseError(error)) {
-        console.error("Firebase specific error code:", error.code);
+    if (isFirebaseError(error)) {
+       firestoreErrorDetails = error.message;
+       errorCode = error.code;
+        console.error(`🔴 Firestore Update Error (Code: ${errorCode}) for typing status in chat ${chatId}: ${firestoreErrorDetails}`, error);
+     } else {
+        firestoreErrorDetails = error.message || firestoreErrorDetails;
+        console.error(`🔴 Generic Update Error for typing status in chat ${chatId}: ${firestoreErrorDetails}`, error);
      }
-     // Re-throw or handle as appropriate for the application flow
-     // For typing status, maybe just log the error and continue
+
+     // Log the detailed error but avoid throwing for typing status updates
+     const attemptedDataString = JSON.stringify(updateData); // Stringify here for error message
+     const detailedErrorMessage = `${baseErrorMessage} Error: ${firestoreErrorDetails} (Code: ${errorCode}). Data attempted: ${attemptedDataString}`;
+     console.error("🔴 Detailed Firestore Typing Update Error Log:", detailedErrorMessage);
+
+     // Do NOT throw - typing status failure shouldn't break the app flow
+     // throw new Error(`${baseErrorMessage} Please check connection or try again.`);
   }
 };
+
+```

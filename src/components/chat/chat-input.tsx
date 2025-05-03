@@ -7,84 +7,98 @@ import { db } from '@/lib/firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Send, Image as ImageIcon, X, Mic, Square, Trash2, Play, Pause, AlertCircle, Video as VideoIcon, Paperclip, FileText, Link as LinkIcon, Smile } from 'lucide-react'; // Added ImageIcon, VideoIcon, LinkIcon, Smile
+import { Send, Image as ImageIcon, X, Mic, Square, Trash2, Play, Pause, AlertCircle, Video as VideoIcon, Paperclip, FileText, Link as LinkIcon, Smile } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { updateTypingStatus } from '@/lib/chat.service';
-import { uploadAudio, uploadGenericFile } from '@/lib/storage.service'; // Import the upload services
+import { uploadAudio, uploadGenericFile } from '@/lib/storage.service';
 import { useToast } from "@/hooks/use-toast";
-import type { Message } from '@/types'; // Import Message type
+import type { Message } from '@/types';
 import { cn } from '@/lib/utils';
-import { Progress } from '@/components/ui/progress'; // Import Progress for upload indication
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"; // Import Tooltip
-import EmojiPicker, { EmojiClickData, Theme as EmojiTheme } from 'emoji-picker-react'; // Import Emoji Picker
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"; // Import Popover
-import { useTheme } from "next-themes"; // Import useTheme
+import { Progress } from '@/components/ui/progress';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import EmojiPicker, { EmojiClickData, Theme as EmojiTheme } from 'emoji-picker-react';
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { useTheme } from "next-themes";
 
 interface ChatInputProps {
   chatId: string | null;
-  replyingTo: Message | null; // Message being replied to
-  onClearReply: () => void; // Function to clear reply state
+  replyingTo: Message | null;
+  onClearReply: () => void;
 }
 
 export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) {
   const [message, setMessage] = useState('');
-  const [imageUrl, setImageUrl] = useState(''); // State for image URL input
-  const [videoUrl, setVideoUrl] = useState(''); // State for video URL input
-  const [fileUrl, setFileUrl] = useState(''); // State for file URL input
-  const [attachedFile, setAttachedFile] = useState<File | null>(null); // State for attached file
-  const [showImageUrlInput, setShowImageUrlInput] = useState(false); // State for showing image input
-  const [showVideoUrlInput, setShowVideoUrlInput] = useState(false); // State for showing video input
-  const [showFileUrlInput, setShowFileUrlInput] = useState(false); // State for showing file URL input
+  const [imageUrl, setImageUrl] = useState('');
+  const [videoUrl, setVideoUrl] = useState('');
+  const [fileUrl, setFileUrl] = useState('');
+  const [attachedFile, setAttachedFile] = useState<File | null>(null);
+  const [showImageUrlInput, setShowImageUrlInput] = useState(false);
+  const [showVideoUrlInput, setShowVideoUrlInput] = useState(false);
+  const [showFileUrlInput, setShowFileUrlInput] = useState(false);
   const { user } = useAuth();
   const [isSending, setIsSending] = useState(false);
   const { toast } = useToast();
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null); // Ref for the message input
-  const fileInputRef = useRef<HTMLInputElement>(null); // Ref for the hidden file input
-  const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false); // State for emoji picker popover
-  const { resolvedTheme } = useTheme(); // Get current theme for emoji picker
+  const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
+  const { resolvedTheme } = useTheme();
 
-  // Audio Recording State
+  // --- Audio Recording State ---
   const [isRecording, setIsRecording] = useState(false);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [audioPreviewUrl, setAudioPreviewUrl] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
-  const [uploadStatusText, setUploadStatusText] = useState<string>(''); // Text for upload status
+  const [uploadStatusText, setUploadStatusText] = useState<string>('');
   const [hasMicPermission, setHasMicPermission] = useState<boolean | null>(null); // null = unknown, true = granted, false = denied/unavailable
-  const [browserSupportsMedia, setBrowserSupportsMedia] = useState(true); // Assume support initially
-  const audioRef = useRef<HTMLAudioElement>(null); // Ref for audio preview player
+  const [browserSupportsMedia, setBrowserSupportsMedia] = useState(true);
+  const audioRef = useRef<HTMLAudioElement>(null);
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
-  const streamRef = useRef<MediaStream | null>(null); // Ref to hold the current audio stream
-  const [isCheckingPermission, setIsCheckingPermission] = useState(true); // State for initial permission check
+  const streamRef = useRef<MediaStream | null>(null);
+  const [isCheckingPermission, setIsCheckingPermission] = useState(true);
+  // --- End Audio Recording State ---
 
-  // Check browser support and initial permission status on mount
-  useEffect(() => {
-    if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      console.warn("Browser does not support MediaDevices API needed for audio recording.");
-      setBrowserSupportsMedia(false);
-      setHasMicPermission(false);
-      setIsCheckingPermission(false);
-    } else {
-      checkMicPermissionStatus().finally(() => setIsCheckingPermission(false));
+   // Check browser support and initial permission status on mount
+   useEffect(() => {
+    // Check for browser support
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+        console.warn("Browser does not support MediaDevices API or MediaRecorder needed for audio recording.");
+        setBrowserSupportsMedia(false);
+        setHasMicPermission(false);
+        setIsCheckingPermission(false);
+        return; // Exit early if not supported
     }
-     // Cleanup function
-     return () => {
-      stopStream(); // Ensure stream is stopped on unmount
-      // Clean up recorder refs and listeners
-      if (mediaRecorderRef.current) {
-          mediaRecorderRef.current.ondataavailable = null;
-          mediaRecorderRef.current.onstop = null;
-          mediaRecorderRef.current.onerror = null;
-          if (mediaRecorderRef.current.state === "recording") {
-             try { mediaRecorderRef.current.stop(); } catch (e) { console.warn("Cleanup: Error stopping recorder", e); }
-          }
-          mediaRecorderRef.current = null;
-      }
+
+    // Check permission status if supported
+    checkMicPermissionStatus().finally(() => setIsCheckingPermission(false));
+
+    // Cleanup function
+    return () => {
+        stopStream(); // Ensure stream is stopped on unmount
+        // Clean up recorder refs and listeners
+        if (mediaRecorderRef.current) {
+            mediaRecorderRef.current.ondataavailable = null;
+            mediaRecorderRef.current.onstop = null;
+            mediaRecorderRef.current.onerror = null;
+            if (mediaRecorderRef.current.state === "recording") {
+                try { mediaRecorderRef.current.stop(); } catch (e) { console.warn("Cleanup: Error stopping recorder", e); }
+            }
+            mediaRecorderRef.current = null;
+        }
+        if (audioPreviewUrl) {
+             console.log("Cleanup: Revoking previous audio preview URL:", audioPreviewUrl);
+             URL.revokeObjectURL(audioPreviewUrl);
+             setAudioPreviewUrl(null);
+        }
+        audioChunksRef.current = []; // Clear chunks on unmount
+        setIsRecording(false);
+        setAudioBlob(null);
+        setIsPreviewPlaying(false);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+   // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, []); // Empty dependency array ensures this runs only once on mount
 
 
   // Focus input when reply context appears
@@ -96,13 +110,13 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
 
   // --- Typing Indicator Logic ---
   const sendTypingUpdate = useCallback(async (isTyping: boolean) => {
-    if (!chatId || !user?.uid || isRecording || attachedFile) return; // Don't send typing update while recording or attaching file
+    if (!chatId || !user?.uid || isRecording || attachedFile || audioBlob) return; // Don't send typing update while recording/attaching/previewing
     try {
         await updateTypingStatus(chatId, user.uid, isTyping);
     } catch (error) {
         console.error("Error sending typing update:", error);
     }
-   }, [chatId, user?.uid, isRecording, attachedFile]);
+   }, [chatId, user?.uid, isRecording, attachedFile, audioBlob]);
 
 
   useEffect(() => {
@@ -110,18 +124,19 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
        if (typingTimeoutRef.current) {
          clearTimeout(typingTimeoutRef.current);
        }
-       if (chatId && user?.uid && !isRecording && !attachedFile) { // Only stop typing if not currently recording/attaching
+        // Check if still mounted before sending final update
+       if (chatId && user?.uid && !isRecording && !attachedFile && !audioBlob) {
            sendTypingUpdate(false);
        }
      };
-  }, [chatId, user?.uid, sendTypingUpdate, isRecording, attachedFile]);
+  }, [chatId, user?.uid, sendTypingUpdate, isRecording, attachedFile, audioBlob]);
 
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newMessage = e.target.value;
     setMessage(newMessage);
 
-    if (!chatId || !user?.uid || isRecording || attachedFile) return; // Don't trigger typing updates
+    if (!chatId || !user?.uid || isRecording || attachedFile || audioBlob) return; // Don't trigger typing updates
 
     if (newMessage.trim() && !typingTimeoutRef.current) {
        sendTypingUpdate(true);
@@ -195,17 +210,14 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
          toast({ variant: 'destructive', title: 'Unsupported Browser', description: 'Audio recording is not supported by your browser.' });
          return null;
       }
-      if (hasMicPermission === false) {
-        toast({ variant: 'destructive', title: 'Microphone Required', description: 'Please enable microphone permission in browser settings.'});
-        return null;
-      }
+      // No need to check hasMicPermission here, getUserMedia will prompt if needed
 
       try {
         // Ensure any previous stream is stopped before requesting a new one
         stopStream();
 
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        setHasMicPermission(true); // Update state if permission was granted via prompt
+        setHasMicPermission(true); // Update state, permission granted
         streamRef.current = stream; // Store the stream
         console.log("Microphone access granted, stream obtained.", stream.id);
         return stream;
@@ -225,14 +237,25 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
 
   const startRecording = async () => {
     console.log("Start recording requested.");
-    clearInputs(); // Clear other inputs/attachments
-    setShowImageUrlInput(false); // Hide other inputs
+    // Ensure cleanup of other states before starting
+    discardAttachedFile();
+    setMessage('');
+    setImageUrl('');
+    setVideoUrl('');
+    setFileUrl('');
+    setShowImageUrlInput(false);
     setShowVideoUrlInput(false);
     setShowFileUrlInput(false);
+    if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+        typingTimeoutRef.current = null;
+        sendTypingUpdate(false);
+    }
 
     const stream = await getMicStream();
     if (!stream) {
         console.error("Failed to get microphone stream. Cannot start recording.");
+        setIsRecording(false); // Ensure recording state is false
         return; // Permission denied or error getting stream
     }
 
@@ -253,9 +276,15 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
         console.log("Using MIME type:", supportedMimeType || "browser default");
 
         const options = supportedMimeType ? { mimeType: supportedMimeType } : {};
+        // Cleanup previous recorder if exists
+        if (mediaRecorderRef.current) {
+            mediaRecorderRef.current.ondataavailable = null;
+            mediaRecorderRef.current.onstop = null;
+            mediaRecorderRef.current.onerror = null;
+        }
         const recorder = new MediaRecorder(stream, options);
         mediaRecorderRef.current = recorder;
-        audioChunksRef.current = [];
+        audioChunksRef.current = []; // Reset chunks for new recording
 
         recorder.ondataavailable = (event) => {
             if (event.data.size > 0) {
@@ -268,6 +297,8 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
 
         recorder.onstop = () => {
             console.log("MediaRecorder stopped.");
+            // Stop the stream tracks *after* the recorder has finished processing data
+            stopStream();
             if (audioChunksRef.current.length === 0) {
                 console.error("Recording stopped but no audio data was captured. Discarding.");
                 discardRecording(); // Clean up if no data
@@ -277,18 +308,23 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
             // Use the determined mimeType or the recorder's actual mimeType
             const blobMimeType = supportedMimeType || recorder.mimeType || 'audio/webm';
             try {
-                const audioBlob = new Blob(audioChunksRef.current, { type: blobMimeType });
-                setAudioBlob(audioBlob);
-                const url = URL.createObjectURL(audioBlob);
-                setAudioPreviewUrl(url);
-                console.log("Audio Blob created:", blobMimeType, audioBlob.size);
+                const combinedBlob = new Blob(audioChunksRef.current, { type: blobMimeType });
+                 console.log("Audio Blob created:", blobMimeType, combinedBlob.size);
+                // Only set blob and URL if size > 0
+                 if (combinedBlob.size > 0) {
+                     setAudioBlob(combinedBlob);
+                     const url = URL.createObjectURL(combinedBlob);
+                     console.log("Setting audio preview URL:", url);
+                     setAudioPreviewUrl(url); // Set URL only after blob is confirmed
+                 } else {
+                      console.error("Combined audio blob size is 0. Discarding.");
+                      discardRecording();
+                      toast({ variant: 'destructive', title: 'Recording Failed', description: 'Captured audio was empty.' });
+                 }
             } catch (blobError) {
                 console.error("Error creating Blob:", blobError);
                  toast({ variant: 'destructive', title: 'Recording Error', description: 'Could not process recorded audio.' });
                  discardRecording();
-            } finally {
-                // Ensure stream is stopped *after* recorder is stopped and blob is processed
-                 stopStream();
             }
         };
 
@@ -303,13 +339,6 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
         recorder.start();
         setIsRecording(true);
         console.log("Recording started successfully.");
-
-        // Stop any typing indicator
-        if (typingTimeoutRef.current) {
-            clearTimeout(typingTimeoutRef.current);
-            typingTimeoutRef.current = null;
-        }
-        sendTypingUpdate(false);
 
     } catch (error) {
         console.error("Error setting up or starting MediaRecorder:", error);
@@ -336,7 +365,7 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
            // Attempt to stop stream anyway if recorder fails
           stopStream();
       } finally {
-          setIsRecording(false);
+          setIsRecording(false); // Set recording state to false regardless of success/failure
           // Stream stopping is now handled within onstop or explicitly above if forced stop on non-recording
       }
     } else if (!isRecording && !force) {
@@ -358,7 +387,7 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
       URL.revokeObjectURL(audioPreviewUrl); // Clean up object URL
     }
     setAudioBlob(null);
-    setAudioPreviewUrl(null);
+    setAudioPreviewUrl(null); // Clear preview URL state
     audioChunksRef.current = [];
     setIsPreviewPlaying(false);
     console.log("Recording discarded.");
@@ -374,6 +403,8 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
           audioRef.current.pause();
       } else {
           console.log("Playing audio preview.");
+          // Ensure audio is loaded before playing
+          audioRef.current.load(); // Sometimes needed if src changed or wasn't loaded
           audioRef.current.play().catch(err => console.error("Error playing audio preview:", err));
       }
   };
@@ -397,7 +428,10 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
           audioElement.addEventListener('play', handlePlay);
           audioElement.addEventListener('pause', handlePause);
           audioElement.addEventListener('ended', handleAudioEnded);
-          console.log("Audio event listeners attached.");
+          console.log("Audio event listeners attached for:", audioPreviewUrl);
+
+          // Load the audio source when URL changes
+          audioElement.load();
 
           return () => {
               audioElement.removeEventListener('play', handlePlay);
@@ -407,7 +441,7 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
               if (!audioElement.paused) {
                   audioElement.pause();
               }
-              console.log("Audio event listeners removed.");
+              console.log("Audio event listeners removed for:", audioPreviewUrl);
           };
       }
   }, [audioPreviewUrl, handleAudioEnded]); // Depend on URL and the stable callback
@@ -425,10 +459,14 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
 
   // --- File Attachment Logic ---
   const handleFileAttachClick = () => {
-      clearInputs();
+      discardRecording(); // Clear audio recording state
       setShowImageUrlInput(false);
       setShowVideoUrlInput(false);
       setShowFileUrlInput(false);
+      setMessage('');
+      setImageUrl('');
+      setVideoUrl('');
+      setFileUrl('');
       fileInputRef.current?.click(); // Trigger hidden file input
   };
 
@@ -441,8 +479,8 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
                setAttachedFile(null);
           } else {
               setAttachedFile(file);
-              setMessage(''); // Clear text message when file is attached
               // Clear other inputs/states
+              setMessage('');
               setImageUrl('');
               setVideoUrl('');
               setFileUrl('');
@@ -464,16 +502,37 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
    // --- End File Attachment Logic ---
 
 
-  // --- Generic Cleanup Function ---
-  const clearInputs = () => {
-      setMessage('');
-      setImageUrl('');
-      setVideoUrl('');
-      setFileUrl('');
-      discardRecording();
-      discardAttachedFile();
-  };
-  // --- End Generic Cleanup Function ---
+   // --- URL Input Toggles ---
+   const toggleInputType = (type: 'image' | 'video' | 'file' | 'none') => {
+        // Clear all inputs and states before switching
+        setMessage('');
+        setImageUrl('');
+        setVideoUrl('');
+        setFileUrl('');
+        discardRecording();
+        discardAttachedFile();
+        if (typingTimeoutRef.current) {
+            clearTimeout(typingTimeoutRef.current);
+            typingTimeoutRef.current = null;
+            sendTypingUpdate(false);
+        }
+
+        // Set the visibility for the selected type
+        setShowImageUrlInput(type === 'image');
+        setShowVideoUrlInput(type === 'video');
+        setShowFileUrlInput(type === 'file');
+
+        // Focus the relevant input if showing one
+        if (type !== 'none') {
+            // Use setTimeout to allow the DOM to update before focusing
+            setTimeout(() => {
+                if (type === 'image' || type === 'video' || type === 'file') {
+                    inputRef.current?.focus();
+                }
+            }, 0);
+        }
+   };
+   // --- End URL Input Toggles ---
 
 
   const sendMessage = async (e: React.FormEvent) => {
@@ -575,6 +634,7 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
              setIsSending(false);
              setUploadProgress(null);
              setUploadStatusText('');
+             discardRecording(); // Discard local blob on upload failure
              return; // Stop message sending process
          }
       }
@@ -634,11 +694,19 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
 
       await addDoc(messagesRef, messageData);
       console.log("Message added successfully to Firestore.");
-      clearInputs(); // Clear all inputs and states after successful send
-      setShowImageUrlInput(false); // Hide URL inputs after sending
+
+      // Clear inputs *after* successful send
+      setMessage('');
+      setImageUrl('');
+      setVideoUrl('');
+      setFileUrl('');
+      setShowImageUrlInput(false);
       setShowVideoUrlInput(false);
       setShowFileUrlInput(false);
+      discardRecording(); // Clear audio state
+      discardAttachedFile(); // Clear file state
       onClearReply(); // Clear reply context after sending
+
     } catch (error) {
         console.error("Error sending message (Firestore or general):", error);
         toast({
@@ -654,51 +722,8 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
     }
   };
 
-  const toggleImageUrlInput = () => {
-    const nextShowState = !showImageUrlInput;
-    console.log("Toggling image URL input to:", nextShowState);
-    setShowImageUrlInput(nextShowState);
-    setShowVideoUrlInput(false); // Ensure video input is hidden
-    setShowFileUrlInput(false); // Ensure file URL input is hidden
-    clearInputs(); // Clear other inputs/attachments
-    if (!nextShowState) {
-      setImageUrl(''); // Clear image url if hiding
-    }
-  };
-
-  const toggleVideoUrlInput = () => {
-      const nextShowState = !showVideoUrlInput;
-      console.log("Toggling video URL input to:", nextShowState);
-      setShowVideoUrlInput(nextShowState);
-      setShowImageUrlInput(false); // Ensure image input is hidden
-      setShowFileUrlInput(false); // Ensure file URL input is hidden
-      clearInputs(); // Clear other inputs/attachments
-      if (!nextShowState) {
-          setVideoUrl(''); // Clear video url if hiding
-      }
-  };
-
-   const toggleFileUrlInput = () => {
-      const nextShowState = !showFileUrlInput;
-      console.log("Toggling file URL input to:", nextShowState);
-      setShowFileUrlInput(nextShowState);
-      setShowImageUrlInput(false); // Ensure image input is hidden
-      setShowVideoUrlInput(false); // Ensure video input is hidden
-      clearInputs(); // Clear other inputs/attachments
-      if (!nextShowState) {
-          setFileUrl(''); // Clear file url if hiding
-      }
-   };
-
   const handleMicButtonClick = () => {
       console.log("Mic button clicked. Current state:", { isRecording, hasMicPermission, browserSupportsMedia });
-      if (showImageUrlInput || showVideoUrlInput || attachedFile || showFileUrlInput) {
-        console.log("Hiding image/video/file/file URL input because mic was clicked.");
-        clearInputs(); // Clear all other inputs
-        setShowImageUrlInput(false);
-        setShowVideoUrlInput(false);
-        setShowFileUrlInput(false);
-      }
       if (isRecording) {
           stopRecording();
       } else {
@@ -718,11 +743,11 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
 
   const canSendMessage = user && chatId && (!!message.trim() || !!imageUrl.trim() || !!videoUrl.trim() || !!fileUrl.trim() || !!audioBlob || !!attachedFile) && !isSending;
   // Update canRecord logic based on permission and browser support
-  const canRecord = browserSupportsMedia && user && chatId && !isSending && !isCheckingPermission && !attachedFile && !showFileUrlInput; // Disable mic if file attached or URL input shown
+  const canRecord = browserSupportsMedia && user && chatId && !isSending && !isCheckingPermission && !attachedFile && !showFileUrlInput && !showImageUrlInput && !showVideoUrlInput; // Disable mic if file/URL input shown
   const micButtonDisabled = isCheckingPermission || !canRecord; // Check browser support and that permission check is done, also disable if attaching file/URL
   const micButtonDisabledReason = isCheckingPermission ? "Checking permissions..."
                                  : !browserSupportsMedia ? "Audio recording not supported"
-                                 : (attachedFile || showFileUrlInput) ? "Cannot record while file is attached or URL input is active"
+                                 : (attachedFile || showFileUrlInput || showImageUrlInput || showVideoUrlInput) ? "Cannot record while other input is active"
                                  : !user ? "Login required"
                                  : !chatId ? "Select a chat"
                                  : isSending ? "Sending message..."
@@ -794,41 +819,42 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
               </Button>
             </>
           )}
-          {audioBlob && audioPreviewUrl && !isRecording && (
-            <>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={togglePreview}
-                aria-label={isPreviewPlaying ? "Pause preview" : "Play preview"}
-                className="text-primary flex-shrink-0"
-              >
-                {isPreviewPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
-              </Button>
-              <audio ref={audioRef} src={audioPreviewUrl} preload="metadata" className="hidden" onEnded={handleAudioEnded} />
-              <span className="text-sm text-muted-foreground flex-1">Voice note ready</span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={discardRecording}
-                className="text-muted-foreground hover:text-destructive flex-shrink-0"
-                aria-label="Discard recording"
-              >
-                <Trash2 className="h-5 w-5" />
-              </Button>
-            </>
-          )}
+           {/* Audio Preview */}
+           {audioBlob && audioPreviewUrl && !isRecording && (
+             <>
+               <Button
+                 type="button"
+                 variant="ghost"
+                 size="icon"
+                 onClick={togglePreview}
+                 aria-label={isPreviewPlaying ? "Pause preview" : "Play preview"}
+                 className="text-primary flex-shrink-0"
+               >
+                 {isPreviewPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
+               </Button>
+               <audio ref={audioRef} src={audioPreviewUrl} preload="metadata" className="hidden" />
+               <span className="text-sm text-muted-foreground flex-1">Voice note ready</span>
+               <Button
+                 type="button"
+                 variant="ghost"
+                 size="icon"
+                 onClick={discardRecording}
+                 className="text-muted-foreground hover:text-destructive flex-shrink-0"
+                 aria-label="Discard recording"
+               >
+                 <Trash2 className="h-5 w-5" />
+               </Button>
+             </>
+           )}
         </div>
       )}
 
-      {/* Text Input Field (conditionally shown) */}
+       {/* URL Input Field (conditionally shown based on show***UrlInput states) */}
        {(showImageUrlInput || showVideoUrlInput || showFileUrlInput) && (
           <div className="flex items-center gap-2">
             <Input
-              ref={inputRef}
-              type={showImageUrlInput ? "url" : (showVideoUrlInput ? "url" : "url")}
+              ref={inputRef} // Can reuse the same ref if only one is active at a time
+              type="url"
               value={showImageUrlInput ? imageUrl : (showVideoUrlInput ? videoUrl : fileUrl)}
               onChange={(e) => {
                 if (showImageUrlInput) setImageUrl(e.target.value);
@@ -841,24 +867,18 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
                  "Enter file URL (e.g., Drive)...")
               }
               className="flex-1 h-9 text-sm"
-              disabled={!user || !chatId || isSending || isRecording}
+              disabled={!user || !chatId || isSending}
               aria-label={
                   showImageUrlInput ? "Image URL input" :
                   (showVideoUrlInput ? "Video URL input" : "File URL input")
               }
             />
-             {/* Optional: Add a button to cancel the URL input */}
             <Button
               type="button"
               variant="ghost"
               size="icon"
-              onClick={() => {
-                setShowImageUrlInput(false);
-                setShowVideoUrlInput(false);
-                setShowFileUrlInput(false);
-                clearInputs();
-              }}
-              className="text-muted-foreground hover:text-destructive flex-shrink-0 h-9 w-9" // Adjusted size
+              onClick={() => toggleInputType('none')} // Use toggleInputType to reset
+              className="text-muted-foreground hover:text-destructive flex-shrink-0 h-9 w-9"
               aria-label="Cancel URL input"
             >
               <X className="h-4 w-4" />
@@ -885,28 +905,28 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
                 type="button"
                 variant="ghost"
                 size="icon"
-                disabled={!user || !chatId || isSending || isRecording}
+                disabled={!user || !chatId || isSending || isRecording || !!audioBlob} // Disable if recording or has preview
                 aria-label="Open emoji picker"
-                className="flex-shrink-0 text-muted-foreground hover:text-primary h-9 w-9" // Adjusted size
+                className="flex-shrink-0 text-muted-foreground hover:text-primary h-9 w-9"
             >
                 <Smile className="h-5 w-5" />
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-auto p-0 border-0" align="start" side="top"> {/* Changed align to start */}
+          <PopoverContent className="w-auto p-0 border-0" align="start" side="top">
             <EmojiPicker
               onEmojiClick={onEmojiClick}
               autoFocusSearch={false}
               theme={resolvedTheme === 'dark' ? EmojiTheme.DARK : EmojiTheme.LIGHT}
               lazyLoadEmojis={true}
               height={350}
-              // width="100%" // Make it responsive
-              searchDisabled // Optionally disable search
+              searchDisabled
             />
           </PopoverContent>
         </Popover>
 
         {/* File Attach Button */}
-        {!isRecording && !audioBlob && !showImageUrlInput && !showVideoUrlInput && !showFileUrlInput && (
+        {/* Show only if not recording and no audio preview exists */}
+        {!isRecording && !audioBlob && (
             <Button
                 type="button"
                 variant="ghost"
@@ -914,22 +934,29 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
                 onClick={handleFileAttachClick}
                 disabled={!user || !chatId || isSending}
                 aria-label="Attach file"
-                className={cn(attachedFile ? 'bg-accent text-accent-foreground' : '', "flex-shrink-0 h-9 w-9")} // Adjusted size
+                className={cn(
+                    attachedFile ? 'bg-accent text-accent-foreground' : '',
+                    "flex-shrink-0 h-9 w-9 text-muted-foreground hover:text-primary"
+                )}
             >
                 <Paperclip className="h-5 w-5" />
             </Button>
         )}
 
-        {/* File URL Button */}
-         {!isRecording && !audioBlob && !showImageUrlInput && !showVideoUrlInput && !attachedFile && (
+         {/* File URL Button */}
+         {/* Show only if not recording and no audio preview exists */}
+         {!isRecording && !audioBlob && (
             <Button
                type="button"
                variant="ghost"
                size="icon"
-               onClick={toggleFileUrlInput}
+               onClick={() => toggleInputType(showFileUrlInput ? 'none' : 'file')}
                disabled={!user || !chatId || isSending}
                aria-label="Toggle file URL input"
-               className={cn(showFileUrlInput ? 'bg-accent text-accent-foreground' : '', "flex-shrink-0 h-9 w-9")} // Adjusted size
+               className={cn(
+                   showFileUrlInput ? 'bg-accent text-accent-foreground' : '',
+                   "flex-shrink-0 h-9 w-9 text-muted-foreground hover:text-primary"
+               )}
             >
                <LinkIcon className="h-5 w-5" />
             </Button>
@@ -937,52 +964,62 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
 
 
         {/* Image Button */}
-        {!isRecording && !audioBlob && !showVideoUrlInput && !showFileUrlInput && !attachedFile && (
+        {/* Show only if not recording and no audio preview exists */}
+        {!isRecording && !audioBlob && (
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            onClick={toggleImageUrlInput}
+            onClick={() => toggleInputType(showImageUrlInput ? 'none' : 'image')}
             disabled={!user || !chatId || isSending}
             aria-label="Toggle image URL input"
-            className={cn(showImageUrlInput ? 'bg-accent text-accent-foreground' : '', "flex-shrink-0 h-9 w-9")} // Adjusted size
+            className={cn(
+                showImageUrlInput ? 'bg-accent text-accent-foreground' : '',
+                "flex-shrink-0 h-9 w-9 text-muted-foreground hover:text-primary"
+            )}
           >
             <ImageIcon className="h-5 w-5" />
           </Button>
         )}
 
         {/* Video Button */}
-        {!isRecording && !audioBlob && !showImageUrlInput && !showFileUrlInput && !attachedFile && (
+         {/* Show only if not recording and no audio preview exists */}
+        {!isRecording && !audioBlob && (
            <Button
                type="button"
                variant="ghost"
                size="icon"
-               onClick={toggleVideoUrlInput}
+               onClick={() => toggleInputType(showVideoUrlInput ? 'none' : 'video')}
                disabled={!user || !chatId || isSending}
                aria-label="Toggle video URL input"
-               className={cn(showVideoUrlInput ? 'bg-accent text-accent-foreground' : '', "flex-shrink-0 h-9 w-9")} // Adjusted size
+               className={cn(
+                   showVideoUrlInput ? 'bg-accent text-accent-foreground' : '',
+                   "flex-shrink-0 h-9 w-9 text-muted-foreground hover:text-primary"
+                )}
            >
                <VideoIcon className="h-5 w-5" />
            </Button>
         )}
 
 
-        {/* Text Input (Hidden during recording/preview unless specific inputs active) */}
-        {(!isRecording && !audioBlob && !showImageUrlInput && !showVideoUrlInput && !showFileUrlInput) || attachedFile ? (
+        {/* Text Input (Show if no URL inputs are active AND not recording AND no audio preview) */}
+        {(!showImageUrlInput && !showVideoUrlInput && !showFileUrlInput && !isRecording && !audioBlob) && (
           <Input
             ref={inputRef}
             type="text"
             value={message}
             onChange={handleInputChange}
-            placeholder={chatId ? (replyingTo ? "Write your reply..." : (attachedFile ? "Add a comment... (optional)" : (showFileUrlInput ? "Add comment... (optional)" : "Type a message..."))) : "Select a chat to start"}
-            className="flex-1 h-9" // Adjusted height
-            disabled={!user || !chatId || isSending || isRecording} // Disable while recording
+            placeholder={chatId ? (replyingTo ? "Write your reply..." : "Type a message...") : "Select a chat to start"}
+            className="flex-1 h-9"
+            disabled={!user || !chatId || isSending}
             aria-label="Chat message input"
           />
-        ) : (
-          // Only render placeholder if NOT showing URL inputs either
-          (!showImageUrlInput && !showVideoUrlInput && !showFileUrlInput) && <div className="flex-1 h-9"></div> // Placeholder to maintain layout
         )}
+        {/* Placeholder to maintain layout if text input is hidden but other inputs aren't */}
+         {((showImageUrlInput || showVideoUrlInput || showFileUrlInput) || isRecording || audioBlob) && (
+            <div className="flex-1 h-9"></div>
+         )}
+
 
         {/* Microphone/Stop Button with Tooltip */}
          <TooltipProvider delayDuration={300}>
@@ -997,8 +1034,11 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
                             onClick={handleMicButtonClick}
                             disabled={micButtonDisabled} // Use combined disabled state
                             aria-label={isRecording ? "Stop recording" : (micButtonDisabledReason || "Start recording")}
-                            className="flex-shrink-0 h-9 w-9" // Adjusted size
-                        >
+                            className={cn(
+                                "flex-shrink-0 h-9 w-9",
+                                !micButtonDisabled && "text-muted-foreground hover:text-primary"
+                            )}
+                         >
                             {isRecording
                                ? <Square className="h-5 w-5" />
                                : (hasMicPermission === false || !browserSupportsMedia
@@ -1024,7 +1064,7 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
           size="icon"
           disabled={!canSendMessage}
           aria-label="Send message"
-          className="flex-shrink-0 h-9 w-9" // Adjusted size
+          className="flex-shrink-0 h-9 w-9"
         >
           <Send className="h-5 w-5" />
         </Button>
