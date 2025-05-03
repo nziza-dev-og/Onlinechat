@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -10,7 +11,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth } from '@/hooks/use-auth'; // Import useAuth hook
 import { Button } from '@/components/ui/button';
-import { LogOut, Users, MessageSquare, Search, CircleDot, Video as VideoIcon, Circle } from 'lucide-react'; // Added Circle
+import { LogOut, Users, MessageSquare, Search, CircleDot, Video as VideoIcon, Circle, Menu } from 'lucide-react'; // Added Circle, Menu
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
@@ -22,6 +23,8 @@ import { formatDistanceToNowStrict } from 'date-fns';
 import { updateTypingStatus } from '@/lib/chat.service';
 import { VideoCallModal } from '@/components/chat/video-call-modal'; // Import VideoCallModal
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'; // Import Card components
+import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet'; // Import Sheet for mobile sidebar
+
 
 // Helper function to create a unique chat ID between two users
 const getChatId = (uid1: string, uid2: string): string => {
@@ -74,6 +77,7 @@ export function ChatWindow() {
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false); // State for video call modal
   const [dbInstance, setDbInstance] = useState<Firestore | null>(null); // Hold Firestore instance
   const [hasUnreadMap, setHasUnreadMap] = useState<Map<string, boolean>>(new Map()); // Track unread status per user UID
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false); // State for mobile sidebar sheet
 
   const { toast } = useToast();
   const scrollAreaRef = useRef<HTMLDivElement>(null);
@@ -131,25 +135,26 @@ export function ChatWindow() {
         let currentChatIdForCleanup: string | null = null; // Variable to hold chatId for cleanup
 
         const updateUserPresence = async (reason: string) => {
-            if (!user?.uid) {
-                // console.log("Presence update skipped: No authenticated user.");
-                return;
-            }
-            // Use the dbInstance state variable
-            if (!dbInstance) {
-                console.warn(`Presence update skipped for ${user.uid} (${reason}): DB instance not ready.`);
-                return;
-            }
+             if (!user?.uid) {
+                 // console.log("Presence update skipped: No authenticated user.");
+                 return;
+             }
+             // Check if dbInstance is available before proceeding
+             if (!dbInstance) {
+                 console.warn(`Presence update skipped for ${user.uid} (${reason}): DB instance not ready.`);
+                 return;
+             }
 
-            try {
-                await updateUserProfileDocument(user.uid, {
-                    lastSeen: 'SERVER_TIMESTAMP'
-                });
-                // console.log(`✅ User presence updated for ${user.uid} (${reason}).`);
-            } catch (error: any) {
-                // Log the detailed error from the service function, but avoid redundant console.error if the service already logs
-                console.error(`🔴 Error updating user presence for ${user.uid} (${reason}): "${error.message}"`, error);
-                // Show a less technical toast to the user if it's not just a network blip
+             try {
+                 // Call the server action to update the profile
+                 await updateUserProfileDocument(user.uid, {
+                     lastSeen: 'SERVER_TIMESTAMP'
+                 });
+                 // console.log(`✅ User presence updated for ${user.uid} (${reason}).`);
+             } catch (error: any) {
+                 // Log the detailed error from the service function, but avoid redundant console.error if the service already logs
+                 console.error(`🔴 Error updating user presence for ${user.uid} (${reason}): "${error.message}"`, error);
+                 // Show a less technical toast to the user if it's not just a network blip
                  if (!error.message?.includes("Network Error")) { // Example check
                     toast({
                         title: "Presence Error",
@@ -158,7 +163,7 @@ export function ChatWindow() {
                         duration: 5000,
                     });
                  }
-            }
+             }
         };
 
         // --- Presence Logic ---
@@ -598,7 +603,8 @@ export function ChatWindow() {
      isInitialMessagesLoadForScroll.current = true;
      const newChatId = getChatId(user.uid, partner.uid);
      setChatId(newChatId); // Set the new chat ID state
-      console.log(`Selected user ${partner.uid}, switching to chat ${newChatId}`);
+     setIsMobileSidebarOpen(false); // Close mobile sidebar on user selection
+     console.log(`Selected user ${partner.uid}, switching to chat ${newChatId}`);
 
       // Clear unread status immediately on selection
        setHasUnreadMap(prevMap => {
@@ -668,10 +674,9 @@ export function ChatWindow() {
    }
 
 
-  return (
-    <>
-    <div className="flex h-[calc(100vh-theme(spacing.14))] bg-secondary">
-       <aside className="w-64 flex flex-col border-r bg-background shadow-md">
+   // Sidebar Content Component
+   const SidebarContent = () => (
+     <>
          <header className="flex items-center justify-between p-4 border-b min-h-[65px]">
              <div className="flex items-center gap-2 overflow-hidden mr-2">
                 <Avatar className="h-8 w-8 flex-shrink-0">
@@ -769,12 +774,41 @@ export function ChatWindow() {
                  })}
             </div>
          </ScrollArea>
+     </>
+   );
+
+
+  return (
+    <>
+    <div className="flex h-[calc(100vh-theme(spacing.14))] bg-secondary">
+        {/* Desktop Sidebar */}
+       <aside className="w-64 flex-col border-r bg-background shadow-md hidden md:flex">
+         <SidebarContent />
        </aside>
+
+        {/* Mobile Sidebar Trigger - Now part of the header in main content */}
+
 
        <main className="flex-1 flex flex-col bg-background">
             {selectedChatPartner ? (
                  <>
                  <header className="flex items-center gap-3 p-4 border-b shadow-sm bg-card min-h-[65px]">
+                    {/* Mobile Sidebar Trigger */}
+                    <Sheet open={isMobileSidebarOpen} onOpenChange={setIsMobileSidebarOpen}>
+                       <SheetTrigger asChild className="md:hidden mr-2">
+                          <Button variant="ghost" size="icon">
+                             <Menu className="h-5 w-5"/>
+                             <span className="sr-only">Open User List</span>
+                          </Button>
+                       </SheetTrigger>
+                       <SheetContent side="left" className="p-0 w-72"> {/* Adjust width as needed */}
+                          <div className="flex flex-col h-full">
+                              <SidebarContent />
+                          </div>
+                       </SheetContent>
+                    </Sheet>
+
+                    {/* Rest of the Header */}
                     <div className="relative">
                         <Avatar className="h-9 w-9">
                             <AvatarImage src={selectedChatPartner.photoURL || undefined} alt={selectedChatPartner.displayName || 'Chat partner avatar'} data-ai-hint="chat partner avatar"/>
@@ -856,6 +890,21 @@ export function ChatWindow() {
                 </>
             ) : (
                  <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground p-8 bg-gradient-to-br from-background to-muted/30">
+                     {/* Mobile Sidebar Trigger (Visible only when no chat is selected) */}
+                     <Sheet open={isMobileSidebarOpen} onOpenChange={setIsMobileSidebarOpen}>
+                       <SheetTrigger asChild className="md:hidden absolute top-4 left-4">
+                          <Button variant="ghost" size="icon">
+                             <Menu className="h-5 w-5"/>
+                             <span className="sr-only">Open User List</span>
+                          </Button>
+                       </SheetTrigger>
+                       <SheetContent side="left" className="p-0 w-72"> {/* Adjust width as needed */}
+                           <div className="flex flex-col h-full">
+                               <SidebarContent />
+                           </div>
+                       </SheetContent>
+                     </Sheet>
+
                     <Users className="h-16 w-16 mb-4 text-primary opacity-80" />
                     <h2 className="text-xl font-semibold text-foreground mb-1">Select a Chat</h2>
                     <p className="text-base mb-4 max-w-xs">Choose someone from the list on the left to start messaging.</p>
@@ -876,4 +925,4 @@ export function ChatWindow() {
      </>
   );
 }
-    
+

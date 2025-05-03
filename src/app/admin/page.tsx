@@ -13,7 +13,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
-import { getFirestore, doc, getDoc, type Firestore, collection, query, where, onSnapshot, type Unsubscribe } from 'firebase/firestore'; // Added collection, query, where, onSnapshot, Unsubscribe
+import { getFirestore, doc, getDoc, type Firestore, collection, query, where, onSnapshot, type Unsubscribe, orderBy, limit, Timestamp } from 'firebase/firestore'; // Added collection, query, where, onSnapshot, Unsubscribe, orderBy, limit, Timestamp
 import { app } from '@/lib/firebase';
 import { getOnlineUsersCount, getAdminMessages } from '@/lib/admin.service'; // Added getAdminMessages import
 import { sendGlobalNotification, sendTargetedNotification, sendAdminReply } from '@/lib/notification.service'; // Import specific notification services, added sendAdminReply
@@ -488,26 +488,28 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="flex flex-col items-center min-h-screen bg-muted/30 py-8 px-4">
-      <div className="w-full max-w-6xl"> {/* Increased max-width */}
+    <div className="flex flex-col items-center min-h-screen bg-muted/30 py-8 px-4 sm:px-6 lg:px-8"> {/* Responsive padding */}
+       {/* Use w-full and max-w-7xl for better responsiveness */}
+      <div className="w-full max-w-7xl">
         <div className="mb-8 text-center">
           <h1 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl">Admin Dashboard</h1>
           <p className="text-muted-foreground mt-2">Manage users, view analytics, and configure the platform.</p>
         </div>
 
         <Tabs defaultValue="requests" className="w-full">
-          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 md:grid-cols-6 mb-4"> {/* Added mb-4 and Messages tab */}
-            <TabsTrigger value="requests"><ShieldCheck className="mr-2 h-4 w-4 inline-block"/> Requests</TabsTrigger>
-            <TabsTrigger value="analytics"><BarChart2 className="mr-2 h-4 w-4 inline-block"/> Analytics</TabsTrigger>
-            <TabsTrigger value="messages"><MessageSquare className="mr-2 h-4 w-4 inline-block"/> Messages</TabsTrigger> {/* New Messages Tab */}
-            <TabsTrigger value="notifications"><Bell className="mr-2 h-4 w-4 inline-block"/> Notifications</TabsTrigger>
-            <TabsTrigger value="settings"><Settings className="mr-2 h-4 w-4 inline-block"/> Settings</TabsTrigger>
-            <TabsTrigger value="security"><ShieldAlert className="mr-2 h-4 w-4 inline-block"/> Security</TabsTrigger>
+           {/* Adjusted grid columns for responsiveness */}
+          <TabsList className="grid w-full grid-cols-3 sm:grid-cols-6 gap-1 mb-4 sm:mb-6">
+            <TabsTrigger value="requests"><ShieldCheck className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Requests</TabsTrigger>
+            <TabsTrigger value="analytics"><BarChart2 className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Analytics</TabsTrigger>
+            <TabsTrigger value="messages"><MessageSquare className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Messages</TabsTrigger>
+            <TabsTrigger value="notifications"><Bell className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Notifications</TabsTrigger>
+            <TabsTrigger value="settings"><Settings className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Settings</TabsTrigger>
+            <TabsTrigger value="security"><ShieldAlert className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Security</TabsTrigger>
           </TabsList>
 
           {/* Password Change Requests Tab */}
           <TabsContent value="requests">
-            <Card className="shadow-lg mt-4">
+            <Card className="shadow-lg mt-4 w-full"> {/* Ensure card takes full width */}
               <CardHeader>
                 <CardTitle>Password Change Requests</CardTitle>
                 <CardDescription>Review and approve or deny requests from users.</CardDescription>
@@ -516,17 +518,17 @@ export default function AdminPage() {
                 {loadingRequests && (
                   <div className="space-y-3">
                     {[...Array(3)].map((_, i) => (
-                      <div key={i} className="flex items-center justify-between p-3 border rounded-md bg-background">
-                         <div className="flex items-center gap-3">
-                            <Skeleton className="h-9 w-9 rounded-full" />
-                            <div className="space-y-1.5">
+                      <div key={i} className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 p-3 border rounded-md bg-background">
+                         <div className="flex items-center gap-3 flex-1 min-w-0">
+                            <Skeleton className="h-9 w-9 rounded-full flex-shrink-0" />
+                            <div className="space-y-1.5 min-w-0">
                                  <Skeleton className="h-4 w-32" />
                                  <Skeleton className="h-3 w-48" />
                             </div>
                          </div>
-                         <div className="flex gap-2">
-                            <Skeleton className="h-9 w-20" />
-                            <Skeleton className="h-9 w-20" />
+                         <div className="flex gap-2 w-full sm:w-auto pt-2 sm:pt-0">
+                            <Skeleton className="h-9 w-20 flex-1 sm:flex-none" />
+                            <Skeleton className="h-9 w-20 flex-1 sm:flex-none" />
                          </div>
                       </div>
                     ))}
@@ -547,20 +549,21 @@ export default function AdminPage() {
                 )}
 
                 {!loadingRequests && !error && requests.map((reqUser) => (
-                  <div key={reqUser.uid} className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 border rounded-lg bg-card shadow-sm hover:shadow-md transition-shadow duration-200">
+                   // Updated flex layout for better responsiveness
+                  <div key={reqUser.uid} className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 p-4 border rounded-lg bg-card shadow-sm hover:shadow-md transition-shadow duration-200">
                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <Avatar className="h-10 w-10 border">
+                        <Avatar className="h-10 w-10 border flex-shrink-0">
                             <AvatarImage src={reqUser.photoURL || undefined} alt={reqUser.displayName || 'User'} data-ai-hint="user avatar"/>
                             <AvatarFallback>{getInitials(reqUser.displayName)}</AvatarFallback>
                         </Avatar>
                         <div className="min-w-0">
                              <p className="text-sm font-medium text-foreground truncate">{reqUser.displayName || 'Unnamed User'}</p>
                              <p className="text-xs text-muted-foreground truncate">{reqUser.email}</p>
-                             {/* Display Request Timestamp if available */}
+                              {/* Optionally display Request Timestamp */}
                               {/* <p className="text-xs text-muted-foreground">Requested: {formatTimestamp(reqUser.passwordRequestTimestamp)}</p> */}
                         </div>
                      </div>
-                     <div className="flex gap-2 flex-shrink-0 w-full sm:w-auto">
+                     <div className="flex gap-2 flex-shrink-0 w-full sm:w-auto pt-2 sm:pt-0">
                          <Button
                             variant="outline"
                             size="sm"
@@ -590,7 +593,7 @@ export default function AdminPage() {
 
           {/* Analytics Tab */}
            <TabsContent value="analytics">
-              <Card className="shadow-lg mt-4">
+              <Card className="shadow-lg mt-4 w-full">
                   <CardHeader>
                       <CardTitle>Platform Analytics</CardTitle>
                       <CardDescription>Overview of user activity and platform usage.</CardDescription>
@@ -613,7 +616,7 @@ export default function AdminPage() {
 
           {/* Messages Tab */}
            <TabsContent value="messages">
-              <Card className="shadow-lg mt-4">
+              <Card className="shadow-lg mt-4 w-full">
                    <CardHeader>
                        <CardTitle>Admin Messages</CardTitle>
                        <CardDescription>Messages sent directly to administrators.</CardDescription>
@@ -643,11 +646,11 @@ export default function AdminPage() {
 
                           {!loadingAdminMessages && adminMessages.map((msg) => (
                              <div key={msg.id} className="p-4 border rounded-lg bg-card shadow-sm">
-                                 <div className="flex items-center justify-between mb-2 text-xs text-muted-foreground">
-                                     <span>From: {msg.senderName || 'Unknown User'} ({msg.senderEmail || 'No email'})</span>
-                                     <span>{formatTimestamp(msg.timestamp)}</span>
+                                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-2 text-xs text-muted-foreground gap-1 sm:gap-3">
+                                     <span className="truncate">From: {msg.senderName || 'Unknown User'} ({msg.senderEmail || 'No email'})</span>
+                                     <span className="flex-shrink-0">{formatTimestamp(msg.timestamp)}</span>
                                  </div>
-                                 <p className="text-sm text-foreground mb-3">{msg.message}</p>
+                                 <p className="text-sm text-foreground mb-3 whitespace-pre-wrap break-words">{msg.message}</p>
                                   {/* Display Reply if it exists */}
                                   {msg.reply && (
                                       <div className="mt-3 pt-3 border-t border-dashed">
@@ -699,7 +702,7 @@ export default function AdminPage() {
 
            {/* Notifications Tab */}
            <TabsContent value="notifications">
-              <Card className="shadow-lg mt-4">
+              <Card className="shadow-lg mt-4 w-full">
                   <CardHeader>
                       <CardTitle>Notifications & Announcements</CardTitle>
                       <CardDescription>Send platform-wide or targeted notifications.</CardDescription>
@@ -715,7 +718,7 @@ export default function AdminPage() {
                                          setNotificationType(value as 'global' | 'targeted');
                                          if (value === 'global') setTargetUserId(undefined); // Clear target if global
                                      }}
-                                     className="flex space-x-4"
+                                     className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-4" // Responsive layout
                                      disabled={isSendingNotification}
                                  >
                                      <div className="flex items-center space-x-2">
@@ -751,7 +754,7 @@ export default function AdminPage() {
                                                              <AvatarImage src={u.photoURL || undefined} />
                                                              <AvatarFallback>{getInitials(u.displayName)}</AvatarFallback>
                                                          </Avatar>
-                                                         <span>{u.displayName || u.email}</span>
+                                                         <span className="truncate">{u.displayName || u.email}</span>
                                                      </div>
                                                 </SelectItem>
                                              ))}
@@ -792,14 +795,14 @@ export default function AdminPage() {
 
            {/* Settings Tab */}
            <TabsContent value="settings">
-              <Card className="shadow-lg mt-4">
+              <Card className="shadow-lg mt-4 w-full">
                   <CardHeader>
                       <CardTitle>Platform Settings</CardTitle>
                       <CardDescription>Configure chat features and platform behavior.</CardDescription>
                   </CardHeader>
                    <CardContent className="space-y-6 pt-6"> {/* Add pt-6 */}
-                       <div className="flex items-center justify-between space-x-2 border p-4 rounded-md">
-                           <Label htmlFor="allow-emoji" className="flex flex-col space-y-1">
+                       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-2 sm:space-y-0 sm:space-x-2 border p-4 rounded-md">
+                           <Label htmlFor="allow-emoji" className="flex flex-col space-y-1 flex-1">
                                <span>Emoji Support</span>
                                <span className="font-normal leading-snug text-muted-foreground">
                                     Allow users to use emojis in chat messages.
@@ -810,10 +813,11 @@ export default function AdminPage() {
                                checked={allowEmoji}
                                onCheckedChange={setAllowEmoji}
                                disabled={isSavingSettings}
+                               className="flex-shrink-0"
                            />
                        </div>
-                        <div className="flex items-center justify-between space-x-2 border p-4 rounded-md">
-                           <Label htmlFor="allow-file-uploads" className="flex flex-col space-y-1">
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-2 sm:space-y-0 sm:space-x-2 border p-4 rounded-md">
+                           <Label htmlFor="allow-file-uploads" className="flex flex-col space-y-1 flex-1">
                                <span>File Uploads</span>
                                 <span className="font-normal leading-snug text-muted-foreground">
                                     Enable or disable file uploading capabilities in chat.
@@ -824,6 +828,7 @@ export default function AdminPage() {
                                checked={allowFileUploads}
                                onCheckedChange={setAllowFileUploads}
                                disabled={isSavingSettings}
+                               className="flex-shrink-0"
                            />
                        </div>
                         <p className="text-muted-foreground italic text-center text-sm">More configuration options (branding, integrations) coming soon...</p>
@@ -840,7 +845,7 @@ export default function AdminPage() {
 
            {/* Security Tab */}
            <TabsContent value="security">
-              <Card className="shadow-lg mt-4">
+              <Card className="shadow-lg mt-4 w-full">
                   <CardHeader>
                       <CardTitle>Security & Access Control</CardTitle>
                       <CardDescription>Monitor activity and manage platform security.</CardDescription>
@@ -897,3 +902,4 @@ export default function AdminPage() {
     </div>
   );
 }
+

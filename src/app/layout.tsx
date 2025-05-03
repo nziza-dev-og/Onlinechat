@@ -34,13 +34,15 @@ export default function RootLayout({
           <AuthProvider>
              {/* Optional: Add a simple global header */}
              <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-               <div className="container flex h-14 items-center justify-between">
-                 <Link href="/" className="mr-6 flex items-center space-x-2">
+               <div className="container flex h-14 items-center justify-between px-4 sm:px-6 lg:px-8"> {/* Added responsive padding */}
+                 <Link href="/" className="mr-4 flex items-center space-x-2"> {/* Reduced mr-6 to mr-4 */}
                    {/* New logo icon */}
                    <MessageCircle className="h-6 w-6 text-primary" />
-                   <span className="font-bold inline-block">Jules Chatting Platform</span> {/* Updated app name */}
+                   <span className="font-bold hidden sm:inline-block">Jules Chatting Platform</span> {/* Hide text on very small screens */}
+                   <span className="font-bold sm:hidden inline-block">Jules</span> {/* Shorter name for small screens */}
                  </Link>
-                 <nav className="flex items-center gap-1 sm:gap-2"> {/* Reduced gap */}
+                 {/* Adjusted gap for responsiveness */}
+                 <nav className="flex items-center gap-1 sm:gap-2">
                      {/* Dashboard Link */}
                      <Button variant="ghost" size="icon" asChild>
                         <Link href="/dashboard" aria-label="Go to Dashboard">
@@ -94,3 +96,4 @@ export default function RootLayout({
     </html>
   );
 }
+

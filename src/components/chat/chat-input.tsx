@@ -721,7 +721,8 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
 
 
   return (
-    <div className="p-4 border-t bg-background space-y-2">
+    // Adjusted padding for responsiveness
+    <div className="p-3 sm:p-4 border-t bg-background space-y-2">
       {/* Reply Context Display */}
       {replyingTo && (
         <div className="flex items-center justify-between p-2 mb-2 text-sm bg-muted/50 rounded-md border-l-4 border-primary">
@@ -847,7 +848,7 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
                 setShowFileUrlInput(false);
                 clearInputs();
               }}
-              className="text-muted-foreground hover:text-destructive flex-shrink-0"
+              className="text-muted-foreground hover:text-destructive flex-shrink-0 h-9 w-9" // Adjusted size
               aria-label="Cancel URL input"
             >
               <X className="h-4 w-4" />
@@ -855,7 +856,8 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
           </div>
        )}
 
-      <form onSubmit={sendMessage} className="flex items-center gap-2">
+        {/* Responsive form layout */}
+      <form onSubmit={sendMessage} className="flex items-center gap-1.5 sm:gap-2">
 
         {/* Hidden File Input */}
          <input
@@ -875,12 +877,12 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
                 size="icon"
                 disabled={!user || !chatId || isSending || isRecording}
                 aria-label="Open emoji picker"
-                className="flex-shrink-0 text-muted-foreground hover:text-primary"
+                className="flex-shrink-0 text-muted-foreground hover:text-primary h-9 w-9" // Adjusted size
             >
                 <Smile className="h-5 w-5" />
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-auto p-0 border-0" align="end" side="top">
+          <PopoverContent className="w-auto p-0 border-0" align="start" side="top"> {/* Changed align to start */}
             <EmojiPicker
               onEmojiClick={onEmojiClick}
               autoFocusSearch={false}
@@ -902,7 +904,7 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
                 onClick={handleFileAttachClick}
                 disabled={!user || !chatId || isSending}
                 aria-label="Attach file"
-                className={cn(attachedFile ? 'bg-accent text-accent-foreground' : '', "flex-shrink-0")}
+                className={cn(attachedFile ? 'bg-accent text-accent-foreground' : '', "flex-shrink-0 h-9 w-9")} // Adjusted size
             >
                 <Paperclip className="h-5 w-5" />
             </Button>
@@ -917,7 +919,7 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
                onClick={toggleFileUrlInput}
                disabled={!user || !chatId || isSending}
                aria-label="Toggle file URL input"
-               className={cn(showFileUrlInput ? 'bg-accent text-accent-foreground' : '', "flex-shrink-0")}
+               className={cn(showFileUrlInput ? 'bg-accent text-accent-foreground' : '', "flex-shrink-0 h-9 w-9")} // Adjusted size
             >
                <LinkIcon className="h-5 w-5" />
             </Button>
@@ -933,7 +935,7 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
             onClick={toggleImageUrlInput}
             disabled={!user || !chatId || isSending}
             aria-label="Toggle image URL input"
-            className={cn(showImageUrlInput ? 'bg-accent text-accent-foreground' : '', "flex-shrink-0")}
+            className={cn(showImageUrlInput ? 'bg-accent text-accent-foreground' : '', "flex-shrink-0 h-9 w-9")} // Adjusted size
           >
             <ImageIcon className="h-5 w-5" />
           </Button>
@@ -948,7 +950,7 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
                onClick={toggleVideoUrlInput}
                disabled={!user || !chatId || isSending}
                aria-label="Toggle video URL input"
-               className={cn(showVideoUrlInput ? 'bg-accent text-accent-foreground' : '', "flex-shrink-0")}
+               className={cn(showVideoUrlInput ? 'bg-accent text-accent-foreground' : '', "flex-shrink-0 h-9 w-9")} // Adjusted size
            >
                <VideoIcon className="h-5 w-5" />
            </Button>
@@ -963,13 +965,13 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
             value={message}
             onChange={handleInputChange}
             placeholder={chatId ? (replyingTo ? "Write your reply..." : (attachedFile ? "Add a comment... (optional)" : (showFileUrlInput ? "Add comment... (optional)" : "Type a message..."))) : "Select a chat to start"}
-            className="flex-1"
+            className="flex-1 h-9" // Adjusted height
             disabled={!user || !chatId || isSending || isRecording} // Disable while recording
             aria-label="Chat message input"
           />
         ) : (
           // Only render placeholder if NOT showing URL inputs either
-          (!showImageUrlInput && !showVideoUrlInput && !showFileUrlInput) && <div className="flex-1 h-10"></div> // Placeholder to maintain layout
+          (!showImageUrlInput && !showVideoUrlInput && !showFileUrlInput) && <div className="flex-1 h-9"></div> // Placeholder to maintain layout
         )}
 
         {/* Microphone/Stop Button with Tooltip */}
@@ -985,7 +987,7 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
                             onClick={handleMicButtonClick}
                             disabled={micButtonDisabled} // Use combined disabled state
                             aria-label={isRecording ? "Stop recording" : (micButtonDisabledReason || "Start recording")}
-                            className="flex-shrink-0"
+                            className="flex-shrink-0 h-9 w-9" // Adjusted size
                         >
                             {isRecording
                                ? <Square className="h-5 w-5" />
@@ -1012,7 +1014,7 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
           size="icon"
           disabled={!canSendMessage}
           aria-label="Send message"
-          className="flex-shrink-0"
+          className="flex-shrink-0 h-9 w-9" // Adjusted size
         >
           <Send className="h-5 w-5" />
         </Button>
@@ -1023,7 +1025,7 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
 
       {/* Upload Progress Bar and Status */}
       {uploadProgress !== null && (
-        <div className="pt-1 px-12 flex flex-col items-center">
+        <div className="pt-1 px-10 sm:px-12 flex flex-col items-center"> {/* Responsive padding */}
            <Progress value={uploadProgress} className="h-1 w-full mb-1" />
            <p className="text-xs text-muted-foreground">{uploadStatusText || `Uploading... ${Math.round(uploadProgress)}%`}</p>
         </div>
@@ -1031,3 +1033,4 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
     </div>
   );
 }
+

@@ -10,7 +10,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Loader2, MessageSquarePlus, Frown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'; // Corrected import
 import { Separator } from '@/components/ui/separator';
 import { AnimatePresence } from 'framer-motion'; // Import for exit animations
 
@@ -22,42 +22,32 @@ export default function PostsPage() {
   const initialLoadComplete = React.useRef(false); // Track initial load
 
   const loadPosts = React.useCallback(async () => {
-    // Only show loading skeleton on initial load or manual refresh
     if (!initialLoadComplete.current) {
         setLoadingPosts(true);
     }
     setError(null);
     try {
-      const fetchedPosts = await fetchPosts(50); // Fetch latest 50 posts (last 8 hours)
+      const fetchedPosts = await fetchPosts(50);
       setPosts(fetchedPosts);
-      initialLoadComplete.current = true; // Mark initial load as complete
+      initialLoadComplete.current = true;
     } catch (err: any) {
       console.error("Error loading posts:", err);
       setError(err.message || "Failed to load posts. Please try again.");
     } finally {
       setLoadingPosts(false);
     }
-  }, []); // useCallback depends on nothing, safe to memoize
+  }, []);
 
-
-  // Fetch posts on component mount
   React.useEffect(() => {
     loadPosts();
-
-    // Set up interval to refresh posts periodically (e.g., every 5 minutes)
-    // and clear old posts automatically based on the 8-hour filter in fetchPosts
     const intervalId = setInterval(loadPosts, 5 * 60 * 1000); // Refresh every 5 minutes
+    return () => clearInterval(intervalId);
+  }, [loadPosts]);
 
-    return () => clearInterval(intervalId); // Clean up interval on unmount
-  }, [loadPosts]); // Depend on the memoized loadPosts function
-
-
-  // Handler for optimistic updates when a new post is added
   const handleNewPost = (newPost: Post) => {
      const serializablePost: PostSerializable = {
        ...newPost,
        timestamp: (newPost.timestamp instanceof Date ? newPost.timestamp : new Date()).toISOString(),
-       // Initialize counts for optimistic update
        likeCount: 0,
        likedBy: [],
        commentCount: 0,
@@ -65,23 +55,20 @@ export default function PostsPage() {
      setPosts(prevPosts => [serializablePost, ...prevPosts]);
   };
 
-  // Handler for optimistic like/unlike updates
   const handleLikeChange = (postId: string, liked: boolean, newLikeCount: number) => {
       setPosts(prevPosts =>
         prevPosts.map(post => {
           if (post.id === postId) {
-            // Update likeCount and likedBy array optimistically
             const updatedLikedBy = liked
-              ? [...(post.likedBy ?? []), user?.uid ?? ''] // Add current user
-              : (post.likedBy ?? []).filter(uid => uid !== user?.uid); // Remove current user
-            return { ...post, likeCount: newLikeCount, likedBy: updatedLikedBy.filter(Boolean) }; // Filter out potential empty strings
+              ? [...(post.likedBy ?? []), user?.uid ?? '']
+              : (post.likedBy ?? []).filter(uid => uid !== user?.uid);
+            return { ...post, likeCount: newLikeCount, likedBy: updatedLikedBy.filter(Boolean) };
           }
           return post;
         })
       );
   };
 
-   // Handler for optimistic comment count updates
    const handleCommentAdded = (postId: string, newCommentCount: number) => {
         setPosts(prevPosts =>
             prevPosts.map(post =>
@@ -90,15 +77,16 @@ export default function PostsPage() {
         );
     };
 
-   // Handler for optimistic post deletion
    const handlePostDeleted = (postId: string) => {
        console.log(`Optimistically removing post ${postId} from UI.`);
        setPosts(prevPosts => prevPosts.filter(post => post.id !== postId));
    };
 
   return (
-    <div className="flex flex-col items-center min-h-screen bg-secondary py-8 px-4">
-      <div className="w-full max-w-2xl">
+    // Adjusted padding and max-width for responsiveness
+    <div className="flex flex-col items-center min-h-screen bg-secondary py-8 px-4 sm:px-6 lg:px-8">
+      {/* Adjusted max-width */}
+      <div className="w-full max-w-3xl">
 
         <div className="mb-8 text-center">
           <h1 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl">Community Feed</h1>
@@ -134,7 +122,7 @@ export default function PostsPage() {
 
         {/* Posts Feed */}
         <div className="space-y-6">
-          {/* Loading State (Only show on initial load) */}
+          {/* Loading State */}
           {loadingPosts && (
             <div className="space-y-6">
               {[...Array(3)].map((_, i) => (
@@ -179,7 +167,7 @@ export default function PostsPage() {
           )}
 
           {/* Empty State */}
-           {!loadingPosts && !error && posts.length === 0 && initialLoadComplete.current && ( // Only show empty state after initial load attempt
+           {!loadingPosts && !error && posts.length === 0 && initialLoadComplete.current && (
             <Card className="w-full text-center border-dashed border-border/70 bg-card shadow-sm py-10">
               <CardHeader>
                   <MessageSquarePlus className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
@@ -190,14 +178,14 @@ export default function PostsPage() {
           )}
 
           {/* Display Posts */}
-           <AnimatePresence initial={false}> {/* Disable initial animation for existing items */}
+           <AnimatePresence initial={false}>
               {!loadingPosts && !error && posts.map((post) => (
                 <PostCard
                     key={post.id}
                     post={post}
                     onLikeChange={handleLikeChange}
                     onCommentAdded={handleCommentAdded}
-                    onPostDeleted={handlePostDeleted} // Pass down delete handler
+                    onPostDeleted={handlePostDeleted}
                  />
               ))}
            </AnimatePresence>

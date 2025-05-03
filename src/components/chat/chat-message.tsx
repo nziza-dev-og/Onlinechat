@@ -195,7 +195,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
 
       <div
         className={cn(
-          "max-w-[70%] rounded-xl px-3.5 py-2.5 shadow-sm break-words", // Added break-words
+          "max-w-[75%] sm:max-w-[70%] rounded-xl px-3 py-2 sm:px-3.5 sm:py-2.5 shadow-sm break-words", // Responsive max-width and padding
           isSender
             ? "bg-accent text-accent-foreground rounded-br-sm"
             : "bg-card text-card-foreground rounded-bl-sm"
@@ -220,26 +220,26 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
          {/* Display Audio Player if audioUrl exists */}
          {message.audioUrl && !message.imageUrl && !message.videoUrl && !message.fileUrl && (
              <div className={cn(
-                 "my-2 p-2 rounded-md flex items-center gap-3", // Increased gap
+                 "my-2 p-2 rounded-md flex items-center gap-2 sm:gap-3", // Responsive gap
                  isSender ? "bg-accent/80" : "bg-muted/60" // Slightly different background
              )}>
                  <Button
                      variant="ghost"
                      size="icon"
                      onClick={togglePlay}
-                     className="h-9 w-9 text-foreground/80 hover:text-foreground flex-shrink-0" // Slightly larger button
+                     className="h-8 w-8 sm:h-9 sm:w-9 text-foreground/80 hover:text-foreground flex-shrink-0" // Responsive button size
                      aria-label={isPlaying ? "Pause voice note" : "Play voice note"}
                      disabled={!audioDuration && message.audioUrl} // Disable play if URL exists but duration is not loaded yet
                  >
-                     {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
+                     {isPlaying ? <Pause className="h-4 w-4 sm:h-5 sm:w-5" /> : <Play className="h-4 w-4 sm:h-5 sm:w-5" />}
                  </Button>
                  {/* Hidden audio element */}
                  <audio ref={audioRef} src={message.audioUrl} preload="metadata" className="hidden">
                      Your browser does not support the audio element.
                  </audio>
                  {/* Display Time */}
-                 <span className="text-xs text-muted-foreground font-mono w-16 text-right flex-shrink-0">
-                     {audioDuration !== null ? `${formatAudioTime(currentTime)} / ${formatAudioTime(audioDuration)}` : (message.audioUrl ? 'Loading...' : 'No audio')}
+                 <span className="text-xs text-muted-foreground font-mono w-14 sm:w-16 text-right flex-shrink-0"> {/* Responsive width */}
+                     {audioDuration !== null ? `${formatAudioTime(currentTime)} / ${formatAudioTime(audioDuration)}` : (message.audioUrl ? '...' : 'N/A')} {/* Loading indicator */}
                  </span>
              </div>
          )}
@@ -248,7 +248,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
          {message.imageUrl && !message.audioUrl && !message.videoUrl && !message.fileUrl && (
           <Button
               variant="ghost"
-              className="relative aspect-video w-48 max-w-full my-2 p-0 h-auto rounded-md overflow-hidden border block cursor-pointer" // Make it a block, remove default padding
+              className="relative aspect-video w-40 sm:w-48 max-w-full my-2 p-0 h-auto rounded-md overflow-hidden border block cursor-pointer" // Responsive width
               onClick={handleImageClick}
           >
              <Image
@@ -258,14 +258,14 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
                  style={{ objectFit: 'cover' }}
                  className="bg-muted"
                  data-ai-hint="chat message image"
-                 sizes="(max-width: 768px) 70vw, 30vw"
+                 sizes="(max-width: 640px) 75vw, (max-width: 1024px) 50vw, 30vw" // Adjusted sizes for better performance
              />
           </Button>
          )}
 
          {/* Display Video */}
           {message.videoUrl && !message.audioUrl && !message.imageUrl && !message.fileUrl && (
-             <div className="relative aspect-video w-full max-w-md my-2 rounded-lg overflow-hidden border shadow-inner">
+             <div className="relative aspect-video w-full max-w-sm sm:max-w-md my-2 rounded-lg overflow-hidden border shadow-inner"> {/* Responsive max-width */}
                  {/* Basic HTML5 Video Player */}
                  <video
                      src={message.videoUrl}
@@ -287,10 +287,10 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
           {/* Display Generic File */}
            {message.fileUrl && !message.audioUrl && !message.imageUrl && !message.videoUrl && (
                 <div className={cn(
-                    "my-2 p-3 rounded-md flex items-center gap-3 border",
+                    "my-2 p-3 rounded-md flex items-center gap-2 sm:gap-3 border", // Responsive gap
                     isSender ? "bg-accent/70 border-accent/80" : "bg-muted/50 border-muted/60"
                 )}>
-                    <FileText className="h-6 w-6 text-foreground/70 flex-shrink-0" />
+                    <FileText className="h-5 w-5 sm:h-6 sm:w-6 text-foreground/70 flex-shrink-0" /> {/* Responsive icon */}
                     <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-foreground truncate" title={message.fileName || 'Attached file'}>
                             {message.fileName || 'Attached file'}
@@ -304,7 +304,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
                          className="h-8 w-8 text-primary flex-shrink-0"
                      >
                          <a href={message.fileUrl} target="_blank" rel="noopener noreferrer" download={message.fileName || true} aria-label="Download file">
-                             <Download className="h-5 w-5" />
+                             <Download className="h-4 w-4 sm:h-5 sm:w-5" />
                          </a>
                      </Button>
                 </div>
@@ -312,7 +312,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
 
 
         {message.text && (
-            <p className="text-sm whitespace-pre-wrap">{message.text}</p>
+            <p className="text-sm sm:text-base whitespace-pre-wrap break-words">{message.text}</p> // Responsive text size
         )}
 
          <TooltipProvider delayDuration={300}>

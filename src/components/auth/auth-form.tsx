@@ -14,7 +14,7 @@ import {
   UserCredential, // Import UserCredential
   updateProfile as updateAuthProfile, // Import Firebase Auth update function
 } from 'firebase/auth';
-import { auth } from '@/lib/firebase'; // Import auth
+import { auth, db } from '@/lib/firebase'; // Import auth and db
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -24,6 +24,7 @@ import { useToast } from "@/hooks/use-toast";
 import { LogIn, UserPlus, Chrome, User as UserIcon, KeyRound } from 'lucide-react'; // Added KeyRound icon
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { createOrUpdateUserProfile, type UserProfileInput } from '@/lib/user-profile.service'; // Import the service and the input type
+import { doc, setDoc, Timestamp } from 'firebase/firestore'; // Import doc, setDoc, Timestamp for initial user creation
 
 // Schema for sign up, adding adminCode
 const signUpSchema = z.object({
@@ -115,8 +116,8 @@ export function AuthForm() {
     const isSignUp = activeTab === 'signup';
     let finalDisplayName: string | null = null;
 
-    if (!auth) {
-        toast({ title: 'Authentication Error', description: 'Auth service not available.', variant: 'destructive' });
+    if (!auth || !db) { // Ensure db is also available
+        toast({ title: 'Authentication Error', description: 'Auth or Database service not available.', variant: 'destructive' });
         setIsSubmitting(false);
         return;
     }
@@ -136,36 +137,36 @@ export function AuthForm() {
         const user = userCredential.user;
         userId = user.uid;
         userEmail = user.email;
+        finalDisplayName = signUpData.displayName?.trim() || null;
         console.log("User created in Auth:", userId);
 
-        // 2. Prepare displayName (use provided or null)
-        finalDisplayName = signUpData.displayName?.trim() || null;
-
-        // 3. Update Firebase Auth Profile (displayName only) - Happens Client-Side
+        // 2. Update Firebase Auth Profile (displayName only) - Client-Side
         if (finalDisplayName !== user.displayName) {
             try {
                 await updateAuthProfile(user, { displayName: finalDisplayName });
                 console.log("Firebase Auth profile updated (displayName):", finalDisplayName);
             } catch (authUpdateError: any) {
                  console.error("Error updating Firebase Auth profile during sign up:", authUpdateError);
-                 toast({ title: "Auth Profile Update Warning", description: `Could not update Auth display name: ${authUpdateError.message}`, variant: "default" });
+                 // Don't fail the whole signup, just warn
             }
         }
 
-        // 4. Prepare data for Firestore profile creation/update (using primitives)
-        const profileData: UserProfileInput = {
+        // 3. Create user document in Firestore using the service
+        const profileInput: UserProfileInput = {
             uid: userId,
             email: userEmail,
-            displayName: finalDisplayName, // Use the potentially updated display name
+            displayName: finalDisplayName,
             photoURL: user.photoURL, // Use default photoURL from auth if any, or null
             adminCode: signUpData.adminCode || null, // Pass the admin code
+            createdAt: 'SERVER_TIMESTAMP', // Use sentinel for creation time
+            lastSeen: 'SERVER_TIMESTAMP' // Use sentinel for initial last seen
         };
 
-        // Call the service function to create/update the Firestore document
-        console.log("Creating/Updating Firestore profile with:", profileData);
-        await createOrUpdateUserProfile(profileData);
+        console.log("Creating/Updating Firestore profile via service:", profileInput);
+        await createOrUpdateUserProfile(profileInput);
         console.log(`Firestore profile created/updated for user ${userId}`);
         toast({ title: 'Account created successfully!' });
+
 
       } else {
         // --- Sign In Logic ---
@@ -181,6 +182,7 @@ export function AuthForm() {
         const profileData: UserProfileInput = {
             uid: userId,
             email: userEmail,
+            lastSeen: 'SERVER_TIMESTAMP' // Update lastSeen on sign-in
             // Do not pass admin code on sign-in
         };
 
@@ -210,8 +212,8 @@ export function AuthForm() {
 
   const handleGoogleSignIn = async () => {
     setIsSubmitting(true);
-    if (!auth) {
-        toast({ title: 'Authentication Error', description: 'Auth service not available.', variant: 'destructive' });
+    if (!auth || !db) { // Ensure db is available
+        toast({ title: 'Authentication Error', description: 'Auth or Database service not available.', variant: 'destructive' });
         setIsSubmitting(false);
         return;
     }
@@ -222,18 +224,19 @@ export function AuthForm() {
       const user = userCredential.user;
       console.log("Signed in with Google:", user.uid, user.displayName, user.photoURL);
 
-      // Prepare data for Firestore profile update (using primitives from Google's profile)
+      // Prepare data for Firestore profile update using the service
       // Admin code is NOT relevant for Google Sign-In
-      const profileData: UserProfileInput = {
+      const profileInput: UserProfileInput = {
           uid: user.uid,
           email: user.email,
           displayName: user.displayName || null, // Get data from Google user object
-          photoURL: user.photoURL || null     // Get data from Google user object
+          photoURL: user.photoURL || null,     // Get data from Google user object
+          lastSeen: 'SERVER_TIMESTAMP', // Update lastSeen on Google sign-in
+          createdAt: 'SERVER_TIMESTAMP', // Use sentinel, service handles checking if user exists
       };
 
-      // Update profile using Google's info + update lastSeen via service
-      console.log("Creating/Updating Firestore profile via Google Sign-In:", profileData);
-      await createOrUpdateUserProfile(profileData);
+      console.log("Creating/Updating Firestore profile via Google Sign-In (using service):", profileInput);
+      await createOrUpdateUserProfile(profileInput);
       toast({ title: 'Signed in with Google successfully!' });
       // AuthProvider listener handles redirect/UI update
     } catch (error: any) {
@@ -263,7 +266,9 @@ export function AuthForm() {
 
   // --- JSX ---
   return (
-    <div className="flex items-center justify-center min-h-[calc(100vh-theme(spacing.14))] bg-secondary p-4"> {/* Adjust min-height for header */}
+    // Adjusted padding and max-width for responsiveness
+    <div className="flex items-center justify-center min-h-[calc(100vh-theme(spacing.14))] bg-secondary p-4 sm:p-6 lg:p-8">
+      {/* Responsive max-width */}
       <Tabs defaultValue="signin" value={activeTab} className="w-full max-w-md" onValueChange={handleTabChange}>
         <TabsList className="grid w-full grid-cols-2">
           <TabsTrigger value="signin">Sign In</TabsTrigger>
@@ -450,3 +455,4 @@ export function AuthForm() {
     </div>
   );
 }
+
