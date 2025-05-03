@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2, Send, Image as ImageIcon, Video } from 'lucide-react';
+import { Separator } from '@/components/ui/separator'; // Import Separator
 import { useAuth } from '@/hooks/use-auth';
 import { useToast } from '@/hooks/use-toast';
 import { addPost, type PostInput } from '@/lib/posts.service'; // Reuse addPost service
@@ -81,6 +82,10 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
            ...storyInput,
            timestamp: new Date(), // Use client date as placeholder
            type: 'story',
+           // Initialize counts for consistency
+           likeCount: 0,
+           likedBy: [],
+           commentCount: 0,
        };
        onStoryAdded?.(tempStory); // Call the callback
 
@@ -179,3 +184,4 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
     </Card>
   );
 }
+
