@@ -70,7 +70,8 @@ const formatShortTimestamp = (timestamp: any): string => formatTimestamp(timesta
 const formatFullTimestamp = (timestamp: any): string => formatTimestamp(timestamp, 'PPpp'); // Format like 'Jun 15th, 2024 at 1:23:45 PM'
 
 // Regex to detect Markdown code blocks (```language\ncode\n```)
-const codeBlockRegex = /```(\w+)?\n([\s\S]*?)\n```/;
+// Handles optional language and captures content including newlines
+const codeBlockRegex = /```(\w+)?\s*?\n([\s\S]*?)\n```/;
 
 export function ChatMessage({ message, onReply }: ChatMessageProps) {
   const { user } = useAuth();
@@ -191,8 +192,11 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
 
   // --- Code Block Handling ---
   const codeMatch = message.text?.match(codeBlockRegex);
-  const codeContent = codeMatch ? codeMatch[2] : null;
+  const codeContent = codeMatch ? codeMatch[2].trim() : null; // Trim whitespace from captured code
   const codeLanguage = codeMatch ? codeMatch[1] : null;
+  // Text excluding the code block (if any)
+  const nonCodeText = message.text && codeMatch ? message.text.replace(codeBlockRegex, '').trim() : (message.text && !codeMatch ? message.text.trim() : null);
+
 
   const handleCopyToClipboard = async (textToCopy: string) => {
     try {
@@ -232,16 +236,19 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
 
       <div
         className={cn(
-          "max-w-[75%] sm:max-w-[70%] rounded-xl px-3 py-2 sm:px-3.5 sm:py-2.5 shadow-sm break-words", // Responsive max-width and padding
+          "max-w-[75%] sm:max-w-[70%] rounded-xl shadow-sm break-words", // Base styles without padding
           isSender
             ? "bg-accent text-accent-foreground rounded-br-sm"
             : "bg-card text-card-foreground rounded-bl-sm",
-           // Apply different padding if it's just a code block without other content
-           codeContent && !message.imageUrl && !message.audioUrl && !message.videoUrl && !message.fileUrl && !message.text?.replace(codeBlockRegex, '').trim() ? 'p-0' : ''
+           // Apply padding only if it's NOT just a code block without other content
+           !(codeContent && !nonCodeText && !message.imageUrl && !message.audioUrl && !message.videoUrl && !message.fileUrl)
+             ? 'px-3 py-2 sm:px-3.5 sm:py-2.5'
+             : 'p-0 overflow-hidden' // Remove padding if it's only a code block
         )}
       >
-        {!isSender && message.displayName && (
-           <p className="text-xs font-medium text-muted-foreground mb-1 px-1 pt-1">{message.displayName}</p> // Add padding if name is shown
+        {/* Show sender name only if not sender and NOT just a code block */}
+        {!isSender && message.displayName && !(codeContent && !nonCodeText && !message.imageUrl && !message.audioUrl && !message.videoUrl && !message.fileUrl) && (
+           <p className="text-xs font-medium text-muted-foreground mb-1">{message.displayName}</p>
         )}
 
          {/* Display Reply Context */}
@@ -257,7 +264,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
          )}
 
          {/* Display Audio Player if audioUrl exists */}
-         {message.audioUrl && !message.imageUrl && !message.videoUrl && !message.fileUrl && (
+         {message.audioUrl && (
              <div className={cn(
                  "my-2 p-2 rounded-md flex items-center gap-2 sm:gap-3", // Responsive gap
                  isSender ? "bg-accent/80" : "bg-muted/60" // Slightly different background
@@ -285,7 +292,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
          )}
 
         {/* Display Image - Wrapped in Button */}
-         {message.imageUrl && !message.audioUrl && !message.videoUrl && !message.fileUrl && (
+         {message.imageUrl && (
           <Button
               variant="ghost"
               className="relative aspect-video w-40 sm:w-48 max-w-full my-2 p-0 h-auto rounded-md overflow-hidden border block cursor-pointer" // Responsive width
@@ -304,7 +311,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
          )}
 
          {/* Display Video */}
-          {message.videoUrl && !message.audioUrl && !message.imageUrl && !message.fileUrl && (
+          {message.videoUrl && (
              <div className="relative aspect-video w-full max-w-sm sm:max-w-md my-2 rounded-lg overflow-hidden border shadow-inner"> {/* Responsive max-width */}
                  <video
                      src={message.videoUrl}
@@ -323,7 +330,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
           )}
 
           {/* Display Generic File */}
-           {message.fileUrl && !message.audioUrl && !message.imageUrl && !message.videoUrl && (
+           {message.fileUrl && (
                 <div className={cn(
                     "my-2 p-3 rounded-md flex items-center gap-2 sm:gap-3 border", // Responsive gap
                     isSender ? "bg-accent/70 border-accent/80" : "bg-muted/50 border-muted/60"
@@ -351,51 +358,52 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
                 </div>
            )}
 
-        {/* Display Text or Code Block */}
-        {message.text && (
-            codeContent ? (
-                <div className="relative group/codeblock my-1 bg-gray-900 dark:bg-gray-800 rounded-md overflow-hidden font-mono text-sm">
-                    <div className="flex items-center justify-between px-3 py-1.5 bg-gray-800 dark:bg-gray-700 text-gray-400">
-                        <span className="text-xs">{codeLanguage || 'code'}</span>
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 text-gray-400 hover:text-white opacity-50 group-hover/codeblock:opacity-100 transition-opacity"
-                            onClick={() => handleCopyToClipboard(codeContent)}
-                        >
-                            {isCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                            <span className="sr-only">Copy code</span>
-                        </Button>
-                    </div>
-                    <pre className="p-3 overflow-x-auto text-gray-200 dark:text-gray-100">
-                        <code>
-                            {codeContent}
-                        </code>
-                    </pre>
-                </div>
-            ) : (
-                // Render regular text if no code block detected
-                <p className="text-sm sm:text-base whitespace-pre-wrap break-words">{message.text}</p>
-            )
+        {/* Display Text (if any exists outside the code block) */}
+        {nonCodeText && (
+          <p className="text-sm sm:text-base whitespace-pre-wrap break-words">{nonCodeText}</p>
         )}
 
+        {/* Display Code Block */}
+         {codeContent && (
+           <div className="relative group/codeblock my-1 bg-gray-900 dark:bg-gray-800 rounded-md overflow-hidden font-mono text-sm">
+               <div className="flex items-center justify-between px-3 py-1.5 bg-gray-800 dark:bg-gray-700 text-gray-400">
+                   <span className="text-xs">{codeLanguage || 'code'}</span>
+                   <Button
+                       variant="ghost"
+                       size="icon"
+                       className="h-6 w-6 text-gray-400 hover:text-white opacity-50 group-hover/codeblock:opacity-100 transition-opacity"
+                       onClick={() => handleCopyToClipboard(codeContent)}
+                   >
+                       {isCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                       <span className="sr-only">Copy code</span>
+                   </Button>
+               </div>
+               <pre className="p-3 overflow-x-auto text-gray-200 dark:text-gray-100">
+                   <code>
+                       {codeContent}
+                   </code>
+               </pre>
+           </div>
+         )}
 
-         <TooltipProvider delayDuration={300}>
-            <Tooltip>
-                <TooltipTrigger asChild>
-                   <p className={cn(
-                      "text-xs mt-1.5 opacity-60 cursor-default px-1 pb-1", // Add padding if not just code block
-                      isSender ? "text-right" : "text-left",
-                       codeContent && !message.imageUrl && !message.audioUrl && !message.videoUrl && !message.fileUrl && !message.text?.replace(codeBlockRegex, '').trim() ? 'pt-1' : '' // Adjust padding for code-only
-                    )}>
-                      {formatShortTimestamp(message.timestamp)}
-                    </p>
-                </TooltipTrigger>
-                <TooltipContent side={isSender ? "left" : "right"}>
-                    <p>{formatFullTimestamp(message.timestamp)}</p>
-                </TooltipContent>
-            </Tooltip>
-         </TooltipProvider>
+         {/* Show timestamp only if it's NOT just a code block without other content */}
+         {!(codeContent && !nonCodeText && !message.imageUrl && !message.audioUrl && !message.videoUrl && !message.fileUrl) && (
+           <TooltipProvider delayDuration={300}>
+              <Tooltip>
+                  <TooltipTrigger asChild>
+                     <p className={cn(
+                        "text-xs mt-1.5 opacity-60 cursor-default",
+                        isSender ? "text-right" : "text-left",
+                      )}>
+                        {formatShortTimestamp(message.timestamp)}
+                      </p>
+                  </TooltipTrigger>
+                  <TooltipContent side={isSender ? "left" : "right"}>
+                      <p>{formatFullTimestamp(message.timestamp)}</p>
+                  </TooltipContent>
+              </Tooltip>
+           </TooltipProvider>
+         )}
       </div>
 
        {isSender && (
@@ -431,3 +439,4 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
     </>
   );
 }
+
