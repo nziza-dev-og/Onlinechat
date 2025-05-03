@@ -1,5 +1,4 @@
 
-
 import type { Message } from '@/types';
 import { useAuth } from '@/hooks/use-auth';
 import { cn } from '@/lib/utils';
@@ -7,10 +6,11 @@ import { format, formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import Image from 'next/image';
-import { Reply, Mic, Play, Pause, Video as VideoIcon, FileText, Download } from 'lucide-react';
+import { Reply, Mic, Play, Pause, Video as VideoIcon, FileText, Download, Copy, Check } from 'lucide-react'; // Added Copy, Check
 import { Button } from '@/components/ui/button';
 import * as React from 'react';
 import { FullScreenImageViewer } from './full-screen-image-viewer';
+import { useToast } from '@/hooks/use-toast'; // Import useToast
 
 interface ChatMessageProps {
   message: Message;
@@ -69,15 +69,19 @@ const formatFileSize = (bytes: number | null | undefined): string => {
 const formatShortTimestamp = (timestamp: any): string => formatTimestamp(timestamp, 'p'); // Format like 1:23 PM
 const formatFullTimestamp = (timestamp: any): string => formatTimestamp(timestamp, 'PPpp'); // Format like 'Jun 15th, 2024 at 1:23:45 PM'
 
+// Regex to detect Markdown code blocks (```language\ncode\n```)
+const codeBlockRegex = /```(\w+)?\n([\s\S]*?)\n```/;
+
 export function ChatMessage({ message, onReply }: ChatMessageProps) {
   const { user } = useAuth();
+  const { toast } = useToast(); // Get toast function
   const isSender = user?.uid === message.uid;
   const audioRef = React.useRef<HTMLAudioElement>(null);
   const [isPlaying, setIsPlaying] = React.useState(false);
   const [audioDuration, setAudioDuration] = React.useState<number | null>(null);
   const [currentTime, setCurrentTime] = React.useState(0);
   const [isImageViewerOpen, setIsImageViewerOpen] = React.useState(false); // State for image viewer
-
+  const [isCopied, setIsCopied] = React.useState(false); // State for copy button
 
   const handleReplyClick = (e: React.MouseEvent) => {
       e.stopPropagation(); // Prevent triggering other click events if needed
@@ -185,6 +189,24 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
   }, [message.id, message.audioUrl]); // Re-run effect if message ID or audio URL changes
   // --- End Audio Playback Handling ---
 
+  // --- Code Block Handling ---
+  const codeMatch = message.text?.match(codeBlockRegex);
+  const codeContent = codeMatch ? codeMatch[2] : null;
+  const codeLanguage = codeMatch ? codeMatch[1] : null;
+
+  const handleCopyToClipboard = async (textToCopy: string) => {
+    try {
+      await navigator.clipboard.writeText(textToCopy);
+      setIsCopied(true);
+      toast({ title: "Copied to clipboard!" });
+      setTimeout(() => setIsCopied(false), 2000); // Reset after 2 seconds
+    } catch (err) {
+      console.error("Failed to copy text: ", err);
+      toast({ title: "Copy Failed", description: "Could not copy code to clipboard.", variant: "destructive" });
+    }
+  };
+  // --- End Code Block Handling ---
+
   // Determine reply context text
   const getReplyTextPreview = (msg: Message): string => {
       if (msg.text) return msg.text;
@@ -213,11 +235,13 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
           "max-w-[75%] sm:max-w-[70%] rounded-xl px-3 py-2 sm:px-3.5 sm:py-2.5 shadow-sm break-words", // Responsive max-width and padding
           isSender
             ? "bg-accent text-accent-foreground rounded-br-sm"
-            : "bg-card text-card-foreground rounded-bl-sm"
+            : "bg-card text-card-foreground rounded-bl-sm",
+           // Apply different padding if it's just a code block without other content
+           codeContent && !message.imageUrl && !message.audioUrl && !message.videoUrl && !message.fileUrl && !message.text?.replace(codeBlockRegex, '').trim() ? 'p-0' : ''
         )}
       >
         {!isSender && message.displayName && (
-           <p className="text-xs font-medium text-muted-foreground mb-1">{message.displayName}</p>
+           <p className="text-xs font-medium text-muted-foreground mb-1 px-1 pt-1">{message.displayName}</p> // Add padding if name is shown
         )}
 
          {/* Display Reply Context */}
@@ -327,17 +351,42 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
                 </div>
            )}
 
-
+        {/* Display Text or Code Block */}
         {message.text && (
-            <p className="text-sm sm:text-base whitespace-pre-wrap break-words">{message.text}</p> // Responsive text size
+            codeContent ? (
+                <div className="relative group/codeblock my-1 bg-gray-900 dark:bg-gray-800 rounded-md overflow-hidden font-mono text-sm">
+                    <div className="flex items-center justify-between px-3 py-1.5 bg-gray-800 dark:bg-gray-700 text-gray-400">
+                        <span className="text-xs">{codeLanguage || 'code'}</span>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 text-gray-400 hover:text-white opacity-50 group-hover/codeblock:opacity-100 transition-opacity"
+                            onClick={() => handleCopyToClipboard(codeContent)}
+                        >
+                            {isCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                            <span className="sr-only">Copy code</span>
+                        </Button>
+                    </div>
+                    <pre className="p-3 overflow-x-auto text-gray-200 dark:text-gray-100">
+                        <code>
+                            {codeContent}
+                        </code>
+                    </pre>
+                </div>
+            ) : (
+                // Render regular text if no code block detected
+                <p className="text-sm sm:text-base whitespace-pre-wrap break-words">{message.text}</p>
+            )
         )}
+
 
          <TooltipProvider delayDuration={300}>
             <Tooltip>
                 <TooltipTrigger asChild>
                    <p className={cn(
-                      "text-xs mt-1.5 opacity-60 cursor-default",
-                      isSender ? "text-right" : "text-left"
+                      "text-xs mt-1.5 opacity-60 cursor-default px-1 pb-1", // Add padding if not just code block
+                      isSender ? "text-right" : "text-left",
+                       codeContent && !message.imageUrl && !message.audioUrl && !message.videoUrl && !message.fileUrl && !message.text?.replace(codeBlockRegex, '').trim() ? 'pt-1' : '' // Adjust padding for code-only
                     )}>
                       {formatShortTimestamp(message.timestamp)}
                     </p>
@@ -382,4 +431,3 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
     </>
   );
 }
-
