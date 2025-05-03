@@ -155,11 +155,12 @@ export function StoryViewer({ stories }: StoryViewerProps) {
              <button
                onClick={() => handleOpenStory(story)}
                className="relative flex-shrink-0 w-20 h-32 rounded-lg overflow-hidden focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 group"
+               aria-label={`View story by ${story.displayName}`}
              >
                {story.imageUrl || story.videoUrl ? (
                  <Image
                    src={story.imageUrl || story.videoUrl || ''} // Prioritize image for preview
-                   alt={`Story by ${story.displayName}`}
+                   alt={`Story preview by ${story.displayName}`}
                    fill
                    style={{ objectFit: 'cover' }}
                    className="bg-muted group-hover:scale-105 transition-transform duration-200"
@@ -176,12 +177,12 @@ export function StoryViewer({ stories }: StoryViewerProps) {
                </Avatar>
              </button>
              </DialogTrigger>
-             {/* Separate DialogContent is needed if using DialogTrigger */}
+             {/* DialogContent is moved outside the loop, managed by openStory state */}
            </Dialog>
         ))}
       </div>
 
-       {/* Full-screen Story Viewer Modal */}
+       {/* Full-screen Story Viewer Modal - Rendered only once */}
        <Dialog open={!!openStory} onOpenChange={(open) => !open && handleCloseStory()}>
           <DialogContent
              className="p-0 max-w-md w-[95vw] h-[85vh] border-none bg-black shadow-none flex flex-col items-center justify-center outline-none focus:outline-none overflow-hidden rounded-lg"
@@ -192,7 +193,7 @@ export function StoryViewer({ stories }: StoryViewerProps) {
           >
              {/* Visually Hidden Title for Accessibility */}
              <DialogTitle id={activeStory ? `story-title-${activeStory.id}` : undefined} className={cn("sr-only")}>
-               Story by {activeStory?.displayName || 'User'}
+                Story by {activeStory?.displayName || 'User'} {activeStory?.text ? `- Caption: ${activeStory.text}` : ''}
              </DialogTitle>
              {activeStory && (
                 <div className="relative w-full h-full">
@@ -207,17 +208,17 @@ export function StoryViewer({ stories }: StoryViewerProps) {
 
                    {/* Header */}
                    <div className="absolute top-4 left-4 right-4 z-40 flex items-center justify-between gap-2">
-                      <div className='flex items-center gap-2'>
-                         <Avatar className="h-8 w-8 border border-white/50">
+                      <div className='flex items-center gap-2 overflow-hidden'> {/* Added overflow-hidden */}
+                         <Avatar className="h-8 w-8 border border-white/50 flex-shrink-0">
                             <AvatarImage src={activeStory.photoURL || undefined} />
                             <AvatarFallback>{getInitials(activeStory.displayName)}</AvatarFallback>
                          </Avatar>
-                         <div className="flex flex-col text-white">
-                            <span className="text-sm font-medium">{activeStory.displayName || 'User'}</span>
-                            <span className="text-xs opacity-80">{formatStoryTimestamp(activeStory.timestamp)}</span>
+                         <div className="flex flex-col text-white overflow-hidden"> {/* Added overflow-hidden */}
+                            <span className="text-sm font-medium truncate">{activeStory.displayName || 'User'}</span>
+                            <span className="text-xs opacity-80 truncate">{formatStoryTimestamp(activeStory.timestamp)}</span>
                          </div>
                       </div>
-                       <div className="flex items-center gap-1">
+                       <div className="flex items-center gap-1 flex-shrink-0"> {/* Added flex-shrink-0 */}
                            {/* Mute/Unmute Button */}
                            {activeStory.musicUrl && (
                               <Button

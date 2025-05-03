@@ -1,5 +1,4 @@
 
-
 'use server';
 
 import { db, auth } from '@/lib/firebase';
@@ -31,19 +30,21 @@ export interface PostInput {
   uid: string;
   displayName: string | null;
   photoURL: string | null;
-  text?: string | null;
-  imageUrl?: string | null;
-  videoUrl?: string | null;
-  musicUrl?: string | null; // Added optional musicUrl
+  text?: string | null; // Optional text content
+  imageUrl?: string | null; // Optional image URL
+  videoUrl?: string | null; // Optional video URL
+  musicUrl?: string | null; // Optional background music URL (for stories)
+  musicStartTime?: number | null; // Optional start time in seconds
+  musicEndTime?: number | null; // Optional end time in seconds
   type?: 'post' | 'story'; // Added type field, optional, defaults to 'post'
 }
 
 /**
  * Adds a new post document to the 'posts' collection in Firestore.
  * Initializes likeCount and commentCount to 0 and likedBy to an empty array.
- * Saves the post type, defaulting to 'post'. Includes musicUrl for stories.
+ * Saves the post type, defaulting to 'post'. Includes musicUrl, startTime, endTime for stories.
  *
- * @param postData - An object containing the post details (uid, text, imageUrl, videoUrl, musicUrl, type).
+ * @param postData - An object containing the post details (uid, text, imageUrl, videoUrl, musicUrl, startTime, endTime, type).
  * @returns Promise<string> - The ID of the newly created post document.
  * @throws Error if post data is invalid, db is not initialized, or add operation fails.
  */
@@ -62,6 +63,15 @@ export const addPost = async (postData: PostInput): Promise<string> => {
      console.error("🔴 addPost Error: Story must contain an image URL or a video URL.", postData);
      throw new Error("Story must have an image or video.");
    }
+   // Validate start/end times if provided
+   if (postData.musicStartTime !== null && postData.musicStartTime !== undefined && postData.musicStartTime < 0) {
+        throw new Error("Music start time cannot be negative.");
+   }
+   if (postData.musicEndTime !== null && postData.musicEndTime !== undefined && (postData.musicEndTime <= (postData.musicStartTime ?? 0))) {
+        throw new Error("Music end time must be after start time.");
+   }
+
+
    if (!db) {
       console.error("🔴 addPost Error: Firestore (db) not available.");
       throw new Error("Database service not available.");
@@ -69,12 +79,16 @@ export const addPost = async (postData: PostInput): Promise<string> => {
 
   try {
     const postsCollectionRef = collection(db, 'posts');
+    const isStory = postData.type === 'story';
     const dataToSave = {
       ...postData,
       text: postData.text?.trim() || null,
       imageUrl: postData.imageUrl?.trim() || null,
       videoUrl: postData.videoUrl?.trim() || null,
-      musicUrl: postData.type === 'story' ? (postData.musicUrl?.trim() || null) : null, // Only save musicUrl for stories
+      // Only save music-related fields for stories
+      musicUrl: isStory ? (postData.musicUrl?.trim() || null) : null,
+      musicStartTime: isStory ? (postData.musicStartTime ?? null) : null,
+      musicEndTime: isStory ? (postData.musicEndTime ?? null) : null,
       type: postData.type || 'post', // Default to 'post' if type is not provided
       timestamp: firestoreServerTimestamp(), // Firestore handles this on the server
       likeCount: 0, // Initialize like count
@@ -138,6 +152,8 @@ export const fetchPosts = async (count: number = 50): Promise<PostSerializable[]
         imageUrl: data.imageUrl ?? null,
         videoUrl: data.videoUrl ?? null,
         musicUrl: data.musicUrl ?? null, // Include musicUrl
+        musicStartTime: data.musicStartTime ?? null, // Include start time
+        musicEndTime: data.musicEndTime ?? null, // Include end time
         type: data.type || 'post', // Include type, default to 'post'
         // Convert Timestamp to ISO string for serialization
         timestamp: data.timestamp.toDate().toISOString(),
@@ -290,8 +306,14 @@ export const deletePost = async (postId: string, userId: string): Promise<void> 
         }
         const postData = postSnap.data();
         if (postData.uid !== userId) {
-            console.warn(`Firestore: Unauthorized delete attempt on post ${postId} by user ${userId}. Owner is ${postData.uid}.`);
-            throw new Error("You are not authorized to delete this post.");
+            // Allow admin deletion (optional)
+            // const adminRef = doc(db, 'users', userId);
+            // const adminSnap = await getDoc(adminRef);
+            // if (!adminSnap.exists() || !adminSnap.data()?.isAdmin) {
+               console.warn(`Firestore: Unauthorized delete attempt on post ${postId} by user ${userId}. Owner is ${postData.uid}.`);
+               throw new Error("You are not authorized to delete this post.");
+            // }
+            // console.log(`Firestore: Admin ${userId} deleting post ${postId} owned by ${postData.uid}.`);
         }
 
         // 2. Delete comments using a batch write for atomicity
@@ -307,7 +329,7 @@ export const deletePost = async (postId: string, userId: string): Promise<void> 
         // 4. Commit the batch
         await batch.commit();
 
-        console.log(`Firestore: Post ${postId} and its ${commentsQuerySnapshot.size} comments deleted by owner ${userId}.`);
+        console.log(`Firestore: Post ${postId} and its ${commentsQuerySnapshot.size} comments deleted by user ${userId}.`);
 
     } catch (error: any) {
         const detailedErrorMessage = `Failed to delete post ${postId}. Error: ${error.message || 'Unknown Firestore error'}${error.code ? ` (Code: ${error.code})` : ''}`;

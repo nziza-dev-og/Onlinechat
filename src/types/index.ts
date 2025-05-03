@@ -55,6 +55,8 @@ export interface Post {
     imageUrl?: string | null; // Optional image URL
     videoUrl?: string | null; // Optional video URL
     musicUrl?: string | null; // Optional background music URL (for stories)
+    musicStartTime?: number | null; // Optional start time in seconds for music
+    musicEndTime?: number | null; // Optional end time in seconds for music
     type?: 'post' | 'story'; // Added type field
     timestamp: Timestamp | Date; // Can be Timestamp or Date (e.g., for optimistic updates)
     likeCount?: number; // Number of likes
@@ -72,6 +74,8 @@ export interface PostSerializable {
     imageUrl?: string | null;
     videoUrl?: string | null;
     musicUrl?: string | null; // Optional background music URL (for stories)
+    musicStartTime?: number | null; // Optional start time in seconds for music
+    musicEndTime?: number | null; // Optional end time in seconds for music
     type?: 'post' | 'story'; // Make sure this is included
     timestamp: string; // Use ISO string for serialization
     likeCount?: number;
@@ -165,3 +169,18 @@ export type SignalingMessage = SignalingOffer | SignalingAnswer | SignalingCandi
 // --- End WebRTC Signaling Types ---
 
 
+// --- Platform Configuration Types ---
+export interface MusicPlaylistItem {
+    id: string; // Unique ID for the track (can be URL or a generated ID)
+    title: string;
+    url: string;
+}
+
+export interface PlatformConfig {
+  allowEmoji?: boolean;
+  allowFileUploads?: boolean;
+  musicPlaylist?: MusicPlaylistItem[]; // Add music playlist
+  // Add other config fields here (e.g., theme, logoUrl)
+}
+// --- End Platform Configuration Types ---
+```
