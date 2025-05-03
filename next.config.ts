@@ -24,6 +24,13 @@ const nextConfig: NextConfig = {
         port: '',
         pathname: '/v0/b/**', // Allow images from any bucket
       },
+      // Add pattern for i.pinimg.com
+      {
+          protocol: 'https',
+          hostname: 'i.pinimg.com',
+          port: '',
+          pathname: '/**',
+      },
     ],
   },
    // The `env` block is removed. NEXT_PUBLIC_ prefixed variables are automatically available client-side.
@@ -31,3 +38,4 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
+
