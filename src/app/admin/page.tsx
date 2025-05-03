@@ -4,24 +4,32 @@
 import * as React from 'react';
 import { useAuth } from '@/hooks/use-auth';
 import { getPasswordChangeRequests, reviewPasswordChangeRequest } from '@/lib/user-profile.service';
-import type { UserProfile, AdminMessage } from '@/types'; // Added AdminMessage import
+import type { UserProfile, AdminMessage, User } from '@/types'; // Added User import
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Loader2, ShieldAlert, CheckCircle, XCircle, UserCheck, UserX, BarChart2, Bell, Settings, ShieldCheck, Send, Ban, MessageSquare } from 'lucide-react'; // Added MessageSquare
+import { Loader2, ShieldAlert, CheckCircle, XCircle, UserCheck, UserX, BarChart2, Bell, Settings, ShieldCheck, Send, Ban, MessageSquare, Users as UsersIcon, User as UserIcon } from 'lucide-react'; // Renamed Users icon import
 import { useToast } from '@/hooks/use-toast';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
-import { getFirestore, doc, getDoc, type Firestore } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, type Firestore, collection, query, where, onSnapshot, type Unsubscribe } from 'firebase/firestore'; // Added collection, query, where, onSnapshot, Unsubscribe
 import { app } from '@/lib/firebase';
 import { getOnlineUsersCount, getAdminMessages } from '@/lib/admin.service'; // Added getAdminMessages import
-import { sendNotification } from '@/lib/notification.service'; // Import notification service
+import { sendGlobalNotification, sendTargetedNotification } from '@/lib/notification.service'; // Import specific notification services
 import { Textarea } from '@/components/ui/textarea'; // Import Textarea
 import { Label } from '@/components/ui/label'; // Import Label
 import { Switch } from "@/components/ui/switch"; // Import Switch for settings/security
 import { Input } from "@/components/ui/input"; // Import Input for settings/security
 import { blockIpAddress, logSuspiciousActivity } from '@/lib/security.service'; // Import security services
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"; // Import RadioGroup
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"; // Import Select for user targeting
 
 // Helper to get initials
 const getInitials = (name: string | null | undefined): string => {
@@ -72,8 +80,15 @@ export default function AdminPage() {
   const [onlineUsers, setOnlineUsers] = React.useState<number | null>(null);
   const [loadingAnalytics, setLoadingAnalytics] = React.useState(true);
   const [dbInstance, setDbInstance] = React.useState<Firestore | null>(null);
-  const [notificationMessage, setNotificationMessage] = React.useState(''); // State for notification input
-  const [isSendingNotification, setIsSendingNotification] = React.useState(false); // State for notification sending
+
+  // --- Notification States ---
+  const [notificationMessage, setNotificationMessage] = React.useState('');
+  const [isSendingNotification, setIsSendingNotification] = React.useState(false);
+  const [notificationType, setNotificationType] = React.useState<'global' | 'targeted'>('global');
+  const [targetUserId, setTargetUserId] = React.useState<string | undefined>(undefined);
+  const [userList, setUserList] = React.useState<UserProfile[]>([]);
+  const [loadingUserList, setLoadingUserList] = React.useState(false);
+  // --- End Notification States ---
 
   // Placeholder states for Settings
   const [allowEmoji, setAllowEmoji] = React.useState(true);
@@ -107,6 +122,7 @@ export default function AdminPage() {
             setLoadingRequests(false);
             setLoadingAnalytics(false);
             setLoadingAdminMessages(false);
+            setLoadingUserList(false);
         }
     }, []);
 
@@ -118,9 +134,11 @@ export default function AdminPage() {
       setLoadingRequests(true);
       setLoadingAnalytics(true);
       setLoadingAdminMessages(true);
+      setLoadingUserList(true);
       setRequests([]);
       setOnlineUsers(null);
       setAdminMessages([]);
+      setUserList([]);
       return;
     }
     if (!user) {
@@ -128,10 +146,12 @@ export default function AdminPage() {
       setLoadingRequests(false);
       setLoadingAnalytics(false);
       setLoadingAdminMessages(false);
+      setLoadingUserList(false);
       setRequests([]);
       setError("Please log in to access the admin page.");
       setOnlineUsers(null);
       setAdminMessages([]);
+      setUserList([]);
       return;
     }
 
@@ -139,9 +159,13 @@ export default function AdminPage() {
         setLoadingRequests(true);
         setLoadingAnalytics(true);
         setLoadingAdminMessages(true);
+        setLoadingUserList(true);
         setError(null);
         setOnlineUsers(null);
         setAdminMessages([]);
+        setUserList([]);
+
+        let userListenerUnsubscribe: Unsubscribe | null = null; // Listener specific to this check
 
         try {
              const profile = await getDoc(doc(firestoreInstance, 'users', user.uid));
@@ -149,39 +173,45 @@ export default function AdminPage() {
              setIsAdmin(isAdminUser);
 
              if (isAdminUser) {
-                // Fetch password requests
-                try {
-                    const fetchedRequests = await getPasswordChangeRequests(user.uid);
-                    setRequests(fetchedRequests);
-                } catch (reqError: any) {
-                    console.error("Error fetching password requests:", reqError);
-                    toast({ title: "Request Fetch Error", description: reqError.message, variant: "destructive" });
-                } finally {
-                    setLoadingRequests(false); // Requests loaded or failed
-                }
+                // --- Fetch Data Concurrently ---
+                const requestsPromise = getPasswordChangeRequests(user.uid).catch(err => { console.error("Req Fetch Err:", err); throw err; });
+                const analyticsPromise = getOnlineUsersCount().catch(err => { console.error("Analytics Err:", err); throw err; });
+                const messagesPromise = getAdminMessages(user.uid).catch(err => { console.error("Admin Msg Err:", err); throw err; });
 
+                 // --- User List Listener (for notifications) ---
+                 const usersQuery = query(collection(firestoreInstance, 'users'), where('uid', '!=', user.uid)); // Exclude self
+                 userListenerUnsubscribe = onSnapshot(usersQuery, (snapshot) => {
+                     const fetchedUsers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as UserProfile))
+                         .sort((a, b) => (a.displayName || a.email || '').localeCompare(b.displayName || b.email || ''));
+                     setUserList(fetchedUsers);
+                     setLoadingUserList(false);
+                     console.log(`Admin: User list updated (${fetchedUsers.length} users)`);
+                 }, (error) => {
+                     console.error("Error fetching user list for notifications:", error);
+                     toast({ title: "User List Error", description: "Could not load users for targeted notifications.", variant: "destructive" });
+                     setUserList([]);
+                     setLoadingUserList(false);
+                 });
 
-                // Fetch analytics data
-                try {
-                    const onlineCount = await getOnlineUsersCount();
-                    setOnlineUsers(onlineCount);
-                } catch (analyticsError: any) {
-                     console.error("Error fetching analytics:", analyticsError);
-                     toast({ title: "Analytics Error", description: analyticsError.message || "Could not load online user count.", variant: "destructive"});
-                     setOnlineUsers(0); // Default to 0 on error
-                } finally {
-                     setLoadingAnalytics(false); // Analytics loaded (or failed)
-                }
-
-                 // Fetch admin messages
+                // Await results and set state
                  try {
-                    const fetchedMessages = await getAdminMessages(user.uid);
-                    setAdminMessages(fetchedMessages);
-                 } catch (msgError: any) {
-                     console.error("Error fetching admin messages:", msgError);
-                     toast({ title: "Messages Fetch Error", description: msgError.message, variant: "destructive" });
+                     const [fetchedRequests, onlineCount, fetchedMessages] = await Promise.all([requestsPromise, analyticsPromise, messagesPromise]);
+                     setRequests(fetchedRequests);
+                     setOnlineUsers(onlineCount);
+                     setAdminMessages(fetchedMessages);
+                 } catch (batchError: any) {
+                     console.error("Error fetching admin data batch:", batchError);
+                      // Handle specific errors if needed, or show a general error
+                     toast({ title: "Data Fetch Error", description: "Could not load some admin data.", variant: "destructive" });
+                      // Set sensible defaults on error
+                     if (!requests.length) setRequests([]);
+                     if (onlineUsers === null) setOnlineUsers(0);
+                     if (!adminMessages.length) setAdminMessages([]);
                  } finally {
-                    setLoadingAdminMessages(false); // Messages loaded or failed
+                    setLoadingRequests(false);
+                    setLoadingAnalytics(false);
+                    setLoadingAdminMessages(false);
+                    // User list loading is handled by its listener
                  }
 
                 // TODO: Fetch initial settings values from config service
@@ -194,9 +224,11 @@ export default function AdminPage() {
                 setRequests([]);
                 setOnlineUsers(null);
                 setAdminMessages([]);
+                setUserList([]);
                 setLoadingRequests(false);
                 setLoadingAnalytics(false);
                 setLoadingAdminMessages(false);
+                setLoadingUserList(false);
              }
         } catch (err: any) {
             console.error("Error checking admin status or fetching data:", err);
@@ -205,14 +237,37 @@ export default function AdminPage() {
             setRequests([]);
             setOnlineUsers(null);
             setAdminMessages([]);
+            setUserList([]);
             setLoadingRequests(false);
             setLoadingAnalytics(false);
             setLoadingAdminMessages(false);
+            setLoadingUserList(false);
+        } finally {
+             // setLoadingUserList might already be false, but ensure it is
+             setLoadingUserList(false);
         }
+
+         // Return cleanup function
+         return () => {
+             if (userListenerUnsubscribe) {
+                console.log("Cleaning up user list listener.");
+                userListenerUnsubscribe();
+             }
+         };
     };
 
-    // Pass the correct dbInstance state variable here
-    checkAdminAndFetchData(dbInstance);
+    // Pass the correct dbInstance state variable here and store cleanup function
+    let cleanupUserListener: (() => void) | undefined;
+    checkAdminAndFetchData(dbInstance).then(cleanup => {
+         cleanupUserListener = cleanup;
+    });
+
+     // Ensure cleanup runs when dependencies change or component unmounts
+     return () => {
+         if (cleanupUserListener) {
+             cleanupUserListener();
+         }
+     };
 
   }, [user, authLoading, dbInstance, toast]); // Rerun if user, auth state, or db instance changes
 
@@ -237,18 +292,32 @@ export default function AdminPage() {
     }
   };
 
-   // Handle sending notifications
+   // Handle sending notifications (global or targeted)
    const handleSendNotification = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!notificationMessage.trim() || isSendingNotification) return;
+        if (!user || !notificationMessage.trim() || isSendingNotification) return;
+        if (notificationType === 'targeted' && !targetUserId) {
+            toast({ title: 'Target Required', description: 'Please select a user for targeted notifications.', variant: 'destructive' });
+            return;
+        }
 
         setIsSendingNotification(true);
         try {
-            await sendNotification(notificationMessage.trim()); // Send global announcement
-            toast({ title: 'Announcement Sent', description: 'Your announcement has been broadcast.' });
-            setNotificationMessage(''); // Clear input
+            let resultId: string;
+            if (notificationType === 'global') {
+                resultId = await sendGlobalNotification(notificationMessage.trim(), user.uid);
+                toast({ title: 'Global Announcement Sent', description: 'Your announcement has been broadcast.' });
+            } else {
+                resultId = await sendTargetedNotification(notificationMessage.trim(), targetUserId!, user.uid);
+                toast({ title: 'Targeted Notification Sent', description: `Notification sent to user ${targetUserId}.` });
+            }
+             console.log(`Notification sent, Doc ID: ${resultId}`);
+             setNotificationMessage(''); // Clear input
+             setTargetUserId(undefined); // Reset target user selection
+             // Optionally reset type to global?
+             // setNotificationType('global');
         } catch (error: any) {
-            toast({ title: 'Send Failed', description: error.message || 'Could not send the announcement.', variant: 'destructive' });
+            toast({ title: 'Send Failed', description: error.message || 'Could not send the notification.', variant: 'destructive' });
         } finally {
             setIsSendingNotification(false);
         }
@@ -548,19 +617,75 @@ export default function AdminPage() {
               <Card className="shadow-lg mt-4">
                   <CardHeader>
                       <CardTitle>Notifications & Announcements</CardTitle>
-                      <CardDescription>Send platform-wide announcements to all users.</CardDescription>
+                      <CardDescription>Send platform-wide or targeted notifications.</CardDescription>
                   </CardHeader>
                   <CardContent>
-                        <form onSubmit={handleSendNotification} className="space-y-4">
+                        <form onSubmit={handleSendNotification} className="space-y-6">
+                             {/* Notification Type */}
+                            <div className="space-y-3">
+                                <Label>Notification Type</Label>
+                                 <RadioGroup
+                                     value={notificationType}
+                                     onValueChange={(value) => {
+                                         setNotificationType(value as 'global' | 'targeted');
+                                         if (value === 'global') setTargetUserId(undefined); // Clear target if global
+                                     }}
+                                     className="flex space-x-4"
+                                     disabled={isSendingNotification}
+                                 >
+                                     <div className="flex items-center space-x-2">
+                                         <RadioGroupItem value="global" id="notif-global" />
+                                         <Label htmlFor="notif-global">Global Announcement</Label>
+                                     </div>
+                                     <div className="flex items-center space-x-2">
+                                         <RadioGroupItem value="targeted" id="notif-targeted" />
+                                         <Label htmlFor="notif-targeted">Target Specific User</Label>
+                                     </div>
+                                 </RadioGroup>
+                            </div>
+
+                             {/* Target User Selection (Conditional) */}
+                             {notificationType === 'targeted' && (
+                                <div className="space-y-2">
+                                    <Label htmlFor="target-user">Target User</Label>
+                                     <Select
+                                         value={targetUserId}
+                                         onValueChange={setTargetUserId}
+                                         disabled={loadingUserList || isSendingNotification}
+                                     >
+                                         <SelectTrigger id="target-user" className="w-full">
+                                             <SelectValue placeholder={loadingUserList ? "Loading users..." : "Select a user..."} />
+                                         </SelectTrigger>
+                                         <SelectContent>
+                                             {loadingUserList && <SelectItem value="loading" disabled>Loading...</SelectItem>}
+                                             {!loadingUserList && userList.length === 0 && <SelectItem value="no-users" disabled>No users available</SelectItem>}
+                                             {!loadingUserList && userList.map(u => (
+                                                <SelectItem key={u.uid} value={u.uid}>
+                                                     <div className="flex items-center gap-2">
+                                                         <Avatar className="h-5 w-5 text-xs border">
+                                                             <AvatarImage src={u.photoURL || undefined} />
+                                                             <AvatarFallback>{getInitials(u.displayName)}</AvatarFallback>
+                                                         </Avatar>
+                                                         <span>{u.displayName || u.email}</span>
+                                                     </div>
+                                                </SelectItem>
+                                             ))}
+                                         </SelectContent>
+                                     </Select>
+                                      {loadingUserList && <p className="text-xs text-muted-foreground flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin"/> Fetching user list...</p>}
+                                </div>
+                             )}
+
+                            {/* Message Input */}
                              <div className="space-y-2">
-                                 <Label htmlFor="notification-message">Announcement Message</Label>
+                                 <Label htmlFor="notification-message">Message Content</Label>
                                  <Textarea
                                      id="notification-message"
-                                     placeholder="Enter your announcement here..."
+                                     placeholder={notificationType === 'global' ? "Enter your global announcement..." : "Enter your message for the user..."}
                                      value={notificationMessage}
                                      onChange={(e) => setNotificationMessage(e.target.value)}
                                      required
-                                     minLength={10}
+                                     minLength={5}
                                      maxLength={500} // Example limits
                                      disabled={isSendingNotification}
                                      className="min-h-[100px]"
@@ -569,12 +694,13 @@ export default function AdminPage() {
                                      {notificationMessage.length} / 500
                                   </p>
                              </div>
-                             <Button type="submit" disabled={!notificationMessage.trim() || isSendingNotification}>
+
+                             {/* Submit Button */}
+                             <Button type="submit" disabled={!notificationMessage.trim() || isSendingNotification || (notificationType === 'targeted' && !targetUserId)}>
                                  {isSendingNotification ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Send className="mr-2 h-4 w-4"/>}
-                                 Send Announcement
+                                 Send Notification
                              </Button>
                         </form>
-                       <p className="text-muted-foreground italic text-center mt-6 text-sm">Targeted notifications (to specific users) coming soon...</p>
                   </CardContent>
               </Card>
            </TabsContent>
@@ -687,3 +813,4 @@ export default function AdminPage() {
   );
 }
     
+
