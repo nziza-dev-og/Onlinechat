@@ -4,11 +4,11 @@
 import * as React from 'react';
 import { useAuth } from '@/hooks/use-auth';
 import { getPasswordChangeRequests, reviewPasswordChangeRequest } from '@/lib/user-profile.service';
-import type { UserProfile, AdminMessage, User } from '@/types'; // Added User import
+import type { UserProfile, AdminMessage, User, PostSerializable } from '@/types'; // Added User, PostSerializable imports
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Loader2, ShieldAlert, CheckCircle, XCircle, UserCheck, UserX, BarChart2, Bell, Settings, ShieldCheck, Send, Ban, MessageSquare, Users as UsersIcon, User as UserIcon } from 'lucide-react'; // Renamed Users icon import
+import { Loader2, ShieldAlert, CheckCircle, XCircle, UserCheck, UserX, BarChart2, Bell, Settings, ShieldCheck, Send, Ban, MessageSquare, Users as UsersIcon, User as UserIcon, Clapperboard, Trash2, Film } from 'lucide-react'; // Renamed Users icon import, Added Clapperboard, Trash2, Film
 import { useToast } from '@/hooks/use-toast';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -30,6 +30,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"; // Import Select for user targeting
+import { fetchPosts, deletePost } from '@/lib/posts.service'; // Import fetchPosts, deletePost
+import { PostCard } from '@/components/posts/post-card'; // Import PostCard for displaying stories? Or create a dedicated StoryCard
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"; // Import AlertDialog
 
 // Helper to get initials
 const getInitials = (name: string | null | undefined): string => {
@@ -70,6 +83,71 @@ const formatTimestamp = (timestamp: any): string => {
     }
 };
 
+// Story Preview Component (Simple version)
+const StoryPreview = ({ story, onDelete }: { story: PostSerializable; onDelete: (storyId: string) => void }) => {
+    const [isDeleting, setIsDeleting] = React.useState(false);
+    const { toast } = useToast();
+
+     const handleDelete = async () => {
+        setIsDeleting(true);
+        try {
+            // Assuming admins have universal delete rights, pass a dummy user ID or handle appropriately in deletePost
+            // Here we use the story's author UID to check ownership, but admin rights should bypass this in a real app
+            // For now, we pass the author UID. **A proper admin authorization check should be in deletePost.**
+            await deletePost(story.id, story.uid); // Pass story author UID for now
+            toast({ title: "Story Deleted", description: "The story has been removed." });
+            onDelete(story.id); // Notify parent to remove from state
+        } catch (error: any) {
+             toast({ title: "Delete Failed", description: error.message || "Could not delete story.", variant: "destructive" });
+             setIsDeleting(false); // Reset on error
+        }
+        // Don't reset isDeleting on success, as component will likely unmount
+     };
+
+
+    return (
+        <Card className="flex items-center justify-between p-3 gap-3 bg-card shadow-sm hover:shadow-md transition-shadow duration-200">
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+                <Avatar className="h-9 w-9 border flex-shrink-0">
+                    <AvatarImage src={story.photoURL || undefined} alt={story.displayName || 'User'} data-ai-hint="user avatar" />
+                    <AvatarFallback>{getInitials(story.displayName)}</AvatarFallback>
+                </Avatar>
+                <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">{story.displayName || 'Unknown User'}</p>
+                    <p className="text-xs text-muted-foreground truncate">
+                        {story.imageUrl ? 'Image Story' : (story.videoUrl ? 'Video Story' : 'Text Story?')} - {formatTimestamp(story.timestamp)}
+                    </p>
+                     {story.text && <p className="text-xs text-muted-foreground italic truncate">{story.text}</p>}
+                </div>
+            </div>
+            {/* Delete Button with Confirmation */}
+             <AlertDialog>
+                 <AlertDialogTrigger asChild>
+                    <Button variant="ghost" size="icon" className="text-destructive hover:bg-destructive/10 flex-shrink-0 h-8 w-8" disabled={isDeleting}>
+                        {isDeleting ? <Loader2 className="h-4 w-4 animate-spin"/> : <Trash2 className="h-4 w-4"/>}
+                        <span className="sr-only">Delete Story</span>
+                    </Button>
+                 </AlertDialogTrigger>
+                 <AlertDialogContent>
+                    <AlertDialogHeader>
+                         <AlertDialogTitle>Confirm Deletion</AlertDialogTitle>
+                         <AlertDialogDescription>
+                            Are you sure you want to delete this story permanently? This action cannot be undone.
+                         </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                         <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+                         <AlertDialogAction onClick={handleDelete} disabled={isDeleting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                             {isDeleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : null} Delete Story
+                         </AlertDialogAction>
+                    </AlertDialogFooter>
+                 </AlertDialogContent>
+             </AlertDialog>
+        </Card>
+    );
+};
+
+
 export default function AdminPage() {
   const { user, loading: authLoading } = useAuth();
   const [requests, setRequests] = React.useState<UserProfile[]>([]);
@@ -107,6 +185,10 @@ export default function AdminPage() {
   const [replyText, setReplyText] = React.useState('');
   const [isSendingReply, setIsSendingReply] = React.useState(false);
 
+  // Story Management State
+  const [stories, setStories] = React.useState<PostSerializable[]>([]);
+  const [loadingStories, setLoadingStories] = React.useState(true);
+
   const { toast } = useToast();
   const userListListenerUnsubscribeRef = React.useRef<Unsubscribe | null>(null); // Ref for user list listener
   const adminMessagesListenerUnsubscribeRef = React.useRef<Unsubscribe | null>(null); // Ref for admin messages listener
@@ -125,6 +207,7 @@ export default function AdminPage() {
             setLoadingAnalytics(false);
             setLoadingAdminMessages(false);
             setLoadingUserList(false);
+            setLoadingStories(false); // Set story loading false
         }
     }, []);
 
@@ -138,10 +221,12 @@ export default function AdminPage() {
       setLoadingAnalytics(true);
       setLoadingAdminMessages(true);
       setLoadingUserList(true);
+      setLoadingStories(true); // Set story loading true
       setRequests([]);
       setOnlineUsers(null);
       setAdminMessages([]);
       setUserList([]);
+      setStories([]); // Reset stories
       return;
     }
     if (!user) {
@@ -151,11 +236,13 @@ export default function AdminPage() {
       setLoadingAnalytics(false);
       setLoadingAdminMessages(false);
       setLoadingUserList(false);
+      setLoadingStories(false); // Set story loading false
       setRequests([]);
       setError("Please log in to access the admin page.");
       setOnlineUsers(null);
       setAdminMessages([]);
       setUserList([]);
+       setStories([]); // Reset stories
       return;
     }
 
@@ -177,10 +264,12 @@ export default function AdminPage() {
         setLoadingAnalytics(true);
         setLoadingAdminMessages(true);
         setLoadingUserList(true);
+        setLoadingStories(true); // Set story loading true
         setError(null);
         setOnlineUsers(null);
         setAdminMessages([]);
         setUserList([]);
+        setStories([]); // Reset stories
 
         try {
              const profile = await getDoc(doc(firestoreInstance, 'users', user.uid));
@@ -192,8 +281,8 @@ export default function AdminPage() {
                 // --- Fetch Data Concurrently ---
                 const requestsPromise = getPasswordChangeRequests(user.uid).catch(err => { console.error("Req Fetch Err:", err); throw err; });
                 const analyticsPromise = getOnlineUsersCount().catch(err => { console.error("Analytics Err:", err); throw err; });
-                // Removed direct fetch, will use listener instead
-                // const messagesPromise = getAdminMessages(user.uid).catch(err => { console.error("Admin Msg Err:", err); throw err; });
+                // Fetch stories (posts with type 'story')
+                const storiesPromise = fetchPosts(100).then(posts => posts.filter(p => p.type === 'story')).catch(err => { console.error("Stories Fetch Err:", err); throw err; });
 
                  // --- Setup Admin Messages Listener ---
                  console.log("AdminPage: Setting up admin messages listener.");
@@ -264,9 +353,10 @@ export default function AdminPage() {
 
                 // Await results for non-listener fetches
                  try {
-                     const [fetchedRequests, onlineCount] = await Promise.all([requestsPromise, analyticsPromise]);
-                     setRequests(fetchedRequests);
-                     setOnlineUsers(onlineCount);
+                      const [fetchedRequests, onlineCount, fetchedStories] = await Promise.all([requestsPromise, analyticsPromise, storiesPromise]);
+                      setRequests(fetchedRequests);
+                      setOnlineUsers(onlineCount);
+                      setStories(fetchedStories); // Set stories state
                  } catch (batchError: any) {
                      console.error("Error fetching initial admin data batch:", batchError);
                       // Handle specific errors if needed, or show a general error
@@ -274,9 +364,11 @@ export default function AdminPage() {
                       // Set sensible defaults on error
                      if (!requests.length) setRequests([]);
                      if (onlineUsers === null) setOnlineUsers(0);
+                     if (!stories.length) setStories([]); // Default for stories
                  } finally {
                     setLoadingRequests(false);
                     setLoadingAnalytics(false);
+                    setLoadingStories(false); // Set story loading false
                     // Message and User list loading are handled by their listeners
                  }
 
@@ -292,10 +384,12 @@ export default function AdminPage() {
                 setOnlineUsers(null);
                 setAdminMessages([]);
                 setUserList([]);
+                setStories([]); // Reset stories
                 setLoadingRequests(false);
                 setLoadingAnalytics(false);
                 setLoadingAdminMessages(false);
                 setLoadingUserList(false);
+                setLoadingStories(false); // Set story loading false
              }
         } catch (err: any) {
             console.error("Error checking admin status or fetching data:", err);
@@ -305,14 +399,17 @@ export default function AdminPage() {
             setOnlineUsers(null);
             setAdminMessages([]);
             setUserList([]);
+            setStories([]); // Reset stories
             setLoadingRequests(false);
             setLoadingAnalytics(false);
             setLoadingAdminMessages(false);
             setLoadingUserList(false);
+            setLoadingStories(false); // Set story loading false
         } finally {
              // Ensure these are false, though listeners might set them earlier
              setLoadingUserList(false);
              setLoadingAdminMessages(false);
+             setLoadingStories(false); // Ensure story loading is false
         }
     };
 
@@ -458,6 +555,11 @@ export default function AdminPage() {
        }
    };
 
+   // Handle story deletion from the list
+   const handleStoryDeleted = (deletedStoryId: string) => {
+        setStories(prevStories => prevStories.filter(story => story.id !== deletedStoryId));
+   };
+
 
   // --- Render Logic ---
 
@@ -498,10 +600,11 @@ export default function AdminPage() {
 
         <Tabs defaultValue="requests" className="w-full">
            {/* Adjusted grid columns for responsiveness */}
-          <TabsList className="grid w-full grid-cols-3 sm:grid-cols-6 gap-1 mb-4 sm:mb-6">
+          <TabsList className="grid w-full grid-cols-3 sm:grid-cols-7 gap-1 mb-4 sm:mb-6"> {/* Added one more column for Stories */}
             <TabsTrigger value="requests"><ShieldCheck className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Requests</TabsTrigger>
             <TabsTrigger value="analytics"><BarChart2 className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Analytics</TabsTrigger>
             <TabsTrigger value="messages"><MessageSquare className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Messages</TabsTrigger>
+            <TabsTrigger value="stories"><Film className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Stories</TabsTrigger> {/* Added Stories Trigger */}
             <TabsTrigger value="notifications"><Bell className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Notifications</TabsTrigger>
             <TabsTrigger value="settings"><Settings className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Settings</TabsTrigger>
             <TabsTrigger value="security"><ShieldAlert className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Security</TabsTrigger>
@@ -699,6 +802,44 @@ export default function AdminPage() {
                     </CardContent>
               </Card>
            </TabsContent>
+
+           {/* Stories Tab - New */}
+           <TabsContent value="stories">
+               <Card className="shadow-lg mt-4 w-full">
+                   <CardHeader>
+                       <CardTitle>Manage Stories</CardTitle>
+                       <CardDescription>View and delete active user stories.</CardDescription>
+                   </CardHeader>
+                   <CardContent className="space-y-4">
+                         {loadingStories && (
+                             <div className="space-y-3">
+                                 {[...Array(4)].map((_, i) => (
+                                     <div key={i} className="flex items-center justify-between p-3 border rounded-md bg-background">
+                                         <div className="flex items-center gap-3 flex-1 min-w-0">
+                                            <Skeleton className="h-9 w-9 rounded-full flex-shrink-0" />
+                                            <div className="space-y-1.5 min-w-0">
+                                                <Skeleton className="h-4 w-24" />
+                                                <Skeleton className="h-3 w-40" />
+                                            </div>
+                                         </div>
+                                         <Skeleton className="h-8 w-8" />
+                                     </div>
+                                 ))}
+                             </div>
+                         )}
+                         {!loadingStories && stories.length === 0 && (
+                            <div className="text-center text-muted-foreground p-6 border border-dashed rounded-md">
+                                <Film className="h-10 w-10 mx-auto mb-3" />
+                                <p>No active stories found.</p>
+                             </div>
+                         )}
+                         {!loadingStories && stories.map((story) => (
+                            <StoryPreview key={story.id} story={story} onDelete={handleStoryDeleted} />
+                         ))}
+                   </CardContent>
+               </Card>
+           </TabsContent>
+
 
            {/* Notifications Tab */}
            <TabsContent value="notifications">
@@ -902,4 +1043,5 @@ export default function AdminPage() {
     </div>
   );
 }
+
 

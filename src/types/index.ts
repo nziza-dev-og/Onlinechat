@@ -70,7 +70,7 @@ export interface PostSerializable {
     text?: string | null;
     imageUrl?: string | null;
     videoUrl?: string | null;
-    type?: 'post' | 'story'; // Added type field
+    type?: 'post' | 'story'; // Make sure this is included
     timestamp: string; // Use ISO string for serialization
     likeCount?: number;
     likedBy?: string[];
@@ -161,3 +161,4 @@ export interface SignalingCandidate {
 
 export type SignalingMessage = SignalingOffer | SignalingAnswer | SignalingCandidate;
 // --- End WebRTC Signaling Types ---
+
