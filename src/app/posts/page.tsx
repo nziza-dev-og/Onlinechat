@@ -10,7 +10,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Loader2, MessageSquarePlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'; // Added CardContent here
 import { Separator } from '@/components/ui/separator';
 
 export default function PostsPage() {
@@ -145,3 +145,4 @@ export default function PostsPage() {
     </div>
   );
 }
+
