@@ -1,4 +1,3 @@
-
 "use client";
 
 import * as React from 'react';
@@ -17,7 +16,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import * as z from 'zod';
 import { updateProfile as updateAuthProfile, updatePassword as updateAuthPassword } from 'firebase/auth'; // Rename to avoid conflict
-import { updateUserProfileDocument, requestPasswordChange, checkPasswordChangeApproval, resetPasswordChangeApproval } from '@/lib/user-profile.service'; // Import relevant services
+import { updateUserProfileDocument, requestPasswordChange, resetPasswordChangeApproval, checkPasswordChangeApproval } from '@/lib/user-profile.service'; // Import relevant services
 import { Edit, Save, User, Mail, CalendarDays, Loader2, Image as ImageIcon, KeyRound, Send, Lock } from 'lucide-react'; // Added KeyRound, Send, Lock
 import { format } from 'date-fns'; // For formatting dates
 import {
@@ -532,7 +531,7 @@ export default function ProfilePage() {
                        type="button"
                        variant="outline"
                        onClick={handleRequestPasswordChange}
-                       disabled={isRequestingPasswordChange}
+                       disabled={isRequestingPasswordChange || isEditing}
                    >
                        {isRequestingPasswordChange ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
                        Request Password Change
