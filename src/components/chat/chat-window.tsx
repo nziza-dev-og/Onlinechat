@@ -11,7 +11,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
-import { LogOut, Users, MessageSquare, Search } from 'lucide-react'; // Import Users and MessageSquare icons
+import { LogOut, Users, MessageSquare, Search, CircleDot } from 'lucide-react'; // Added CircleDot
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Input } from '@/components/ui/input'; // Import Input for search
 import { Separator } from '@/components/ui/separator'; // Import Separator
@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils'; // Import cn for conditional classes
 import { useToast } from "@/hooks/use-toast"; // Import useToast
 import { updateUserProfileDocument, createOrUpdateUserProfile } from '@/lib/user-profile.service'; // Import the services
 import { isFirebaseError } from '@/lib/firebase-errors'; // Import the error checking utility
+import { formatDistanceToNowStrict } from 'date-fns'; // Use strict format for online status
 
 
 // Helper function to create a unique chat ID between two users
@@ -36,6 +37,25 @@ const getInitials = (name: string | null | undefined): string => {
       return nameParts[0][0].toUpperCase();
     }
     return '?'; // Fallback if name is just whitespace or unusual format
+};
+
+// Helper to determine online status based on lastSeen timestamp
+const isOnline = (lastSeen: Timestamp | Date | undefined): boolean => {
+    if (!lastSeen) return false;
+    const lastSeenDate = lastSeen instanceof Timestamp ? lastSeen.toDate() : lastSeen;
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000); // 5 minutes tolerance
+    return lastSeenDate > fiveMinutesAgo;
+};
+
+// Helper to format last seen time or 'Online'
+const formatLastSeen = (lastSeen: Timestamp | Date | undefined): string => {
+    if (isOnline(lastSeen)) {
+        return 'Online';
+    }
+    if (!lastSeen) return ''; // No data
+    const lastSeenDate = lastSeen instanceof Timestamp ? lastSeen.toDate() : lastSeen;
+    // Use strict formatting for brevity, e.g., "5m", "2h", "3d"
+    return formatDistanceToNowStrict(lastSeenDate, { addSuffix: true });
 };
 
 
@@ -84,11 +104,11 @@ export function ChatWindow() {
 
         try {
           // console.log(`Updating presence for ${user.uid} (${reason})...`);
-          await updateUserProfileDocument(user.uid, { lastSeen: 'SERVER_TIMESTAMP' });
+          await updateUserProfileDocument(user.uid, { lastSeen: serverTimestamp() }); // Use actual serverTimestamp()
           // console.log(`Presence updated for ${user.uid} (${reason}).`);
         } catch (error: any) {
            // Log the detailed error from the service function
-           console.error(`Error updating user presence for ${user.uid} (${reason}):`, error.message, error);
+           console.error(`🔴 Error updating user presence for ${user.uid} (${reason}):`, error.message, error);
            // Optional: Show a less technical toast to the user
            toast({
                title: "Presence Error",
@@ -187,24 +207,45 @@ export function ChatWindow() {
             displayName: data.displayName ?? null,
             email: data.email ?? null,
             photoURL: data.photoURL ?? null,
+            status: data.status ?? null, // Add status field
             lastSeen: data.lastSeen instanceof Timestamp ? data.lastSeen : undefined, // Ensure it's a Timestamp or undefined
             createdAt: data.createdAt instanceof Timestamp ? data.createdAt : undefined,
           };
         })
         .filter((u): u is UserProfile => u !== null && u.uid !== user.uid); // Filter out nulls AND the current user
 
-      // Sort users alphabetically by displayName (case-insensitive, fallback to email)
+      // Sort users: Online first, then alphabetically by displayName (case-insensitive, fallback to email)
       fetchedUsers.sort((a, b) => {
-        const nameA = (a.displayName || a.email || '').toLowerCase();
-        const nameB = (b.displayName || b.email || '').toLowerCase();
-        if (nameA < nameB) return -1;
-        if (nameA > nameB) return 1;
-        return 0;
+          const onlineA = isOnline(a.lastSeen);
+          const onlineB = isOnline(b.lastSeen);
+          if (onlineA && !onlineB) return -1; // Online users first
+          if (!onlineA && onlineB) return 1;
+
+          const nameA = (a.displayName || a.email || '').toLowerCase();
+          const nameB = (b.displayName || b.email || '').toLowerCase();
+          if (nameA < nameB) return -1;
+          if (nameA > nameB) return 1;
+          return 0;
       });
 
       // console.log(`Mapped, filtered, and sorted ${fetchedUsers.length} other users. UIDs:`, fetchedUsers.map(u => u.uid));
       setUsers(fetchedUsers);
       setLoadingUsers(false);
+
+      // Update selectedChatPartner with fresh data if it exists in the new snapshot
+      if (selectedChatPartner) {
+          const updatedPartner = fetchedUsers.find(u => u.uid === selectedChatPartner.uid);
+          if (updatedPartner) {
+             setSelectedChatPartner(updatedPartner);
+          } else {
+              // Handle case where the selected partner is no longer in the list (e.g., deleted)
+              console.warn(`Selected chat partner ${selectedChatPartner.uid} not found in latest snapshot.`);
+              setSelectedChatPartner(null);
+              setChatId(null);
+          }
+      }
+
+
     }, (error: FirestoreError) => { // Use FirestoreError type
       console.error("🔴 Error fetching users from Firestore:", error.code, error.message, error);
       setLoadingUsers(false);
@@ -290,19 +331,24 @@ export function ChatWindow() {
                 // Show notification if:
                 // 1. The message is NOT from the current user.
                 // 2. The document/tab is currently hidden.
-                if (message.uid !== user?.uid && typeof document !== 'undefined' && document.hidden) {
+                 // 3. A chat partner IS selected (don't show for random messages if no chat is active)
+                 const isDifferentUser = message.uid !== user?.uid;
+                 const isTabHidden = typeof document !== 'undefined' && document.hidden;
+                 const isChatSelected = !!selectedChatPartner; // True if a partner is selected
+
+                if (isDifferentUser && isTabHidden && isChatSelected) {
                      console.log(`New message from ${message.displayName || 'User'} while tab hidden. Showing toast.`);
                      toast({
                          title: `New message from ${message.displayName || 'User'}`,
                          description: message.text.substring(0, 50) + (message.text.length > 50 ? '...' : ''),
                          duration: 5000, // Show for 5 seconds
-                         // Optional: Add an action? Requires more complex logic.
-                         // action: <ToastAction altText="Show chat">Show</ToastAction>,
                      });
                      // Also update the document title to indicate a new message
-                     document.title = `(*) ${document.title.replace(/^\(\*\)\s*/, '')}`; // Add (*) prefix, removing existing one first
+                      if (typeof document !== 'undefined' && !document.title.startsWith('(*)')) {
+                           document.title = `(*) ${document.title}`;
+                      }
                 } else {
-                    // console.log("New message received while tab visible or from self, no toast shown.");
+                    // console.log("New message received while tab visible, from self, or no chat selected. No toast/title update.");
                 }
           }
           // Handle 'modified' or 'removed' if needed
@@ -327,7 +373,10 @@ export function ChatWindow() {
         setTimeout(() => {
             // Scroll only if it's the initial load OR if new messages were actually added
             // AND the document is currently VISIBLE
-            const shouldScroll = (isInitialMessagesLoadForScroll.current || newMessagesAdded) && typeof document !== 'undefined' && !document.hidden;
+             // AND a chat partner IS selected
+            const shouldScroll = (isInitialMessagesLoadForScroll.current || newMessagesAdded)
+                                  && typeof document !== 'undefined' && !document.hidden
+                                  && !!selectedChatPartner;
 
             if (shouldScroll) {
                  // console.log(`Scrolling to bottom. Initial scroll flag: ${isInitialMessagesLoadForScroll.current}, New msgs added: ${newMessagesAdded}, Doc hidden: ${document?.hidden}`);
@@ -379,6 +428,9 @@ export function ChatWindow() {
     if (typeof window !== 'undefined') {
         window.addEventListener('focus', handleFocus);
     }
+
+    // Initial check in case the page loaded while hidden with unread messages
+    handleFocus();
 
     // Cleanup
     return () => {
@@ -489,6 +541,7 @@ export function ChatWindow() {
                                 <Skeleton className="h-8 w-8 rounded-full" />
                                 <div className="space-y-1.5 flex-1">
                                     <Skeleton className="h-4 w-3/4" />
+                                    <Skeleton className="h-3 w-1/2" />
                                 </div>
                             </div>
                         ))}
@@ -507,30 +560,39 @@ export function ChatWindow() {
                  )}
                  {/* User Buttons */}
                  {!loadingUsers && filteredUsers.map((u) => (
-                    <Button
+                     <Button
                         key={u.uid}
                         variant="ghost"
                         className={cn(
                             "w-full justify-start h-auto py-2 px-3 text-left rounded-md",
-                            "gap-3 items-center", // Ensure vertical alignment
+                            "gap-3 items-center relative", // Added relative for status dot positioning
                             selectedChatPartner?.uid === u.uid ? "bg-accent text-accent-foreground hover:bg-accent/90" : "hover:bg-muted/50"
                         )}
                         onClick={() => handleSelectUser(u)}
                         aria-pressed={selectedChatPartner?.uid === u.uid}
                     >
-                        <Avatar className="h-8 w-8 flex-shrink-0"> {/* Prevent shrinking */}
+                        {/* Online Status Dot */}
+                        {isOnline(u.lastSeen) && (
+                            <span className="absolute left-1 top-1.5 block h-2.5 w-2.5 rounded-full bg-green-500 ring-2 ring-background" aria-label="Online"/>
+                        )}
+                        <Avatar className="h-8 w-8 flex-shrink-0 ml-1"> {/* Adjusted margin for dot */}
                             <AvatarImage src={u.photoURL || undefined} alt={u.displayName || 'User Avatar'} data-ai-hint="user chat list avatar"/>
                             <AvatarFallback>{getInitials(u.displayName || u.email)}</AvatarFallback>
                         </Avatar>
                         <div className="flex flex-col flex-1 min-w-0"> {/* Truncation container */}
                             <span className="font-medium truncate text-sm">{u.displayName || u.email || 'Unnamed User'}</span>
-                             {/* Optional: Last seen status */}
-                             {/* Consider showing a more user-friendly relative time */}
-                             {/* {u.lastSeen && (
+                            {/* Display Status if available and user is NOT online */}
+                            {!isOnline(u.lastSeen) && u.status && (
+                                <span className="text-xs text-muted-foreground truncate italic">
+                                    {u.status}
+                                </span>
+                            )}
+                             {/* Display Last Seen if NOT online and NO status */}
+                             {!isOnline(u.lastSeen) && !u.status && u.lastSeen && (
                                  <span className="text-xs text-muted-foreground truncate">
-                                     Last seen: {formatDistanceToNow(u.lastSeen.toDate(), { addSuffix: true })}
+                                     {formatLastSeen(u.lastSeen)}
                                  </span>
-                             )} */}
+                             )}
                         </div>
                     </Button>
                  ))}
@@ -544,13 +606,25 @@ export function ChatWindow() {
                  <>
                  {/* --- Chat Header --- */}
                  <header className="flex items-center gap-3 p-4 border-b shadow-sm bg-card min-h-[65px]">
-                    <Avatar className="h-9 w-9">
-                        <AvatarImage src={selectedChatPartner.photoURL || undefined} alt={selectedChatPartner.displayName || 'Chat partner avatar'} data-ai-hint="chat partner avatar"/>
-                        <AvatarFallback>{getInitials(selectedChatPartner.displayName || selectedChatPartner.email)}</AvatarFallback>
-                    </Avatar>
+                    <div className="relative">
+                        <Avatar className="h-9 w-9">
+                            <AvatarImage src={selectedChatPartner.photoURL || undefined} alt={selectedChatPartner.displayName || 'Chat partner avatar'} data-ai-hint="chat partner avatar"/>
+                            <AvatarFallback>{getInitials(selectedChatPartner.displayName || selectedChatPartner.email)}</AvatarFallback>
+                        </Avatar>
+                         {/* Online Status Dot in Header */}
+                        {isOnline(selectedChatPartner.lastSeen) && (
+                            <span className="absolute bottom-0 right-0 block h-2.5 w-2.5 rounded-full bg-green-500 ring-2 ring-card border border-background" aria-label="Online"/>
+                        )}
+                    </div>
                     <div className="flex flex-col">
                         <span className="font-semibold text-card-foreground">{selectedChatPartner.displayName || selectedChatPartner.email}</span>
-                        {/* Optional: Display online status indicator */}
+                         {/* Display Status or Last Seen in Header */}
+                        <span className="text-xs text-muted-foreground">
+                           {isOnline(selectedChatPartner.lastSeen)
+                               ? (selectedChatPartner.status || 'Online') // Show status if online, else 'Online'
+                               : (selectedChatPartner.status || formatLastSeen(selectedChatPartner.lastSeen)) // Show status if offline, else last seen
+                           }
+                        </span>
                     </div>
                  </header>
 
@@ -608,3 +682,4 @@ export function ChatWindow() {
     </div>
   );
 }
+

@@ -21,7 +21,9 @@ export interface UserProfile {
     displayName: string | null;
     email: string | null;
     photoURL: string | null;
+    status?: string | null; // Added optional status field
     // Allow Date for input, Firestore converts to Timestamp. Reading will likely be Timestamp.
     lastSeen?: Timestamp | Date;
     createdAt?: Timestamp | Date;
 }
+

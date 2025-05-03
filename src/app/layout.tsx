@@ -6,7 +6,7 @@ import './globals.css';
 import { AuthProvider } from '@/contexts/auth-context';
 import { Toaster } from "@/components/ui/toaster"; // Import Toaster
 import { Button } from '@/components/ui/button'; // Import Button
-import { User } from 'lucide-react'; // Import User icon
+import { User, MessageSquareText } from 'lucide-react'; // Import User and MessageSquareText icons
 
 
 const inter = Inter({ subsets: ['latin'] });
@@ -33,13 +33,18 @@ export default function RootLayout({
                  <span className="font-bold inline-block">Chat App</span>
                </Link>
                <nav className="flex items-center gap-4">
-                 {/* Profile Link/Button - Consider showing only when logged in via useAuth hook usage here or in a dedicated Header component */}
+                  {/* Status Link/Button */}
+                  <Button variant="ghost" size="icon" asChild>
+                     <Link href="/status" aria-label="Update Status">
+                         <MessageSquareText className="h-5 w-5" />
+                     </Link>
+                  </Button>
+                 {/* Profile Link/Button */}
                  <Button variant="ghost" size="icon" asChild>
                     <Link href="/profile" aria-label="View Profile">
                         <User className="h-5 w-5" />
                     </Link>
                  </Button>
-                 {/* Add other nav links if needed */}
                </nav>
              </div>
            </header>
@@ -56,3 +61,4 @@ export default function RootLayout({
     </html>
   );
 }
+
