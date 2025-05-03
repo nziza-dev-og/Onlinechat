@@ -4,14 +4,16 @@ import { useAuth } from '@/hooks/use-auth';
 import { cn } from '@/lib/utils';
 import { format, formatDistanceToNow } from 'date-fns';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"; // Import Tooltip components
-import Image from 'next/image'; // Import next/image
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import Image from 'next/image';
+import { Reply } from 'lucide-react'; // Import Reply icon
+import { Button } from '@/components/ui/button'; // Import Button for reply action
 
 interface ChatMessageProps {
   message: Message;
+  onReply: (message: Message) => void; // Callback function to initiate reply
 }
 
-// Consistent Helper function to get initials from display name
 const getInitials = (name: string | null | undefined): string => {
     if (!name) return '?';
     const nameParts = name.trim().split(' ').filter(part => part.length > 0);
@@ -20,32 +22,29 @@ const getInitials = (name: string | null | undefined): string => {
     } else if (nameParts.length === 1 && nameParts[0].length > 0) {
       return nameParts[0][0].toUpperCase();
     }
-    return '?'; // Fallback
+    return '?';
 };
 
-export function ChatMessage({ message }: ChatMessageProps) {
+export function ChatMessage({ message, onReply }: ChatMessageProps) {
   const { user } = useAuth();
   const isSender = user?.uid === message.uid;
 
-  // Function to safely format timestamp into a readable string (e.g., "1:30 PM" or "Invalid Date")
   const formatShortTimestamp = (timestamp: any): string => {
     if (timestamp && typeof timestamp.toDate === 'function') {
       try {
-        return format(timestamp.toDate(), 'p'); // 'p' for short time format like 1:30 PM
+        return format(timestamp.toDate(), 'p');
       } catch (error) {
         console.error("Error formatting short timestamp:", error, timestamp);
-        return 'Invalid date'; // Fallback for invalid date objects
+        return 'Invalid date';
       }
     }
-    return ''; // Return empty string if timestamp is null, undefined, or invalid
+    return '';
   };
 
-   // Function to safely format timestamp into a full date/time string for tooltip
    const formatFullTimestamp = (timestamp: any): string => {
     if (timestamp && typeof timestamp.toDate === 'function') {
       try {
         const date = timestamp.toDate();
-        // Example format: "Jun 15, 2024, 1:30 PM"
         return format(date, 'PPpp');
       } catch (error) {
         console.error("Error formatting full timestamp:", error, timestamp);
@@ -55,35 +54,48 @@ export function ChatMessage({ message }: ChatMessageProps) {
     return '';
   };
 
+  const handleReplyClick = (e: React.MouseEvent) => {
+      e.stopPropagation(); // Prevent triggering other click events if needed
+      onReply(message);
+  };
 
   return (
     <div className={cn(
-        "flex items-end gap-2 my-2 w-full", // Ensure full width context for alignment
+        "group flex items-end gap-2 my-2 w-full relative", // Added group and relative for reply button positioning
         isSender ? "justify-end" : "justify-start"
     )}>
-      {/* Receiver's Avatar (Show on left) */}
       {!isSender && (
-        <Avatar className="h-8 w-8 flex-shrink-0 self-start mt-1"> {/* Align top */}
+        <Avatar className="h-8 w-8 flex-shrink-0 self-start mt-1">
           <AvatarImage src={message.photoURL || undefined} alt={message.displayName || 'User Avatar'} data-ai-hint="receiver user profile avatar"/>
           <AvatarFallback>{getInitials(message.displayName)}</AvatarFallback>
         </Avatar>
       )}
 
-      {/* Message Bubble */}
       <div
         className={cn(
-          "max-w-[70%] rounded-xl px-3.5 py-2.5 shadow-sm", // Base bubble style
+          "max-w-[70%] rounded-xl px-3.5 py-2.5 shadow-sm",
           isSender
-            ? "bg-accent text-accent-foreground rounded-br-sm" // Sharper corner for sender
-            : "bg-card text-card-foreground rounded-bl-sm" // Sharper corner for receiver
+            ? "bg-accent text-accent-foreground rounded-br-sm"
+            : "bg-card text-card-foreground rounded-bl-sm"
         )}
       >
-         {/* Receiver's Display Name (Optional) */}
         {!isSender && message.displayName && (
            <p className="text-xs font-medium text-muted-foreground mb-1">{message.displayName}</p>
         )}
 
-        {/* Image Display */}
+         {/* Display Reply Context */}
+         {message.replyToMessageId && (
+            <div className="mb-2 p-2 border-l-2 border-primary/50 bg-primary/10 rounded-r-md text-xs">
+                 <p className="font-medium text-primary-foreground/80 truncate">
+                    Replying to {message.replyToMessageAuthor || 'Unknown'}
+                 </p>
+                 <p className="text-muted-foreground truncate italic">
+                    {message.replyToMessageText || 'Original message'}
+                 </p>
+            </div>
+         )}
+
+
         {message.imageUrl && (
           <div className="relative aspect-square w-48 max-w-full my-2 rounded-md overflow-hidden border">
             <Image
@@ -93,22 +105,20 @@ export function ChatMessage({ message }: ChatMessageProps) {
               style={{ objectFit: 'cover' }}
               className="bg-muted"
               data-ai-hint="chat message image"
-              sizes="(max-width: 768px) 70vw, 30vw" // Adjust sizes as needed
+              sizes="(max-width: 768px) 70vw, 30vw"
             />
           </div>
         )}
 
-        {/* Message Text */}
         {message.text && (
             <p className="text-sm break-words whitespace-pre-wrap">{message.text}</p>
         )}
 
-         {/* Timestamp with Tooltip */}
          <TooltipProvider delayDuration={300}>
             <Tooltip>
                 <TooltipTrigger asChild>
                    <p className={cn(
-                      "text-xs mt-1.5 opacity-60 cursor-default", // Slightly more subtle, indicate interactivity
+                      "text-xs mt-1.5 opacity-60 cursor-default",
                       isSender ? "text-right" : "text-left"
                     )}>
                       {formatShortTimestamp(message.timestamp)}
@@ -121,13 +131,27 @@ export function ChatMessage({ message }: ChatMessageProps) {
          </TooltipProvider>
       </div>
 
-       {/* Sender's Avatar (Show on right) */}
        {isSender && (
-        <Avatar className="h-8 w-8 flex-shrink-0 self-start mt-1"> {/* Align top */}
+        <Avatar className="h-8 w-8 flex-shrink-0 self-start mt-1">
            <AvatarImage src={message.photoURL || undefined} alt={message.displayName || 'My Avatar'} data-ai-hint="sender user profile avatar"/>
            <AvatarFallback>{getInitials(message.displayName)}</AvatarFallback>
         </Avatar>
       )}
+
+       {/* Reply Button - Show on hover */}
+       <Button
+           variant="ghost"
+           size="icon"
+           className={cn(
+               "absolute -top-2 h-6 w-6 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity duration-150",
+               isSender ? "-left-1" : "-right-1" // Position based on sender/receiver
+           )}
+           onClick={handleReplyClick}
+           aria-label="Reply to message"
+       >
+           <Reply className="h-4 w-4" />
+       </Button>
+
     </div>
   );
 }

@@ -14,6 +14,10 @@ export interface Message {
   displayName: string | null;
   photoURL: string | null;
   imageUrl?: string | null; // Optional image URL for chat messages
+  // Fields for reply functionality
+  replyToMessageId?: string | null;
+  replyToMessageText?: string | null;
+  replyToMessageAuthor?: string | null;
 }
 
 // UserProfile type remains unchanged
@@ -91,3 +95,4 @@ export interface CommentSerializable {
   text: string;
   timestamp: string; // ISO string
 }
+

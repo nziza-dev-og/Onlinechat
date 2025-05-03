@@ -1,21 +1,26 @@
 
+
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { db } from '@/lib/firebase'; // Keep auth import if needed elsewhere, but user comes from useAuth
-import { collection, addDoc, serverTimestamp, doc, updateDoc } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Send, Image as ImageIcon } from 'lucide-react';
+import { Send, Image as ImageIcon, X } from 'lucide-react'; // Import X for closing reply
 import { useAuth } from '@/hooks/use-auth';
-import { updateTypingStatus } from '@/lib/chat.service'; // Import the server action
+import { updateTypingStatus } from '@/lib/chat.service';
 import { useToast } from "@/hooks/use-toast";
+import type { Message } from '@/types'; // Import Message type
+import { cn } from '@/lib/utils';
 
 interface ChatInputProps {
-  chatId: string | null; // ID of the chat document
+  chatId: string | null;
+  replyingTo: Message | null; // Message being replied to
+  onClearReply: () => void; // Function to clear reply state
 }
 
-export function ChatInput({ chatId }: ChatInputProps) {
+export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) {
   const [message, setMessage] = useState('');
   const [imageUrl, setImageUrl] = useState('');
   const [showImageUrlInput, setShowImageUrlInput] = useState(false);
@@ -23,28 +28,30 @@ export function ChatInput({ chatId }: ChatInputProps) {
   const [isSending, setIsSending] = useState(false);
   const { toast } = useToast();
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null); // Ref for the message input
 
-  // --- Typing Indicator Logic ---
+  // Focus input when reply context appears
+  useEffect(() => {
+    if (replyingTo) {
+      inputRef.current?.focus();
+    }
+  }, [replyingTo]);
+
   const sendTypingUpdate = useCallback(async (isTyping: boolean) => {
     if (!chatId || !user?.uid) return;
     try {
-        // console.log(`Calling updateTypingStatus: chatId=${chatId}, userId=${user.uid}, isTyping=${isTyping}`);
         await updateTypingStatus(chatId, user.uid, isTyping);
-        // console.log(`Successfully updated typing status to ${isTyping}`);
     } catch (error) {
         console.error("Error sending typing update:", error);
-        // Optionally show a toast for typing status errors? Likely too noisy.
     }
    }, [chatId, user?.uid]);
 
 
   useEffect(() => {
-     // Cleanup function to clear timeout and set typing to false when component unmounts or chatId/user changes
      return () => {
        if (typingTimeoutRef.current) {
          clearTimeout(typingTimeoutRef.current);
        }
-       // Ensure typing status is false on unmount/dependency change
        if (chatId && user?.uid) {
            sendTypingUpdate(false);
        }
@@ -58,21 +65,18 @@ export function ChatInput({ chatId }: ChatInputProps) {
 
     if (!chatId || !user?.uid) return;
 
-    // If user starts typing (and wasn't already marked as typing)
     if (newMessage.trim() && !typingTimeoutRef.current) {
        sendTypingUpdate(true);
     }
 
-    // Clear existing timeout
     if (typingTimeoutRef.current) {
        clearTimeout(typingTimeoutRef.current);
     }
 
-    // Set a new timeout to mark user as not typing after 3 seconds of inactivity
     typingTimeoutRef.current = setTimeout(() => {
        sendTypingUpdate(false);
-       typingTimeoutRef.current = null; // Reset ref after timeout executes
-    }, 3000); // 3 seconds
+       typingTimeoutRef.current = null;
+    }, 3000);
   };
 
 
@@ -84,11 +88,9 @@ export function ChatInput({ chatId }: ChatInputProps) {
     if (!user || !chatId || (!trimmedMessage && !trimmedImageUrl) || isSending) return;
 
     setIsSending(true);
-    // Clear typing timeout immediately on send
     if (typingTimeoutRef.current) {
        clearTimeout(typingTimeoutRef.current);
        typingTimeoutRef.current = null;
-       // Send final 'not typing' status
        sendTypingUpdate(false);
     }
 
@@ -97,17 +99,24 @@ export function ChatInput({ chatId }: ChatInputProps) {
     try {
       const messagesRef = collection(db, 'chats', chatId, 'messages');
 
-      await addDoc(messagesRef, {
-        text: trimmedMessage || '', // Send empty string if no text but image exists
-        imageUrl: trimmedImageUrl || null, // Send null if no image URL
+      const messageData: Omit<Message, 'id' | 'timestamp'> & { timestamp: any } = {
+        text: trimmedMessage || '',
+        imageUrl: trimmedImageUrl || null,
         timestamp: serverTimestamp(),
         uid,
         displayName,
         photoURL,
-      });
+        // Include reply information if replyingTo is set
+        replyToMessageId: replyingTo?.id ?? null,
+        replyToMessageText: replyingTo?.text ?? null,
+        replyToMessageAuthor: replyingTo?.displayName ?? null,
+      };
+
+      await addDoc(messagesRef, messageData);
       setMessage('');
       setImageUrl('');
-      setShowImageUrlInput(false); // Hide image input after sending
+      setShowImageUrlInput(false);
+      onClearReply(); // Clear reply context after sending
     } catch (error) {
         console.error("Error sending message:", error);
         toast({
@@ -123,14 +132,36 @@ export function ChatInput({ chatId }: ChatInputProps) {
   const toggleImageUrlInput = () => {
     setShowImageUrlInput(!showImageUrlInput);
     if (showImageUrlInput) {
-      setImageUrl(''); // Clear URL if hiding the input
+      setImageUrl('');
     }
   };
 
   return (
     <div className="p-4 border-t bg-background space-y-2">
+        {/* Reply Context Display */}
+        {replyingTo && (
+            <div className="flex items-center justify-between p-2 mb-2 text-sm bg-muted/50 rounded-md border-l-4 border-primary">
+                <div className="flex-1 overflow-hidden mr-2">
+                    <p className="font-medium text-primary truncate">
+                        Replying to {replyingTo.displayName || 'Unknown'}
+                    </p>
+                    <p className="text-muted-foreground truncate italic">
+                        {replyingTo.text || (replyingTo.imageUrl ? 'Image' : 'Original message')}
+                    </p>
+                </div>
+                <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={onClearReply}
+                    className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                    aria-label="Cancel reply"
+                >
+                    <X className="h-4 w-4" />
+                </Button>
+            </div>
+        )}
+
       <form onSubmit={sendMessage} className="flex items-center gap-2">
-        {/* Image Toggle Button */}
         <Button
           type="button"
           variant="ghost"
@@ -138,46 +169,44 @@ export function ChatInput({ chatId }: ChatInputProps) {
           onClick={toggleImageUrlInput}
           disabled={!user || !chatId || isSending}
           aria-label="Toggle image URL input"
-          className={showImageUrlInput ? 'bg-accent text-accent-foreground' : ''}
+          className={cn(showImageUrlInput ? 'bg-accent text-accent-foreground' : '', "flex-shrink-0")} // Added flex-shrink-0
         >
           <ImageIcon className="h-5 w-5" />
         </Button>
 
-        {/* Message Input */}
         <Input
+          ref={inputRef} // Add ref to input
           type="text"
           value={message}
           onChange={handleInputChange}
-          placeholder={chatId ? "Type a message..." : "Select a chat to start"}
+          placeholder={chatId ? (replyingTo ? "Write your reply..." : "Type a message...") : "Select a chat to start"}
           className="flex-1"
           disabled={!user || !chatId || isSending}
           aria-label="Chat message input"
         />
 
-        {/* Send Button */}
         <Button
            type="submit"
            size="icon"
            disabled={!user || !chatId || (!message.trim() && !imageUrl.trim()) || isSending}
            aria-label="Send message"
+           className="flex-shrink-0" // Added flex-shrink-0
         >
           <Send className="h-5 w-5" />
         </Button>
       </form>
 
-      {/* Image URL Input (Conditional) */}
       {showImageUrlInput && (
-        <div className="flex items-center gap-2 pl-12 pr-12"> {/* Align with text input */}
+        <div className="flex items-center gap-2 pl-12 pr-12"> {/* Adjust padding to align roughly */}
           <Input
             type="url"
             value={imageUrl}
             onChange={(e) => setImageUrl(e.target.value)}
             placeholder="Enter image URL..."
-            className="flex-1 h-9 text-sm" // Smaller height
+            className="flex-1 h-9 text-sm"
             disabled={!user || !chatId || isSending}
             aria-label="Image URL input"
           />
-          {/* Optionally add a small clear button for the URL */}
         </div>
       )}
     </div>
