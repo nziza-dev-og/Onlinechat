@@ -49,6 +49,7 @@ export default function DashboardPage() {
   const [notifications, setNotifications] = React.useState<NotificationSerializable[]>([]);
   const [loadingNotifications, setLoadingNotifications] = React.useState(true);
   const { toast } = useToast();
+  const notificationListenersUnsubscribeRef = React.useRef<Unsubscribe | null>(null); // Ref to hold combined listener cleanup
 
   // Fetch analytics data on mount
   React.useEffect(() => {
@@ -83,46 +84,65 @@ export default function DashboardPage() {
 
   // Fetch notifications for the current user
   React.useEffect(() => {
-    if (!user || !db) {
-        setLoadingNotifications(!user); // Only loading if user is expected
+     // Cleanup previous listener if it exists
+     if (notificationListenersUnsubscribeRef.current) {
+         console.log("Dashboard: Cleaning up previous notification listeners.");
+         notificationListenersUnsubscribeRef.current();
+         notificationListenersUnsubscribeRef.current = null;
+     }
+
+    if (!user || !db) { // Ensure db instance is available
+        console.log("Dashboard: Waiting for user or DB for notifications.");
+        setLoadingNotifications(!user && !db); // Loading if user or db is expected but not ready
         setNotifications([]);
         return;
     }
 
+    console.log("Dashboard: Setting up notification listeners.");
     setLoadingNotifications(true);
-    let unsubscribe: Unsubscribe | null = null;
 
     try {
         const notificationsRef = collection(db, 'notifications');
-        const q = query(
+        // Separate queries for global and targeted
+        const globalQuery = query(
             notificationsRef,
-            // Filter for global messages OR messages targeted to the current user
             where('isGlobal', '==', true),
-            orderBy('timestamp', 'desc'), // Newest first
-            limit(30) // Limit the number of notifications fetched initially
+            orderBy('timestamp', 'desc'),
+            limit(15) // Limit global separately
         );
         const targetedQuery = query(
              notificationsRef,
              where('targetUserId', '==', user.uid),
              orderBy('timestamp', 'desc'),
-             limit(30)
+             limit(15) // Limit targeted separately
         );
 
-        // Combine listeners for global and targeted notifications
-        let combinedNotifications: NotificationSerializable[] = [];
         const notificationMap = new Map<string, NotificationSerializable>(); // Use Map to deduplicate
 
-        const processSnapshot = (snapshot: any, isTargeted: boolean) => {
+        const processSnapshot = (snapshot: any, source: 'global' | 'targeted') => {
+             console.log(`Dashboard: Received ${snapshot.docs.length} docs from ${source} notification listener.`);
              snapshot.docs.forEach((doc: any) => {
                 const data = doc.data();
-                if (data.timestamp instanceof Timestamp) {
+                 // Robust timestamp check
+                 let timestamp: Date | null = null;
+                 if (data.timestamp instanceof Timestamp) {
+                     timestamp = data.timestamp.toDate();
+                 } else if (data.timestamp && typeof data.timestamp.toDate === 'function') {
+                     try { timestamp = data.timestamp.toDate(); } catch { /* ignore invalid */ }
+                 } else if (typeof data.timestamp === 'string') {
+                     try { timestamp = new Date(data.timestamp); } catch { /* ignore invalid */ }
+                 } else if (typeof data.timestamp?.seconds === 'number') { // Handle plain objects
+                     try { timestamp = new Timestamp(data.timestamp.seconds, data.timestamp.nanoseconds).toDate(); } catch { /* ignore invalid */ }
+                 }
+
+                if (timestamp && !isNaN(timestamp.getTime())) {
                     const notification: NotificationSerializable = {
                         id: doc.id,
-                        message: data.message,
-                        timestamp: data.timestamp.toDate().toISOString(),
+                        message: data.message || '',
+                        timestamp: timestamp.toISOString(),
                         isGlobal: data.isGlobal ?? false,
                         targetUserId: data.targetUserId ?? null,
-                        isRead: isTargeted ? (data.isRead ?? false) : undefined, // isRead only relevant for targeted
+                        isRead: source === 'targeted' ? (data.isRead ?? false) : undefined, // isRead only relevant for targeted
                     };
                     notificationMap.set(notification.id, notification);
                 } else {
@@ -130,46 +150,53 @@ export default function DashboardPage() {
                 }
              });
 
-             combinedNotifications = Array.from(notificationMap.values())
+             const combinedNotifications = Array.from(notificationMap.values())
                                        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()); // Sort combined list
 
              setNotifications(combinedNotifications);
-             setLoadingNotifications(false);
+             setLoadingNotifications(false); // Set loading false after processing *any* snapshot
+             console.log(`Dashboard: Updated notifications state with ${combinedNotifications.length} items.`);
         };
 
-        const unsubscribeGlobal = onSnapshot(q, (snapshot) => processSnapshot(snapshot, false), (error) => {
+        // Setup individual listeners
+        const unsubscribeGlobal = onSnapshot(globalQuery, (snapshot) => processSnapshot(snapshot, 'global'), (error) => {
             console.error("Error fetching global notifications:", error);
             toast({ title: "Notification Error", description: "Could not load announcements.", variant: "destructive" });
             setLoadingNotifications(false);
         });
 
-        const unsubscribeTargeted = onSnapshot(targetedQuery, (snapshot) => processSnapshot(snapshot, true), (error) => {
+        const unsubscribeTargeted = onSnapshot(targetedQuery, (snapshot) => processSnapshot(snapshot, 'targeted'), (error) => {
             console.error("Error fetching targeted notifications:", error);
              toast({ title: "Notification Error", description: "Could not load personal notifications.", variant: "destructive" });
             setLoadingNotifications(false);
         });
 
-        // Store unsubscribe functions
-         unsubscribe = () => {
+        // Store combined unsubscribe function in the ref
+        notificationListenersUnsubscribeRef.current = () => {
+            console.log("Dashboard: Running combined notification listener cleanup.");
             unsubscribeGlobal();
             unsubscribeTargeted();
-         };
+        };
 
     } catch (error) {
-        console.error("Error setting up notification listener:", error);
-        toast({ title: "Setup Error", description: "Failed to initialize notification listener.", variant: "destructive" });
+        console.error("Error setting up notification listeners:", error);
+        toast({ title: "Setup Error", description: "Failed to initialize notification listeners.", variant: "destructive" });
         setLoadingNotifications(false);
+        if (notificationListenersUnsubscribeRef.current) {
+           notificationListenersUnsubscribeRef.current(); // Attempt cleanup on setup error
+           notificationListenersUnsubscribeRef.current = null;
+        }
     }
 
-
-    // Cleanup listener on unmount
+    // Cleanup listener on unmount or when dependencies change
     return () => {
-      if (unsubscribe) {
-         console.log("Cleaning up notification listeners.");
-         unsubscribe();
+      if (notificationListenersUnsubscribeRef.current) {
+         console.log("Dashboard: Cleaning up notification listeners in useEffect return.");
+         notificationListenersUnsubscribeRef.current();
+         notificationListenersUnsubscribeRef.current = null;
       }
     };
-  }, [user, toast]);
+  }, [user, db, toast]); // Rerun if user or db instance changes
 
 
   // --- Mark Notification as Read (Placeholder - Needs Implementation) ---

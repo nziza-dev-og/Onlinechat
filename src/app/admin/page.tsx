@@ -44,7 +44,7 @@ const getInitials = (name: string | null | undefined): string => {
 };
 
 // Helper to safely format timestamp or ISO string
-const formatTimestamp = (timestamp: any, formatString: string): string => {
+const formatTimestamp = (timestamp: any): string => {
     if (!timestamp) return '';
     let date: Date | null = null;
     try {
@@ -108,6 +108,7 @@ export default function AdminPage() {
   const [isSendingReply, setIsSendingReply] = React.useState(false);
 
   const { toast } = useToast();
+  const userListListenerUnsubscribeRef = React.useRef<Unsubscribe | null>(null); // Ref for user list listener
 
    // Initialize Firestore instance on mount
    React.useEffect(() => {
@@ -129,7 +130,8 @@ export default function AdminPage() {
 
   // Fetch admin status and data on mount and when user/db changes
   React.useEffect(() => {
-    if (authLoading || dbInstance === null) { // Wait for auth and db
+    if (authLoading || !dbInstance) { // Wait for auth and db
+      console.log("AdminPage: Waiting for auth or dbInstance.");
       setIsAdmin(null);
       setLoadingRequests(true);
       setLoadingAnalytics(true);
@@ -142,6 +144,7 @@ export default function AdminPage() {
       return;
     }
     if (!user) {
+      console.log("AdminPage: No user logged in.");
       setIsAdmin(false);
       setLoadingRequests(false);
       setLoadingAnalytics(false);
@@ -155,6 +158,14 @@ export default function AdminPage() {
       return;
     }
 
+    // Cleanup previous listener if it exists
+     if (userListListenerUnsubscribeRef.current) {
+        console.log("AdminPage: Cleaning up previous user list listener before new setup.");
+        userListListenerUnsubscribeRef.current();
+        userListListenerUnsubscribeRef.current = null;
+     }
+
+    console.log("AdminPage: Checking admin status and fetching data...");
     const checkAdminAndFetchData = async (firestoreInstance: Firestore) => {
         setLoadingRequests(true);
         setLoadingAnalytics(true);
@@ -165,22 +176,23 @@ export default function AdminPage() {
         setAdminMessages([]);
         setUserList([]);
 
-        let userListenerUnsubscribe: Unsubscribe | null = null; // Listener specific to this check
-
         try {
              const profile = await getDoc(doc(firestoreInstance, 'users', user.uid));
              const isAdminUser = profile.exists() && profile.data()?.isAdmin === true;
              setIsAdmin(isAdminUser);
 
              if (isAdminUser) {
+                 console.log("AdminPage: User is admin. Fetching data...");
                 // --- Fetch Data Concurrently ---
                 const requestsPromise = getPasswordChangeRequests(user.uid).catch(err => { console.error("Req Fetch Err:", err); throw err; });
                 const analyticsPromise = getOnlineUsersCount().catch(err => { console.error("Analytics Err:", err); throw err; });
                 const messagesPromise = getAdminMessages(user.uid).catch(err => { console.error("Admin Msg Err:", err); throw err; });
 
                  // --- User List Listener (for notifications) ---
+                 console.log("AdminPage: Setting up user list listener.");
                  const usersQuery = query(collection(firestoreInstance, 'users'), where('uid', '!=', user.uid)); // Exclude self
-                 userListenerUnsubscribe = onSnapshot(usersQuery, (snapshot) => {
+                 // Store the unsubscribe function in the ref
+                 userListListenerUnsubscribeRef.current = onSnapshot(usersQuery, (snapshot) => {
                      const fetchedUsers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as UserProfile))
                          .sort((a, b) => (a.displayName || a.email || '').localeCompare(b.displayName || b.email || ''));
                      setUserList(fetchedUsers);
@@ -191,6 +203,8 @@ export default function AdminPage() {
                      toast({ title: "User List Error", description: "Could not load users for targeted notifications.", variant: "destructive" });
                      setUserList([]);
                      setLoadingUserList(false);
+                      // Clear the ref on error
+                     userListListenerUnsubscribeRef.current = null;
                  });
 
                 // Await results and set state
@@ -220,6 +234,7 @@ export default function AdminPage() {
                 // setAllowFileUploads(config.allowFileUploads ?? true);
 
              } else {
+                 console.log("AdminPage: User is not admin.");
                 setError("You do not have permission to access this page.");
                 setRequests([]);
                 setOnlineUsers(null);
@@ -246,26 +261,17 @@ export default function AdminPage() {
              // setLoadingUserList might already be false, but ensure it is
              setLoadingUserList(false);
         }
-
-         // Return cleanup function
-         return () => {
-             if (userListenerUnsubscribe) {
-                console.log("Cleaning up user list listener.");
-                userListenerUnsubscribe();
-             }
-         };
     };
 
-    // Pass the correct dbInstance state variable here and store cleanup function
-    let cleanupUserListener: (() => void) | undefined;
-    checkAdminAndFetchData(dbInstance).then(cleanup => {
-         cleanupUserListener = cleanup;
-    });
+    // Pass the correct dbInstance state variable here
+    checkAdminAndFetchData(dbInstance);
 
      // Ensure cleanup runs when dependencies change or component unmounts
      return () => {
-         if (cleanupUserListener) {
-             cleanupUserListener();
+         if (userListListenerUnsubscribeRef.current) {
+            console.log("AdminPage: Cleaning up user list listener in useEffect return.");
+            userListListenerUnsubscribeRef.current();
+            userListListenerUnsubscribeRef.current = null;
          }
      };
 
@@ -308,15 +314,22 @@ export default function AdminPage() {
                 resultId = await sendGlobalNotification(notificationMessage.trim(), user.uid);
                 toast({ title: 'Global Announcement Sent', description: 'Your announcement has been broadcast.' });
             } else {
-                resultId = await sendTargetedNotification(notificationMessage.trim(), targetUserId!, user.uid);
-                toast({ title: 'Targeted Notification Sent', description: `Notification sent to user ${targetUserId}.` });
+                // Ensure targetUserId is not undefined before sending
+                if (!targetUserId) {
+                     throw new Error("Target user ID is missing for targeted notification.");
+                }
+                resultId = await sendTargetedNotification(notificationMessage.trim(), targetUserId, user.uid);
+                // Try to find the user's name for the toast message
+                const targetUserName = userList.find(u => u.uid === targetUserId)?.displayName || `user ${targetUserId}`;
+                toast({ title: 'Targeted Notification Sent', description: `Notification sent to ${targetUserName}.` });
             }
              console.log(`Notification sent, Doc ID: ${resultId}`);
              setNotificationMessage(''); // Clear input
              setTargetUserId(undefined); // Reset target user selection
              // Optionally reset type to global?
-             // setNotificationType('global');
+             setNotificationType('global');
         } catch (error: any) {
+             console.error("Error sending notification:", error);
             toast({ title: 'Send Failed', description: error.message || 'Could not send the notification.', variant: 'destructive' });
         } finally {
             setIsSendingNotification(false);
@@ -484,6 +497,8 @@ export default function AdminPage() {
                         <div className="min-w-0">
                              <p className="text-sm font-medium text-foreground truncate">{reqUser.displayName || 'Unnamed User'}</p>
                              <p className="text-xs text-muted-foreground truncate">{reqUser.email}</p>
+                             {/* Display Request Timestamp if available */}
+                              {/* <p className="text-xs text-muted-foreground">Requested: {formatTimestamp(reqUser.passwordRequestTimestamp)}</p> */}
                         </div>
                      </div>
                      <div className="flex gap-2 flex-shrink-0 w-full sm:w-auto">
@@ -571,7 +586,7 @@ export default function AdminPage() {
                              <div key={msg.id} className="p-4 border rounded-lg bg-card shadow-sm">
                                  <div className="flex items-center justify-between mb-2 text-xs text-muted-foreground">
                                      <span>From: {msg.senderName || 'Unknown User'} ({msg.senderEmail || 'No email'})</span>
-                                     <span>{formatTimestamp(msg.timestamp, 'PPp')}</span>
+                                     <span>{formatTimestamp(msg.timestamp)}</span>
                                  </div>
                                  <p className="text-sm text-foreground mb-3">{msg.message}</p>
                                  {/* Reply Section (Conditional) */}
@@ -812,5 +827,3 @@ export default function AdminPage() {
     </div>
   );
 }
-    
-
