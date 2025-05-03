@@ -8,34 +8,10 @@ import { Phone, PhoneOff, Mic, MicOff, Video, VideoOff, Loader2, AlertCircle } f
 import { useToast } from '@/hooks/use-toast';
 import type { UserProfile, User } from '@/types';
 // Import RTDB functions
-import { getDatabase, ref as rtdbRef, push, onValue, off, remove, serverTimestamp, type DatabaseReference, DataSnapshot, Unsubscribe } from "firebase/database";
+import { getDatabase, ref as rtdbRef, push, onValue, off, remove, serverTimestamp, type DatabaseReference, DataSnapshot, type Unsubscribe as RtdbUnsubscribe } from "firebase/database";
 import { rtdb } from '@/lib/firebase'; // Import the initialized RTDB instance
 import { sendSignalingMessageRTDB, removeCallSignalingData } from '@/lib/webrtc.service'; // Import RTDB service functions
-
-// --- RTDB Signaling Message Types ---
-interface SignalingOffer {
-  senderId: string;
-  type: 'offer';
-  payload: RTCSessionDescriptionInit;
-  timestamp?: object; // Use serverTimestamp() for RTDB
-}
-
-interface SignalingAnswer {
-  senderId: string;
-  type: 'answer';
-  payload: RTCSessionDescriptionInit;
-  timestamp?: object;
-}
-
-interface SignalingCandidate {
-  senderId: string;
-  type: 'candidate';
-  payload: RTCIceCandidateInit | null; // Allow null candidate for end-of-candidates signal
-  timestamp?: object;
-}
-
-type SignalingMessage = SignalingOffer | SignalingAnswer | SignalingCandidate;
-// --- End RTDB Signaling Message Types ---
+import type { SignalingMessage } from '@/types'; // Import signaling types
 
 // Helper to get initials
 const getInitials = (name: string | null | undefined): string => {
@@ -79,7 +55,7 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const callSignalingRef = useRef<DatabaseReference | null>(null); // Ref for the RTDB signaling path
-  const messagesListenerUnsubscribe = useRef<Unsubscribe | null>(null); // Ref for RTDB listener cleanup
+  const messagesListenerUnsubscribe = useRef<RtdbUnsubscribe | null>(null); // Ref for RTDB listener cleanup
 
   const { toast } = useToast();
 
@@ -110,11 +86,54 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
   // Detach RTDB listener without removing data (used internally)
    const detachListener = useCallback(() => {
        if (messagesListenerUnsubscribe.current) {
-           messagesListenerUnsubscribe.current();
+           messagesListenerUnsubscribe.current(); // Firebase V9 uses the function directly
            messagesListenerUnsubscribe.current = null;
            console.log("RTDB messages listener detached.");
        }
+       // Also nullify the database reference itself if detaching
+       // callSignalingRef.current = null;
    }, []);
+
+
+  // Define handleEndCall function first
+   const handleEndCall = useCallback(() => {
+       if (callStatus !== 'idle' && callStatus !== 'ended') {
+           console.log("Ending call explicitly...");
+           // Check if call was in a state where it could have been missed
+           if (callStatus === 'calling' || callStatus === 'receiving') {
+               setShowMissedCall(true); // Show missed call message briefly
+               toast({ title: "Call Ended", description: `Missed call with ${partnerUser.displayName || 'User'}.` });
+               setTimeout(() => setShowMissedCall(false), 4000); // Hide after 4s
+           } else if (callStatus === 'in_call') {
+                toast({ title: "Call Ended", description: `Call with ${partnerUser.displayName || 'User'} ended.` });
+           }
+            // Perform cleanup, including stopping streams, closing PC, detaching listener
+           stopLocalStream();
+           closePeerConnection();
+           setRemoteStream(null);
+           if (remoteVideoRef.current) {
+               remoteVideoRef.current.srcObject = null;
+           }
+           detachListener(); // Detach listener
+
+           // Remove signaling data *after* other cleanup, only if call was active/being setup
+           if (['calling', 'receiving', 'connecting', 'in_call'].includes(callStatus)) {
+              removeCallSignalingData(chatId).catch(err => console.error("Error removing signaling data during explicit end:", err));
+           }
+
+           setCallStatus('ended'); // Set to a final 'ended' state before closing
+           setIsCaller(false);
+           onClose(); // Close the modal
+       } else if (callStatus === 'idle' || callStatus === 'ended') {
+           console.log("Attempted to end call but already idle or ended.");
+           // Minimal cleanup if already idle/ended, don't remove RTDB data
+           stopLocalStream();
+           closePeerConnection();
+           detachListener();
+           setCallStatus('ended'); // Ensure it's marked ended
+           onClose(); // Ensure modal closes if somehow open
+       }
+   }, [callStatus, stopLocalStream, closePeerConnection, detachListener, chatId, toast, partnerUser.displayName, onClose]);
 
 
   const cleanup = useCallback((isEndingCall = false) => {
@@ -128,7 +147,7 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
     detachListener(); // Detach listener without removing data initially
 
     // Remove signaling data only if specifically ending the call and were involved
-    if (isEndingCall && (isCaller || callStatus === 'in_call' || callStatus === 'connecting')) {
+    if (isEndingCall && ['calling', 'receiving', 'connecting', 'in_call'].includes(callStatus)) {
        removeCallSignalingData(chatId).catch(err => console.error("Error removing signaling data during cleanup:", err));
     } else {
          callSignalingRef.current = null; // Clear ref anyway if not removing data
@@ -137,31 +156,9 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
     setCallStatus('idle'); // Reset status
     setIsCaller(false); // Reset caller status
     setShowMissedCall(false); // Reset missed call flag
-  }, [stopLocalStream, closePeerConnection, detachListener, isCaller, callStatus, chatId]);
+  }, [stopLocalStream, closePeerConnection, detachListener, callStatus, chatId]);
 
   // --- End Cleanup Functions ---
-
-  // Define handleEndCall function
-  const handleEndCall = useCallback(() => {
-      if (callStatus !== 'idle' && callStatus !== 'ended') {
-          console.log("Ending call explicitly...");
-          // Check if call was in a state where it could have been missed
-          if (callStatus === 'calling' || callStatus === 'receiving') {
-              setShowMissedCall(true); // Show missed call message briefly
-              toast({ title: "Call Ended", description: `Call with ${partnerUser.displayName || 'User'} ended.` });
-              setTimeout(() => setShowMissedCall(false), 3000); // Hide after 3s
-          } else if (callStatus === 'in_call') {
-               toast({ title: "Call Ended", description: `Call with ${partnerUser.displayName || 'User'} ended.` });
-          }
-          cleanup(true); // Pass true to indicate explicit ending and remove RTDB data
-          setCallStatus('ended'); // Set to a final 'ended' state before closing
-          onClose(); // Close the modal
-      } else if (callStatus === 'idle' || callStatus === 'ended') {
-          console.log("Attempted to end call but already idle or ended.");
-          cleanup(false); // Still run cleanup, but don't remove data if idle
-          onClose(); // Ensure modal closes if somehow open
-      }
-  }, [callStatus, cleanup, onClose, partnerUser.displayName, toast]);
 
 
   // --- RTDB Signaling Functions ---
@@ -180,6 +177,126 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
         handleEndCall();
      }
   }, [chatId, currentUser?.uid, toast, handleEndCall]);
+
+   // --- WebRTC Peer Connection Setup --- - Define initializePeerConnection before setupSignalingListener
+    const initializePeerConnection = useCallback(async (caller: boolean) => {
+        console.log(`Initializing PeerConnection. Is caller: ${caller}`);
+         if (!localStream) {
+             console.error("Cannot initialize PeerConnection: Local stream not available.");
+             setCallStatus('error');
+             toast({ variant: "destructive", title: "Call Error", description: "Camera/Mic stream failed." });
+             handleEndCall();
+             return null;
+         }
+        if (peerConnectionRef.current) {
+            console.warn("PeerConnection already exists. Closing previous one.");
+            closePeerConnection();
+        }
+
+        try {
+            const pc = new RTCPeerConnection(configuration);
+            peerConnectionRef.current = pc;
+            setIsCaller(caller);
+
+            // Add local stream tracks
+            localStream.getTracks().forEach(track => {
+                try {
+                    pc.addTrack(track, localStream);
+                    console.log(`WebRTC: Added local ${track.kind} track.`);
+                } catch (addTrackError) {
+                     console.error(`WebRTC: Error adding local ${track.kind} track:`, addTrackError);
+                     // Handle specific errors if needed
+                }
+            });
+
+            // Handle incoming remote tracks
+            pc.ontrack = (event) => {
+                console.log(`WebRTC: Received remote track (${event.track.kind}). Streams:`, event.streams);
+                if (event.streams && event.streams[0]) {
+                    const incomingStream = event.streams[0];
+                    console.log("WebRTC: Assigning remote stream:", incomingStream.id);
+                    setRemoteStream(incomingStream);
+                    if (remoteVideoRef.current) {
+                        // Ensure srcObject is not set to the same stream again unnecessarily
+                        if (remoteVideoRef.current.srcObject !== incomingStream) {
+                             remoteVideoRef.current.srcObject = incomingStream;
+                             remoteVideoRef.current.play().catch(e => console.error("Remote video play failed:", e)); // Attempt to play
+                        }
+                    }
+                    // Move to 'in_call' status once the first remote track is received
+                     if (callStatus !== 'in_call') {
+                        setCallStatus('in_call');
+                        toast({ title: 'Call Connected', description: `Connected with ${partnerUser.displayName || 'User'}` });
+                     }
+                } else {
+                    console.warn("WebRTC: Remote track received but no stream associated.");
+                    // If remoteStream is already set, maybe add track to it? More complex handling.
+                }
+            };
+
+            // Handle ICE candidates
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    // console.log("WebRTC: Generated ICE candidate:", event.candidate.type);
+                    sendSignalingMessage({ type: 'candidate', payload: event.candidate.toJSON() });
+                } else {
+                    console.log("WebRTC: All ICE candidates generated.");
+                    // Optionally send a null candidate to signal end
+                    sendSignalingMessage({ type: 'candidate', payload: null });
+                }
+            };
+
+            // Handle connection state changes
+            pc.oniceconnectionstatechange = () => {
+                const currentState = pc.iceConnectionState;
+                console.log(`WebRTC: ICE Connection State: ${currentState}`);
+                switch (currentState) {
+                    case 'connected':
+                        // Often implies connection, but 'completed' is more definitive for media flow.
+                        // We rely on 'ontrack' to set 'in_call' state.
+                        break;
+                    case 'completed':
+                         console.log("WebRTC: ICE Connection Completed - Media should be flowing.");
+                          if (callStatus !== 'in_call') {
+                             // This might be redundant if ontrack already set it, but safe fallback.
+                             setCallStatus('in_call');
+                          }
+                          break;
+                    case 'disconnected':
+                         console.warn("WebRTC: ICE Disconnected. Attempting to reconnect...");
+                         // Consider UI feedback for temporary disconnection
+                         break;
+                    case 'failed':
+                         console.error("WebRTC: ICE Connection Failed.");
+                         setCallStatus('error');
+                         toast({ variant: "destructive", title: "Connection Failed", description: "Could not establish connection." });
+                         handleEndCall();
+                         break;
+                    case 'closed':
+                         console.log("WebRTC: ICE Connection Closed.");
+                          // Check callStatus before ending to avoid duplicate calls during manual hangup
+                         if (callStatus !== 'idle' && callStatus !== 'ended') {
+                              handleEndCall();
+                         }
+                         break;
+                     case 'checking':
+                          console.log("WebRTC: ICE checking...");
+                          if (!['in_call', 'connecting'].includes(callStatus)) setCallStatus('connecting'); // Update status if not already connecting/in_call
+                          break;
+                }
+            };
+
+            return pc; // Return the created connection
+
+        } catch (error) {
+            console.error("Error initializing PeerConnection:", error);
+            setCallStatus('error');
+            toast({ variant: "destructive", title: "WebRTC Error", description: "Failed to initialize call connection." });
+            handleEndCall();
+            return null;
+        }
+    }, [localStream, toast, handleEndCall, closePeerConnection, sendSignalingMessage, callStatus, partnerUser.displayName]);
+    // --- End WebRTC Peer Connection Setup ---
 
    const setupSignalingListener = useCallback(() => {
        // Ensure RTDB is initialized
@@ -301,132 +418,8 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
            detachListener(); // Clear ref on error
        });
 
-   }, [chatId, currentUser?.uid, callStatus, toast, handleEndCall, sendSignalingMessage, initializePeerConnection, detachListener]);
+   }, [chatId, currentUser?.uid, callStatus, toast, handleEndCall, sendSignalingMessage, detachListener]); // Removed initializePeerConnection from here
    // --- End RTDB Signaling Functions ---
-
-
-  // --- WebRTC Peer Connection Setup ---
-   const initializePeerConnection = useCallback(async (caller: boolean) => {
-       console.log(`Initializing PeerConnection. Is caller: ${caller}`);
-        if (!localStream) {
-            console.error("Cannot initialize PeerConnection: Local stream not available.");
-            setCallStatus('error');
-            toast({ variant: "destructive", title: "Call Error", description: "Camera/Mic stream failed." });
-            handleEndCall();
-            return null;
-        }
-       if (peerConnectionRef.current) {
-           console.warn("PeerConnection already exists. Closing previous one.");
-           closePeerConnection();
-       }
-
-       try {
-           const pc = new RTCPeerConnection(configuration);
-           peerConnectionRef.current = pc;
-           setIsCaller(caller);
-
-           // Add local stream tracks
-           localStream.getTracks().forEach(track => {
-               try {
-                   pc.addTrack(track, localStream);
-                   console.log(`WebRTC: Added local ${track.kind} track.`);
-               } catch (addTrackError) {
-                    console.error(`WebRTC: Error adding local ${track.kind} track:`, addTrackError);
-                    // Handle specific errors if needed
-               }
-           });
-
-           // Handle incoming remote tracks
-           pc.ontrack = (event) => {
-               console.log(`WebRTC: Received remote track (${event.track.kind}). Streams:`, event.streams);
-               if (event.streams && event.streams[0]) {
-                   const incomingStream = event.streams[0];
-                   console.log("WebRTC: Assigning remote stream:", incomingStream.id);
-                   setRemoteStream(incomingStream);
-                   if (remoteVideoRef.current) {
-                       // Ensure srcObject is not set to the same stream again unnecessarily
-                       if (remoteVideoRef.current.srcObject !== incomingStream) {
-                            remoteVideoRef.current.srcObject = incomingStream;
-                            remoteVideoRef.current.play().catch(e => console.error("Remote video play failed:", e)); // Attempt to play
-                       }
-                   }
-                   // Move to 'in_call' status once the first remote track is received
-                    if (callStatus !== 'in_call') {
-                       setCallStatus('in_call');
-                       toast({ title: 'Call Connected', description: `Connected with ${partnerUser.displayName || 'User'}` });
-                    }
-               } else {
-                   console.warn("WebRTC: Remote track received but no stream associated.");
-                   // If remoteStream is already set, maybe add track to it? More complex handling.
-               }
-           };
-
-           // Handle ICE candidates
-           pc.onicecandidate = (event) => {
-               if (event.candidate) {
-                   // console.log("WebRTC: Generated ICE candidate:", event.candidate.type);
-                   sendSignalingMessage({ type: 'candidate', payload: event.candidate.toJSON() });
-               } else {
-                   console.log("WebRTC: All ICE candidates generated.");
-                   // Optionally send a null candidate to signal end
-                   sendSignalingMessage({ type: 'candidate', payload: null });
-               }
-           };
-
-           // Handle connection state changes
-           pc.oniceconnectionstatechange = () => {
-               const currentState = pc.iceConnectionState;
-               console.log(`WebRTC: ICE Connection State: ${currentState}`);
-               switch (currentState) {
-                   case 'connected':
-                       // Often implies connection, but 'completed' is more definitive for media flow.
-                       // We rely on 'ontrack' to set 'in_call' state.
-                       break;
-                   case 'completed':
-                        console.log("WebRTC: ICE Connection Completed - Media should be flowing.");
-                         if (callStatus !== 'in_call') {
-                            // This might be redundant if ontrack already set it, but safe fallback.
-                            setCallStatus('in_call');
-                         }
-                         break;
-                   case 'disconnected':
-                        console.warn("WebRTC: ICE Disconnected. Attempting to reconnect...");
-                        // Consider UI feedback for temporary disconnection
-                        break;
-                   case 'failed':
-                        console.error("WebRTC: ICE Connection Failed.");
-                        setCallStatus('error');
-                        toast({ variant: "destructive", title: "Connection Failed", description: "Could not establish connection." });
-                        handleEndCall();
-                        break;
-                   case 'closed':
-                        console.log("WebRTC: ICE Connection Closed.");
-                         // Check callStatus before ending to avoid duplicate calls during manual hangup
-                        if (callStatus !== 'idle' && callStatus !== 'ended') {
-                             handleEndCall();
-                        }
-                        break;
-                    case 'checking':
-                         console.log("WebRTC: ICE checking...");
-                         if (callStatus !== 'connecting') setCallStatus('connecting');
-                         break;
-               }
-           };
-
-             // Setup the RTDB signaling listener *after* creating the PeerConnection
-             setupSignalingListener(); // Assuming this function is memoized
-
-           return pc; // Return the created connection
-
-       } catch (error) {
-           console.error("Error initializing PeerConnection:", error);
-           setCallStatus('error');
-           toast({ variant: "destructive", title: "WebRTC Error", description: "Failed to initialize call connection." });
-           handleEndCall();
-           return null;
-       }
-   }, [localStream, toast, handleEndCall, closePeerConnection, sendSignalingMessage, setupSignalingListener, callStatus, partnerUser.displayName]);
-   // --- End WebRTC Peer Connection Setup ---
 
 
   // Get Media Permissions when modal opens
@@ -462,6 +455,10 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
           localVideoRef.current.srcObject = stream;
           localVideoRef.current.play().catch(e => console.error("Local video play failed:", e));
         }
+        // --- Setup listener ONLY AFTER permissions are granted and ready ---
+        setupSignalingListener(); // Initialize listener now
+        // --- End Setup listener ---
+
       } catch (error: any) {
         console.error("Error accessing camera/mic:", error.name, error.message);
         if (!isMounted) return;
@@ -484,7 +481,7 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
       console.log("Video call modal effect cleanup on unmount/close.");
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, toast]); // `cleanup` is memoized
+  }, [isOpen, toast, setupSignalingListener]); // Added setupSignalingListener dependency
 
 
   const handleStartCall = async () => {
@@ -619,6 +616,7 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
                 <p className="text-white/80 font-medium mt-2 bg-black/50 px-2 py-1 rounded">{partnerUser.displayName || 'User'}</p>
                  {callStatus === 'calling' && <p className="text-white/70 text-sm mt-1">Ringing...</p>}
                  {callStatus === 'ended' && showMissedCall && <p className="text-yellow-400 text-sm mt-1">Missed Call</p>}
+                 {callStatus === 'receiving' && <p className="text-white/70 text-sm mt-1">Incoming call...</p>}
               </div>
             )}
           </div>
