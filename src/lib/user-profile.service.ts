@@ -1,10 +1,15 @@
 
 'use server'; // Indicate this runs on the server or can be called from server components/actions
 
-import { doc, setDoc, serverTimestamp, Timestamp, getDoc, updateDoc, type FirestoreError } from 'firebase/firestore';
-import { db } from '@/lib/firebase'; // Import db which might be undefined if init failed
+// Import types and FirebaseError check utility
 import type { UserProfile } from '@/types';
 import { isFirebaseError } from '@/lib/firebase-errors';
+import type { FirestoreError } from 'firebase/firestore';
+
+// Import Firebase functions dynamically within the action if needed, or rely on top-level imports
+// If top-level imports continue to cause issues, uncomment the dynamic imports below.
+import { doc, setDoc, serverTimestamp as firestoreServerTimestamp, Timestamp, getDoc, updateDoc, getFirestore } from 'firebase/firestore';
+import { app } from '@/lib/firebase'; // Import the initialized app instance
 
 /**
  * Input type for createOrUpdateUserProfile, containing only serializable data.
@@ -14,7 +19,7 @@ export interface UserProfileInput {
     email: string | null;
     displayName?: string | null;
     photoURL?: string | null;
-    status?: string | null; // Added status
+    status?: string | null;
     // Timestamps need to be handled as strings or numbers if passed from client, or use 'SERVER_TIMESTAMP' sentinel
     createdAt?: 'SERVER_TIMESTAMP';
     lastSeen?: 'SERVER_TIMESTAMP';
@@ -42,9 +47,10 @@ export const createOrUpdateUserProfile = async (
 
     const { uid, email, displayName, photoURL, status } = userData;
 
-    // Check if db is initialized BEFORE using it
+    // Get Firestore instance within the server action context
+    const db = getFirestore(app);
     if (!db) {
-        const dbErrorMsg = "Database service (db) is not initialized in createOrUpdateUserProfile. Check Firebase initialization (src/lib/firebase.ts) and ensure configuration is correct and services are enabled.";
+        const dbErrorMsg = "Database service (db) could not be initialized in createOrUpdateUserProfile. Check Firebase app initialization.";
         console.error("🔴 createOrUpdateUserProfile Error:", dbErrorMsg);
         throw new Error(dbErrorMsg);
     }
@@ -53,7 +59,6 @@ export const createOrUpdateUserProfile = async (
     let isNewUser = false;
 
     try {
-        // Check if the user document exists to determine if it's a new registration vs. login update
         const docSnap = await getDoc(userRef);
         if (!docSnap.exists()) {
             isNewUser = true;
@@ -62,45 +67,29 @@ export const createOrUpdateUserProfile = async (
             console.log(`Firestore: Updating profile for existing user ${uid}`);
         }
 
-        // --- Firestore Document Update ---
-        // Prepare data for Firestore document, converting 'SERVER_TIMESTAMP'
         const firestoreData: Record<string, any> = {
             uid: uid,
             email: email?.toLowerCase() ?? null,
-             // Only include fields if they are explicitly provided in userData.
-             // Use null if the provided value is null or an empty string for displayName/status.
-             ...(displayName !== undefined && { displayName: displayName || null }),
-             ...(photoURL !== undefined && { photoURL: photoURL ?? null }),
-             ...(status !== undefined && { status: status || null }),
-             lastSeen: serverTimestamp(), // Always update lastSeen on any interaction
+            ...(displayName !== undefined && { displayName: displayName || null }),
+            ...(photoURL !== undefined && { photoURL: photoURL ?? null }),
+            ...(status !== undefined && { status: status || null }),
+            lastSeen: firestoreServerTimestamp(), // Always update lastSeen
         };
 
-        // Add createdAt only for new users
         if (isNewUser) {
-            firestoreData.createdAt = serverTimestamp();
-             // Initialize status to null for new users if not provided explicitly
+            firestoreData.createdAt = firestoreServerTimestamp();
             if (status === undefined) {
                  firestoreData.status = null;
             }
         }
 
-
-        // Use setDoc with merge: true to create or update the document.
-        // This handles both new user creation and updating existing fields like lastSeen.
-        console.log(`Attempting Firestore ${isNewUser ? 'set' : 'set with merge'} for user ${uid} with data:`, JSON.stringify(firestoreData, (key, value) => value === undefined ? null : value, 2));
-        await setDoc(userRef, firestoreData, { merge: !isNewUser }); // Merge only if it's NOT a new user
+        console.log(`Attempting Firestore ${isNewUser ? 'set' : 'set with merge'} for user ${uid}`);
+        await setDoc(userRef, firestoreData, { merge: !isNewUser });
         console.log(`Firestore: User profile ${isNewUser ? 'created' : 'updated'} for user: ${uid}`);
 
-        // NOTE: Firebase Auth profile updates (displayName/photoURL) are typically handled client-side
-        // immediately after the auth action (signUp/signInWithPopup/updateProfile).
-        // This service focuses on the Firestore document.
-
     } catch (error: any) {
-        console.error(`🔴 Firestore Error in createOrUpdateUserProfile for user ${uid}:`, error);
-        // Provide a more informative error message
         const detailedErrorMessage = `Failed to ${isNewUser ? 'create' : 'update'} user profile in Firestore for UID ${uid}. Error: ${error.message || 'Unknown Firestore error'}${error.code ? ` (Code: ${error.code})` : ''}`;
-        console.error(detailedErrorMessage); // Log the detailed error
-        // Re-throw with the detailed message
+        console.error("🔴 Detailed Firestore Error:", detailedErrorMessage, error);
         throw new Error(detailedErrorMessage);
     }
 };
@@ -111,13 +100,11 @@ export const createOrUpdateUserProfile = async (
  * Allows specific fields to be marked as 'SERVER_TIMESTAMP'.
  */
 type UserProfileUpdateData = {
-    // Allow only specific fields to be updated, use 'SERVER_TIMESTAMP' for timestamp fields
     displayName?: string | null;
     photoURL?: string | null;
     status?: string | null;
-    lastSeen?: 'SERVER_TIMESTAMP'; // Use sentinel string for server-side timestamp
+    lastSeen?: 'SERVER_TIMESTAMP';
 } & {
-    // Ensure uid, email, createdAt are not accidentally updated here
     uid?: never;
     email?: never;
     createdAt?: never;
@@ -126,77 +113,67 @@ type UserProfileUpdateData = {
 
 /**
  * Updates specific fields in a user's profile document in Firestore.
- * Does NOT update Firebase Auth profile.
- * Accepts a special string 'SERVER_TIMESTAMP' for timestamp fields to be set by the server.
- * Primarily used for updating `lastSeen`, `status` or other non-Auth related profile data.
+ * Ensures Firestore client and functions are obtained within the server action context.
  *
  * @param uid - The user's unique ID.
- * @param data - An object containing the fields to update (e.g., { lastSeen: 'SERVER_TIMESTAMP', displayName: 'New Name', status: 'Online' }).
+ * @param data - An object containing the fields to update (e.g., { lastSeen: 'SERVER_TIMESTAMP', status: 'Online' }).
  * @returns Promise<void>
- * @throws Error if UID is missing, db is not initialized, or update fails.
+ * @throws Error if UID is missing, db cannot be initialized, or update fails.
  */
 export const updateUserProfileDocument = async (uid: string, data: UserProfileUpdateData): Promise<void> => {
      if (!uid) {
         console.error("🔴 updateUserProfileDocument Error: No UID provided.");
         throw new Error("User ID is required for updating profile document.");
     }
-     // Check if db is initialized BEFORE using it
-     if (!db) {
-        const dbErrorMsg = "Database service (db) is not initialized in updateUserProfileDocument. Check Firebase initialization (src/lib/firebase.ts). Firestore operations cannot proceed.";
-        console.error("🔴 updateUserProfileDocument Error:", dbErrorMsg);
-        // Throw a specific error if db is not available
-        throw new Error(dbErrorMsg);
-     }
 
-     // Prepare update data, converting 'SERVER_TIMESTAMP' to the actual serverTimestamp() call.
-     // Filter out undefined values and handle empty strings for certain fields.
-     const updateData = Object.entries(data).reduce((acc, [key, value]) => {
+    // Get Firestore instance and functions within the server action context
+    const db = getFirestore(app);
+    if (!db) {
+        const dbErrorMsg = "Database service (db) could not be initialized in updateUserProfileDocument. Check Firebase app initialization.";
+        console.error("🔴 updateUserProfileDocument Error:", dbErrorMsg);
+        throw new Error(dbErrorMsg);
+    }
+    // Explicitly get serverTimestamp function within this context if needed, though top-level should work
+    // const serverTimestamp = firestoreServerTimestamp;
+
+    const updateData = Object.entries(data).reduce((acc, [key, value]) => {
         if (value === 'SERVER_TIMESTAMP') {
-            acc[key] = serverTimestamp(); // Use the actual serverTimestamp() here
+            // Use the imported firestoreServerTimestamp directly
+            acc[key] = firestoreServerTimestamp();
         } else if (value !== undefined) {
-             // Handle empty strings for displayName or status as null
              if ((key === 'displayName' || key === 'status') && value === '') {
                  acc[key] = null;
              } else {
-                 // Keep null values if explicitly provided, otherwise keep the value
                  acc[key] = value;
              }
         }
-        // Ignore undefined values
         return acc;
-     }, {} as Record<string, any>); // Use Record<string, any> to allow serverTimestamp()
+    }, {} as Record<string, any>);
 
 
     if (Object.keys(updateData).length === 0) {
         console.warn(`Firestore: updateUserProfileDocument called for user ${uid} with no valid data to update.`);
-        return; // No changes to make
+        return;
     }
 
     const userRef = doc(db, 'users', uid);
 
     try {
-         // Check if the document exists before trying to update it.
          const docSnap = await getDoc(userRef);
          if (!docSnap.exists()) {
              console.warn(`Firestore: updateUserProfileDocument - Document for user ${uid} does not exist. Cannot update. Attempted data:`, updateData);
+             // Don't throw here, maybe log and return, or decide if creation is intended (use setDoc with merge:true)
+             // For presence updates, the doc should exist. Throwing might be appropriate.
              throw new Error(`User profile document for UID ${uid} does not exist. Update failed.`);
          }
 
-         console.log(`Attempting Firestore update for user ${uid} with data:`, JSON.stringify(updateData, (key, value) => value === undefined ? null : value, 2)); // Log safely
-         // Use updateDoc for targeted field updates.
+         console.log(`Attempting Firestore update for user ${uid} with data:`, JSON.stringify(updateData, null, 2));
          await updateDoc(userRef, updateData);
          console.log(`Firestore: Document for user ${uid} updated successfully.`);
 
     } catch (error: any) {
-        // Log detailed Firestore error
-        console.error(`🔴 Firestore Error updating document for user ${uid}:`, error);
-
-        // Provide a more detailed error message including the attempted data and error code
-        const detailedErrorMessage = `Failed to update Firestore document for UID ${uid}. Error: ${error.message || 'Unknown Firestore error'}${error.code ? ` (Code: ${error.code})` : ''}. Data attempted: ${JSON.stringify(updateData, (key, value) => value === undefined ? null : value)}`;
-        console.error(detailedErrorMessage); // Log the detailed error
-
-        // Re-throw with the detailed message for the client to potentially handle
+        const detailedErrorMessage = `Failed to update Firestore document for UID ${uid}. Error: ${error.message || 'Unknown Firestore error'}${error.code ? ` (Code: ${error.code})` : ''}. Data attempted: ${JSON.stringify(updateData, null, 2)}`;
+        console.error("🔴 Detailed Firestore Update Error:", detailedErrorMessage, error);
         throw new Error(detailedErrorMessage);
     }
 };
-
