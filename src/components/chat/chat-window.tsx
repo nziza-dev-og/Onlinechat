@@ -17,7 +17,7 @@ import { Input } from '@/components/ui/input'; // Import Input for search
 import { Separator } from '@/components/ui/separator'; // Import Separator
 import { cn } from '@/lib/utils'; // Import cn for conditional classes
 import { useToast } from "@/hooks/use-toast"; // Import useToast
-import { updateUserProfileDocument } from '@/lib/user-profile.service'; // Import the service
+import { updateUserProfileDocument, createOrUpdateUserProfile } from '@/lib/user-profile.service'; // Import the services
 import { isFirebaseError } from '@/lib/firebase-errors'; // Import the error checking utility
 
 
@@ -52,7 +52,7 @@ export function ChatWindow() {
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const { user, signOut } = useAuth();
-  const isInitialMessagesLoad = useRef(true); // Ref to track initial message load for notifications
+  const isInitialMessagesLoadForScroll = useRef(true); // Ref to track initial message load ONLY for auto-scrolling
   const messageListenerUnsubscribe = useRef<Unsubscribe | null>(null); // Ref for unsubscribe function
   const userListenerUnsubscribe = useRef<Unsubscribe | null>(null); // Ref for user listener unsubscribe
 
@@ -72,35 +72,33 @@ export function ChatWindow() {
     let isFocused = typeof document !== 'undefined' ? document.hasFocus() : true; // Assume focus on server
 
     const updateUserPresence = async (reason: string) => {
-      if (!user?.uid || !db) {
-        // console.log(`Presence update skipped (${reason}): No user or DB.`);
-        return;
-      }
-
-      try {
-        // console.log(`Updating presence for ${user.uid} (${reason})...`);
-        await updateUserProfileDocument(user.uid, { lastSeen: 'SERVER_TIMESTAMP' });
-        // console.log(`Presence updated for ${user.uid} (${reason}).`);
-      } catch (error: any) {
-         console.error(`Error updating user presence (${reason}) for ${user.uid}:`, error.message, error);
-         // Avoid showing toast for routine presence updates unless it's a permission error
-         if (isFirebaseError(error) && error.code === 'permission-denied') {
-             toast({
-                 title: "Presence Error",
-                 description: `Could not update online status due to permissions.`,
-                 variant: "destructive",
-                 duration: 5000,
-             });
-         } else if (!isFirebaseError(error)) { // Only toast for non-Firebase errors during routine updates
-             toast({
-                 title: "Presence Error",
-                 description: `Could not update online status. ${error.message}`,
-                 variant: "destructive",
-                 duration: 3000,
-            });
+        if (!user?.uid) {
+          // console.log(`Presence update skipped (${reason}): No user.`);
+          return;
+        }
+         // Check if db is available before calling the service
+         if (!db) {
+           console.warn(`Presence update skipped for ${user.uid} (${reason}): DB service not ready.`);
+           return;
          }
-      }
-    };
+
+        try {
+          // console.log(`Updating presence for ${user.uid} (${reason})...`);
+          await updateUserProfileDocument(user.uid, { lastSeen: 'SERVER_TIMESTAMP' });
+          // console.log(`Presence updated for ${user.uid} (${reason}).`);
+        } catch (error: any) {
+           // Log the detailed error from the service function
+           console.error(`Error updating user presence for ${user.uid} (${reason}):`, error.message, error);
+           // Optional: Show a less technical toast to the user
+           toast({
+               title: "Presence Error",
+               description: `Could not update online status. Please check console for details.`,
+               variant: "destructive",
+               duration: 5000,
+           });
+        }
+      };
+
 
     // Initial update
     const initialTimeoutId = setTimeout(() => updateUserPresence('initial'), 1500);
@@ -166,13 +164,14 @@ export function ChatWindow() {
 
     setLoadingUsers(true);
     console.log(`Setting up Firestore listener for 'users' collection, excluding self: ${user.uid}`);
-    const usersQuery = query(collection(db, 'users'), where('uid', '!=', user.uid));
+    // Query all users including the current user initially
+    const usersQuery = query(collection(db, 'users')); // Get all users
 
     // Store the new unsubscribe function
     userListenerUnsubscribe.current = onSnapshot(usersQuery, (snapshot) => {
       console.log(`Firestore 'users' snapshot received. Docs count: ${snapshot.docs.length}`);
       if (snapshot.empty) {
-        console.log("No other user documents found.");
+        console.log("No user documents found in 'users' collection.");
       }
 
       const fetchedUsers: UserProfile[] = snapshot.docs
@@ -192,7 +191,7 @@ export function ChatWindow() {
             createdAt: data.createdAt instanceof Timestamp ? data.createdAt : undefined,
           };
         })
-        .filter((u): u is UserProfile => u !== null); // Type guard to filter out nulls
+        .filter((u): u is UserProfile => u !== null && u.uid !== user.uid); // Filter out nulls AND the current user
 
       // Sort users alphabetically by displayName (case-insensitive, fallback to email)
       fetchedUsers.sort((a, b) => {
@@ -203,7 +202,7 @@ export function ChatWindow() {
         return 0;
       });
 
-      // console.log(`Mapped and sorted ${fetchedUsers.length} users. UIDs:`, fetchedUsers.map(u => u.uid));
+      // console.log(`Mapped, filtered, and sorted ${fetchedUsers.length} other users. UIDs:`, fetchedUsers.map(u => u.uid));
       setUsers(fetchedUsers);
       setLoadingUsers(false);
     }, (error: FirestoreError) => { // Use FirestoreError type
@@ -241,13 +240,13 @@ export function ChatWindow() {
         setMessages([]); // Clear messages
         setLoadingMessages(false);
         setChatId(null);
-        isInitialMessagesLoad.current = true; // Reset initial load flag
+        isInitialMessagesLoadForScroll.current = true; // Reset initial scroll flag
         // console.log("Message fetching skipped: No chat partner selected or DB not ready.");
         return; // Exit early
     }
 
     setLoadingMessages(true);
-    isInitialMessagesLoad.current = true; // Set flag for initial load
+    isInitialMessagesLoadForScroll.current = true; // Set flag for initial scroll
     const currentChatId = getChatId(user.uid, selectedChatPartner.uid);
     setChatId(currentChatId); // Store the current chat ID
     console.log(`Setting up messages listener for chat: ${currentChatId}`);
@@ -258,10 +257,14 @@ export function ChatWindow() {
       limit(100) // Consider pagination for very long chats
     );
 
+    // Flag to ensure we only process the initial batch for scrolling once
+    let initialSnapshotProcessed = false;
+    let hasScrolledInitially = false;
+
     // Store the new unsubscribe function
     messageListenerUnsubscribe.current = onSnapshot(messagesQuery, (querySnapshot) => {
        const newMessagesBatch: Message[] = []; // Collect new messages from this snapshot
-       let newMessagesReceivedAfterInitialLoad = false;
+       let newMessagesAdded = false; // Track if actual new messages were added in this snapshot
 
        querySnapshot.docChanges().forEach((change) => {
           if (change.type === "added") {
@@ -281,68 +284,69 @@ export function ChatWindow() {
                   photoURL: data.photoURL ?? null,
                };
                newMessagesBatch.push(message);
+               newMessagesAdded = true; // Mark that a new message was processed
 
                 // --- Notification Logic ---
-                // Check conditions: AFTER initial load, NOT from current user, and document is HIDDEN
-                if (!isInitialMessagesLoad.current && message.uid !== user?.uid) {
-                    newMessagesReceivedAfterInitialLoad = true; // Mark that new messages came in after initial load
-                     // Only show notification if the document (tab/window) is currently hidden
-                     if (typeof document !== 'undefined' && document.hidden) {
-                          console.log(`New message from ${message.displayName || 'User'} while tab hidden. Showing toast.`);
-                          toast({
-                              title: `New message from ${message.displayName || 'User'}`,
-                              description: message.text.substring(0, 50) + (message.text.length > 50 ? '...' : ''),
-                              duration: 5000, // Show for 5 seconds
-                              // Optional: Add an action? Requires more complex logic.
-                              // action: <ToastAction altText="Show chat">Show</ToastAction>,
-                          });
-                     } else {
-                         console.log("New message received while tab visible, no toast shown.");
-                     }
+                // Show notification if:
+                // 1. The message is NOT from the current user.
+                // 2. The document/tab is currently hidden.
+                if (message.uid !== user?.uid && typeof document !== 'undefined' && document.hidden) {
+                     console.log(`New message from ${message.displayName || 'User'} while tab hidden. Showing toast.`);
+                     toast({
+                         title: `New message from ${message.displayName || 'User'}`,
+                         description: message.text.substring(0, 50) + (message.text.length > 50 ? '...' : ''),
+                         duration: 5000, // Show for 5 seconds
+                         // Optional: Add an action? Requires more complex logic.
+                         // action: <ToastAction altText="Show chat">Show</ToastAction>,
+                     });
+                     // Also update the document title to indicate a new message
+                     document.title = `(*) ${document.title.replace(/^\(\*\)\s*/, '')}`; // Add (*) prefix, removing existing one first
+                } else {
+                    // console.log("New message received while tab visible or from self, no toast shown.");
                 }
           }
           // Handle 'modified' or 'removed' if needed
        });
 
-       // Update state efficiently and ensure correct order
-       if (newMessagesBatch.length > 0) {
+       // Update state efficiently and ensure correct order ONLY if new messages were added
+       if (newMessagesAdded) {
            setMessages(prevMessages => {
-               const combined = [...prevMessages, ...newMessagesBatch];
-               // Remove potential duplicates (though unlikely with docChanges 'added')
-               const uniqueMessages = Array.from(new Map(combined.map(m => [m.id, m])).values());
+               const existingIds = new Set(prevMessages.map(m => m.id));
+               const trulyNewMessages = newMessagesBatch.filter(m => !existingIds.has(m.id));
+               if (trulyNewMessages.length === 0) return prevMessages; // No actual new messages to add
+
+               const combined = [...prevMessages, ...trulyNewMessages];
                // Ensure final sort order by timestamp
-               return uniqueMessages.sort((a, b) => a.timestamp.toMillis() - b.timestamp.toMillis());
+               return combined.sort((a, b) => a.timestamp.toMillis() - b.timestamp.toMillis());
            });
        }
 
-
        setLoadingMessages(false);
 
-        // Scroll to bottom only after messages state has likely updated
-        // Use setTimeout to allow React to render the new messages first
+        // Scroll to bottom logic
         setTimeout(() => {
-            // Scroll if it's the initial load OR if new messages were received *after* the initial load
-             // AND the document is currently VISIBLE (don't auto-scroll if user is in another tab)
-            const shouldScroll = isInitialMessagesLoad.current || (newMessagesReceivedAfterInitialLoad && typeof document !== 'undefined' && !document.hidden);
+            // Scroll only if it's the initial load OR if new messages were actually added
+            // AND the document is currently VISIBLE
+            const shouldScroll = (isInitialMessagesLoadForScroll.current || newMessagesAdded) && typeof document !== 'undefined' && !document.hidden;
 
             if (shouldScroll) {
-                 // console.log(`Scrolling to bottom. Initial load: ${isInitialMessagesLoad.current}, New msgs received: ${newMessagesReceivedAfterInitialLoad}, Doc hidden: ${document?.hidden}`);
+                 // console.log(`Scrolling to bottom. Initial scroll flag: ${isInitialMessagesLoadForScroll.current}, New msgs added: ${newMessagesAdded}, Doc hidden: ${document?.hidden}`);
                  scrollToBottom();
             } else {
-                 // console.log(`Scroll skipped. Initial load: ${isInitialMessagesLoad.current}, New msgs received: ${newMessagesReceivedAfterInitialLoad}, Doc hidden: ${document?.hidden}`);
+                 // console.log(`Scroll skipped. Initial scroll flag: ${isInitialMessagesLoadForScroll.current}, New msgs added: ${newMessagesAdded}, Doc hidden: ${document?.hidden}`);
             }
 
-            // Mark initial load as complete *after* the first snapshot processing and potential scroll
-            if (isInitialMessagesLoad.current) {
-                 // console.log(`Initial messages loaded for chat ${currentChatId}.`);
-                 isInitialMessagesLoad.current = false;
+            // Mark initial scroll flag as complete *after* the first snapshot processing where messages were potentially added
+            if (isInitialMessagesLoadForScroll.current && newMessagesAdded) {
+                 // console.log(`Initial message scroll check complete for chat ${currentChatId}.`);
+                 isInitialMessagesLoadForScroll.current = false;
             }
         }, 100); // Small delay often helps
 
     }, (error: FirestoreError) => {
         console.error(`🔴 Error fetching messages for chat ${currentChatId}:`, error.code, error.message, error);
         setLoadingMessages(false);
-        isInitialMessagesLoad.current = false; // Ensure flag is reset on error
+        isInitialMessagesLoadForScroll.current = false; // Ensure flag is reset on error
         messageListenerUnsubscribe.current = null; // Clear ref on error
         toast({
             title: "Error Fetching Messages",
@@ -363,23 +367,72 @@ export function ChatWindow() {
   }, [user, selectedChatPartner, toast, scrollToBottom]); // Add scrollToBottom to dependencies
 
 
+  // Effect to remove the (*) from the title when the window/tab gains focus
+  useEffect(() => {
+    const handleFocus = () => {
+        if (typeof document !== 'undefined' && document.title.startsWith('(*)')) {
+            // console.log("Window focused, removing notification indicator from title.");
+            document.title = document.title.replace(/^\(\*\)\s*/, ''); // Remove (*) prefix
+        }
+    };
+
+    if (typeof window !== 'undefined') {
+        window.addEventListener('focus', handleFocus);
+    }
+
+    // Cleanup
+    return () => {
+        if (typeof window !== 'undefined') {
+            window.removeEventListener('focus', handleFocus);
+        }
+    };
+  }, []); // Empty dependency array, runs once on mount
+
 
   // Handles selecting a user from the list
-  const handleSelectUser = useCallback((partner: UserProfile) => {
-     if (selectedChatPartner?.uid !== partner.uid) { // Only proceed if a *different* user is selected
+  const handleSelectUser = useCallback(async (partner: UserProfile) => {
+     if (selectedChatPartner?.uid !== partner.uid && user?.uid) { // Only proceed if a *different* user is selected and current user exists
         console.log(`Selecting chat partner: ${partner.displayName || partner.email} (${partner.uid})`);
         setSelectedChatPartner(partner);
         // Reset state immediately for better perceived responsiveness
         setMessages([]);
         setLoadingMessages(true); // Indicate loading for the new chat
-        isInitialMessagesLoad.current = true; // Reset flag for the new chat's initial load
-        setChatId(null); // Clear old chatId, useEffect will set the new one
+        isInitialMessagesLoadForScroll.current = true; // Reset flag for the new chat's initial scroll
+        const newChatId = getChatId(user.uid, partner.uid);
+        setChatId(newChatId); // Set the new chat ID
+
+        // Ensure the chat document exists in Firestore.
+        // This helps if users haven't chatted before.
+        if (db) {
+            const chatDocRef = doc(db, 'chats', newChatId);
+            try {
+                const chatDocSnap = await getDoc(chatDocRef);
+                if (!chatDocSnap.exists()) {
+                     console.log(`Chat document ${newChatId} does not exist. Creating...`);
+                    // Create the chat document with participants array (optional, but good practice)
+                    await setDoc(chatDocRef, {
+                        participants: [user.uid, partner.uid],
+                        createdAt: serverTimestamp()
+                    });
+                    console.log(`Chat document ${newChatId} created.`);
+                }
+            } catch (error) {
+                console.error(`Error ensuring chat document ${newChatId} exists:`, error);
+                toast({
+                    title: "Chat Error",
+                    description: "Could not initialize chat session.",
+                    variant: "destructive"
+                });
+            }
+        }
+
         // Clear search term when a user is selected? Optional UX choice.
         // setSearchTerm('');
       } else {
-          console.log(`User ${partner.displayName || partner.email} is already selected.`);
+          console.log(`User ${partner.displayName || partner.email} is already selected or current user is missing.`);
       }
-  }, [selectedChatPartner?.uid]); // Dependency: only re-create if selectedChatPartner changes
+  }, [selectedChatPartner?.uid, user?.uid, toast]); // Dependencies
+
 
    // Filter users based on search term (case-insensitive)
    const filteredUsers = users.filter(u =>
