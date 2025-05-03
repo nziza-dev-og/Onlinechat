@@ -5,7 +5,8 @@ import * as React from 'react';
 import { PostForm } from '@/components/posts/post-form';
 import { PostCard } from '@/components/posts/post-card';
 import { fetchPosts } from '@/lib/posts.service';
-import type { Post } from '@/types';
+// Import both types, use PostSerializable for state and fetched data
+import type { Post, PostSerializable } from '@/types';
 import { useAuth } from '@/hooks/use-auth';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Loader2, MessageSquarePlus } from 'lucide-react';
@@ -14,7 +15,8 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Separator } from '@/components/ui/separator';
 
 export default function PostsPage() {
-  const [posts, setPosts] = React.useState<Post[]>([]);
+  // State now holds PostSerializable objects
+  const [posts, setPosts] = React.useState<PostSerializable[]>([]);
   const [loadingPosts, setLoadingPosts] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const { user, loading: authLoading } = useAuth();
@@ -25,6 +27,7 @@ export default function PostsPage() {
       setLoadingPosts(true);
       setError(null);
       try {
+        // fetchPosts now returns PostSerializable[]
         const fetchedPosts = await fetchPosts(50); // Fetch latest 50 posts
         setPosts(fetchedPosts);
       } catch (err: any) {
@@ -39,17 +42,17 @@ export default function PostsPage() {
   }, []); // Empty dependency array means this runs once on mount
 
   // Handler for optimistic updates when a new post is added via the form
+  // The form callback provides a temporary Post object with a Date timestamp
   const handleNewPost = (newPost: Post) => {
-     // Add the new post to the top of the list optimistically
-     setPosts(prevPosts => [
-        {
-           ...newPost,
-           // Ensure timestamp is a Date object for immediate rendering,
-           // even though Firestore will store it as Timestamp
-           timestamp: newPost.timestamp instanceof Date ? newPost.timestamp : (newPost.timestamp as any).toDate()
-        } as Post,
-        ...prevPosts
-      ]);
+     // Convert the temporary Post object to PostSerializable before adding to state
+     const serializablePost: PostSerializable = {
+       ...newPost,
+       // Convert the Date timestamp to ISO string for consistency
+       timestamp: (newPost.timestamp instanceof Date ? newPost.timestamp : new Date()).toISOString()
+     };
+
+     // Add the serializable post to the top of the list
+     setPosts(prevPosts => [serializablePost, ...prevPosts]);
   };
 
 
@@ -78,6 +81,7 @@ export default function PostsPage() {
              </CardFooter>
          </Card>
       ) : user ? (
+        // Pass the original handleNewPost which expects a Post object
         <PostForm onPostAdded={handleNewPost} />
       ) : (
          <Card className="w-full shadow-md mb-6 text-center border-dashed border-primary/50 bg-primary/10">
@@ -137,7 +141,7 @@ export default function PostsPage() {
            </Card>
         )}
 
-        {/* Display Posts */}
+        {/* Display Posts - Pass PostSerializable objects to PostCard */}
         {!loadingPosts && !error && posts.map((post) => (
           <PostCard key={post.id} post={post} />
         ))}

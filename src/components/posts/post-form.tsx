@@ -14,6 +14,7 @@ import { Loader2, Send, Image as ImageIcon, Video } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { useToast } from '@/hooks/use-toast';
 import { addPost, type PostInput } from '@/lib/posts.service'; // Import the service
+import type { Post } from '@/types'; // Import Post type for the callback
 
 // Validation schema for the post form
 const postSchema = z.object({
@@ -31,7 +32,8 @@ const postSchema = z.object({
 type PostFormData = z.infer<typeof postSchema>;
 
 interface PostFormProps {
-  onPostAdded?: (newPost: any) => void; // Optional callback after a post is successfully added
+  // Callback expects the Post type with a Date timestamp for optimistic updates
+  onPostAdded?: (newPost: Post) => void;
 }
 
 export function PostForm({ onPostAdded }: PostFormProps) {
@@ -73,8 +75,9 @@ export function PostForm({ onPostAdded }: PostFormProps) {
         description: 'Your post has been successfully added.',
       });
       form.reset(); // Clear the form
-       // Construct a temporary post object to pass to the callback for optimistic updates
-       const tempPost = {
+
+       // Construct a temporary Post object with a Date timestamp
+       const tempPost: Post = {
            id: postId, // Use the returned ID
            ...postInput,
            timestamp: new Date() // Use client date as placeholder
@@ -172,3 +175,4 @@ export function PostForm({ onPostAdded }: PostFormProps) {
     </Card>
   );
 }
+

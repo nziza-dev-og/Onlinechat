@@ -13,7 +13,7 @@ import {
   Timestamp,
   type FirestoreError
 } from 'firebase/firestore';
-import type { Post } from '@/types';
+import type { Post, PostSerializable } from '@/types'; // Import PostSerializable
 import { isFirebaseError } from '@/lib/firebase-errors';
 
 // Input type for creating a post, containing only serializable data.
@@ -51,7 +51,7 @@ export const addPost = async (postData: PostInput): Promise<string> => {
     const postsCollectionRef = collection(db, 'posts');
     const newPostDocRef = await addDoc(postsCollectionRef, {
       ...postData,
-      timestamp: firestoreServerTimestamp(),
+      timestamp: firestoreServerTimestamp(), // Firestore handles this on the server
     });
     console.log(`Firestore: Post created with ID: ${newPostDocRef.id}`);
     return newPostDocRef.id;
@@ -63,13 +63,13 @@ export const addPost = async (postData: PostInput): Promise<string> => {
 };
 
 /**
- * Fetches the most recent posts from the 'posts' collection.
+ * Fetches the most recent posts from the 'posts' collection and converts Timestamps.
  *
  * @param count - The maximum number of posts to fetch (default: 50).
- * @returns Promise<Post[]> - An array of post objects.
+ * @returns Promise<PostSerializable[]> - An array of post objects with serializable timestamps.
  * @throws Error if db is not initialized or fetch fails.
  */
-export const fetchPosts = async (count: number = 50): Promise<Post[]> => {
+export const fetchPosts = async (count: number = 50): Promise<PostSerializable[]> => {
   if (!db) {
      console.error("🔴 fetchPosts Error: Firestore (db) not available.");
      throw new Error("Database service not available.");
@@ -84,7 +84,7 @@ export const fetchPosts = async (count: number = 50): Promise<Post[]> => {
 
     const querySnapshot = await getDocs(postsQuery);
 
-    const posts: Post[] = querySnapshot.docs.map(doc => {
+    const posts: PostSerializable[] = querySnapshot.docs.map(doc => {
       const data = doc.data();
       // Basic validation
        if (!data.uid || !(data.timestamp instanceof Timestamp)) {
@@ -99,9 +99,10 @@ export const fetchPosts = async (count: number = 50): Promise<Post[]> => {
         text: data.text ?? null,
         imageUrl: data.imageUrl ?? null,
         videoUrl: data.videoUrl ?? null,
-        timestamp: data.timestamp,
-      } as Post;
-    }).filter((post): post is Post => post !== null); // Filter out invalid documents
+        // Convert Timestamp to ISO string for serialization
+        timestamp: data.timestamp.toDate().toISOString(),
+      };
+    }).filter((post): post is PostSerializable => post !== null); // Filter out invalid documents
 
     console.log(`Firestore: Fetched ${posts.length} posts.`);
     return posts;

@@ -1,6 +1,6 @@
 
-import type { Post } from '@/types';
-import { formatDistanceToNowStrict } from 'date-fns';
+import type { PostSerializable } from '@/types'; // Import PostSerializable
+import { formatDistanceToNowStrict, parseISO } from 'date-fns'; // Import parseISO
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import Image from 'next/image';
@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils';
 import { User } from 'lucide-react';
 
 interface PostCardProps {
-  post: Post;
+  post: PostSerializable; // Expect PostSerializable with string timestamp
 }
 
 // Consistent Helper function to get initials
@@ -23,25 +23,20 @@ const getInitials = (name: string | null | undefined): string => {
     return '?';
 };
 
-// Function to safely format timestamp
-const formatTimestamp = (timestamp: any): string => {
-    if (timestamp && typeof timestamp.toDate === 'function') {
-        try {
-            return formatDistanceToNowStrict(timestamp.toDate(), { addSuffix: true });
-        } catch (error) {
-            console.error("Error formatting timestamp:", error, timestamp);
-            return 'Invalid date';
-        }
-    } else if (timestamp instanceof Date) {
-        // Handle case where it might already be a Date (e.g., optimistic update)
-        try {
-            return formatDistanceToNowStrict(timestamp, { addSuffix: true });
-        } catch (error) {
-            console.error("Error formatting Date object:", error, timestamp);
-            return 'Invalid date';
-        }
+// Function to safely format timestamp from ISO string
+const formatTimestamp = (timestampISO: string | null | undefined): string => {
+    if (!timestampISO) {
+        return ''; // Return empty if no timestamp string
     }
-    return '';
+    try {
+        // Parse the ISO string into a Date object
+        const date = parseISO(timestampISO);
+        // Format the distance
+        return formatDistanceToNowStrict(date, { addSuffix: true });
+    } catch (error) {
+        console.error("Error formatting ISO timestamp:", error, timestampISO);
+        return 'Invalid date'; // Fallback for invalid date strings
+    }
 };
 
 export function PostCard({ post }: PostCardProps) {
@@ -54,6 +49,7 @@ export function PostCard({ post }: PostCardProps) {
         </Avatar>
         <div className="flex flex-col">
           <span className="font-semibold text-sm text-card-foreground">{post.displayName || 'Anonymous User'}</span>
+          {/* Use the updated formatTimestamp function */}
           <span className="text-xs text-muted-foreground">{formatTimestamp(post.timestamp)}</span>
         </div>
       </CardHeader>
@@ -105,3 +101,4 @@ export function PostCard({ post }: PostCardProps) {
     </Card>
   );
 }
+

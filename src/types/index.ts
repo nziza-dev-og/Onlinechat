@@ -15,19 +15,20 @@ export interface Message {
   photoURL: string | null;
 }
 
-// Added UserProfile type
+// UserProfile type remains unchanged
 export interface UserProfile {
     uid: string;
     displayName: string | null;
     email: string | null;
     photoURL: string | null;
-    status?: string | null; // Added optional status field
+    status?: string | null;
     // Allow Date for input, Firestore converts to Timestamp. Reading will likely be Timestamp.
     lastSeen?: Timestamp | Date;
     createdAt?: Timestamp | Date;
 }
 
-// Added Post type
+
+// Original Post type - might still be used internally where Timestamp object is okay
 export interface Post {
     id: string;
     uid: string; // User ID of the author
@@ -36,7 +37,17 @@ export interface Post {
     text?: string | null; // Optional text content
     imageUrl?: string | null; // Optional image URL
     videoUrl?: string | null; // Optional video URL
-    timestamp: Timestamp; // Firestore Timestamp of creation
+    timestamp: Timestamp | Date; // Can be Timestamp or Date (e.g., for optimistic updates)
 }
 
-
+// New Post type with serializable timestamp for passing to Client Components
+export interface PostSerializable {
+    id: string;
+    uid: string;
+    displayName: string | null;
+    photoURL: string | null;
+    text?: string | null;
+    imageUrl?: string | null;
+    videoUrl?: string | null;
+    timestamp: string; // Use ISO string for serialization
+}
