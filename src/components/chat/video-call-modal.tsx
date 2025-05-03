@@ -1,4 +1,3 @@
-
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -9,7 +8,7 @@ import { Phone, PhoneOff, Mic, MicOff, Video, VideoOff, Loader2, AlertCircle, X 
 import { useToast } from '@/hooks/use-toast';
 import type { UserProfile, User } from '@/types';
 // Import RTDB functions
-import { getDatabase, ref as rtdbRef, onValue, off, remove, type DatabaseReference, type DataSnapshot, type Unsubscribe as RtdbUnsubscribe } from "firebase/database";
+import { getDatabase, ref as rtdbRef, onValue, off, remove, type DatabaseReference, type DataSnapshot, type Unsubscribe as RtdbUnsubscribe, serverTimestamp as rtdbServerTimestamp } from "firebase/database";
 import { rtdb } from '@/lib/firebase';
 import { sendSignalingMessageRTDB, removeCallSignalingData } from '@/lib/webrtc.service';
 import type { SignalingMessage } from '@/types';
@@ -58,6 +57,7 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
   const [isCaller, setIsCaller] = useState(false);
   const [showMissedCall, setShowMissedCall] = useState(false); // Added state for missed call display
   const [isRTDBListenerAttached, setIsRTDBListenerAttached] = useState(false); // Track listener status
+  const [isCheckingPermission, setIsCheckingPermission] = useState(true); // State for initial permission check
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
@@ -139,8 +139,6 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
            setIsRTDBListenerAttached(false); // Update state
            console.log("RTDB messages listener detached.");
        }
-       // Avoid setting callSignalingRef.current to null if it might be needed elsewhere
-       // callSignalingRef.current = null;
    }, []);
 
   // Combined cleanup function
@@ -299,8 +297,6 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
                     sendSignalingMessage({ type: 'candidate', payload: event.candidate.toJSON() });
                 } else {
                     console.log("WebRTC: End of ICE candidates.");
-                    // Handle end of candidates if necessary (often not required for trickle ICE)
-                     // sendSignalingMessage({ type: 'candidate', payload: null }); // Send null candidate explicitly
                 }
             };
 
@@ -321,7 +317,6 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
                         break;
                     case 'disconnected':
                         console.warn("WebRTC: ICE Disconnected. Might try to reconnect...");
-                        // Consider implementing ICE restart logic here if needed
                         break;
                     case 'failed':
                         console.error("WebRTC: ICE Connection Failed.");
@@ -333,7 +328,6 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
                         break;
                     case 'closed':
                         console.log("WebRTC: ICE Connection Closed.");
-                         // If the connection closes unexpectedly while the call should be active, end it.
                          if (currentCallStatus !== 'idle' && currentCallStatus !== 'ended') {
                              updateStatus('ended'); // Ensure state is set before cleanup
                              handleEndCall();
@@ -410,17 +404,13 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
 
             Object.keys(messages).forEach(async key => {
                 const message = messages[key] as SignalingMessage;
-                // Basic message validation
                  if (!message || message.senderId === currentUser?.uid || !message.type || !message.payload) {
-                     // console.log(`RTDB: Ignoring own message or invalid message (Type: ${message.type})`);
                      return;
                  }
-                 // Ignore messages if call is already ended/error/idle
                  if (['ended', 'error', 'idle'].includes(callStatusRef.current)) {
                      console.log(`RTDB: Ignoring message type ${message.type} because call status is ${callStatusRef.current}.`);
                      return;
                  }
-                 // Optional: Add timestamp check to ignore potentially very old messages?
 
                 let pc = peerConnectionRef.current;
 
@@ -444,15 +434,12 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
                 try {
                     switch (message.type) {
                         case 'offer':
-                            // Handle offer description - potential glare condition check
                              if (pc.signalingState !== 'stable') {
                                  console.warn(`WebRTC: Received offer in non-stable state: ${pc.signalingState}. Glare handling needed?`);
-                                 // Simple glare handling: initiator (caller) usually wins. Receiver might ignore.
                                  if (isCaller) {
                                      console.log("WebRTC Glare: Ignoring received offer as initiator.");
                                      return;
                                  }
-                                 // More complex handling might involve rollback and re-negotiation.
                              }
                              console.log("%cWebRTC: Processing received offer...", 'color: green');
                               if (isMountedRef.current) updateStatus('receiving'); // Ensure state reflects incoming call
@@ -467,7 +454,6 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
                              break;
 
                         case 'answer':
-                            // Handle answer description
                             if (pc.signalingState !== 'have-local-offer') {
                                  console.warn(`WebRTC: Received answer in unexpected state: ${pc.signalingState}. Ignoring.`);
                                  return;
@@ -478,7 +464,6 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
                              break;
 
                         case 'candidate':
-                             // Add ICE candidate
                              if (message.payload && pc.remoteDescription) { // Only add if remote description is set
                                  // console.log("%cWebRTC: Adding received ICE candidate...", 'color: cyan');
                                  await pc.addIceCandidate(new RTCIceCandidate(message.payload));
@@ -487,7 +472,6 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
                                  console.log("RTDB: Received end-of-candidates signal (null candidate).");
                              } else {
                                  console.warn("WebRTC: Received ICE candidate but remote description is not set yet. Add candidate failed.");
-                                 // Consider buffering candidates if necessary
                              }
                              break;
                     }
@@ -516,14 +500,14 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
   useEffect(() => {
         if (!isOpen) {
             const statusBeforeClose = callStatusRef.current;
-            // Determine if cleanup should remove RTDB data (only if call was active and closed explicitly)
             const shouldRemoveRtdb = statusBeforeClose !== 'idle' && statusBeforeClose !== 'ended';
             cleanup(shouldRemoveRtdb, statusBeforeClose);
             return; // Stop execution if modal is closed
         }
 
         console.log("Video call modal opened. Initializing...");
-        updateStatus('checking_perms'); // Reset status on open
+        setIsCheckingPermission(true); // Start permission check
+        updateStatus('checking_perms'); // Set status to checking
 
         // Ensure previous listener is detached before setting up a new one
         detachListener();
@@ -544,6 +528,7 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
                      localVideoRef.current.play().catch(e => console.error("Local video play failed:", e));
                 }
                 updateStatus('ready');
+                setIsCheckingPermission(false); // Permission check complete
                 // Setup RTDB listener *after* getting media and setting status to ready
                 setupSignalingListener();
             })
@@ -551,6 +536,7 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
                  if (!isMountedRef.current) return; // Check mount status
                  console.error("Error accessing camera/mic:", error.name, error.message);
                  updateStatus('perms_denied');
+                 setIsCheckingPermission(false); // Permission check complete (failed)
                  toast({
                      variant: 'destructive',
                      title: 'Permissions Required',
@@ -596,7 +582,6 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
         }
     } catch (clearError) {
         console.warn("Could not clear previous signaling data:", clearError);
-        // Decide if this is fatal. Maybe continue the call attempt anyway?
     }
 
     // Initialize PeerConnection as the caller
@@ -646,17 +631,17 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
     const currentStatus = callStatusRef.current; // Use ref for latest status
     switch (currentStatus) {
       case 'checking_perms':
-        return <><Loader2 className="mr-1 h-4 w-4 animate-spin" /> Requesting permissions...</>;
+        return <span className="flex items-center"><Loader2 className="mr-1 h-4 w-4 animate-spin" /> Requesting permissions...</span>;
       case 'perms_denied':
-        return <><AlertCircle className="mr-1 h-4 w-4 text-destructive" /> Permissions denied. Allow access to proceed.</>;
+        return <span className="flex items-center text-destructive"><AlertCircle className="mr-1 h-4 w-4" /> Permissions denied. Allow access to proceed.</span>;
       case 'ready':
         return 'Ready to call.';
       case 'calling':
-        return <><Loader2 className="mr-1 h-4 w-4 animate-spin" /> Calling {partnerUser.displayName || 'User'}...</>;
+        return <span className="flex items-center"><Loader2 className="mr-1 h-4 w-4 animate-spin" /> Calling {partnerUser.displayName || 'User'}...</span>;
        case 'receiving': // Status shown while processing offer
            return `Incoming call from ${partnerUser.displayName || 'User'}...`;
        case 'connecting': // Status shown during ICE connection checks
-           return <><Loader2 className="mr-1 h-4 w-4 animate-spin"/> Connecting...</>;
+           return <span className="flex items-center"><Loader2 className="mr-1 h-4 w-4 animate-spin"/> Connecting...</span>;
       case 'in_call':
         return <span className="text-green-600 font-medium">Connected</span>;
        case 'ended': // Status after call ends
@@ -716,7 +701,6 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
                   {callStatusRef.current === 'connecting' && <p className="text-white/70 text-sm mt-1">Connecting...</p>}
                   {callStatusRef.current === 'ended' && !showMissedCall && <p className="text-white/70 text-sm mt-1">Call Ended</p>}
                   {callStatusRef.current === 'error' && <p className="text-red-400 text-sm mt-1">Error</p>}
-                  {/* Add more specific status indicators if needed */}
                </div>
              )}
           </div>
@@ -736,12 +720,12 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
             ) : (
               // Placeholder when no stream, permissions denied, camera off, or checking perms
               <div className="w-full h-full flex items-center justify-center bg-muted">
-                 {callStatusRef.current === 'checking_perms' && <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />}
-                 {callStatusRef.current === 'perms_denied' && <AlertCircle className="h-8 w-8 text-destructive" />}
+                 {isCheckingPermission && <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />}
+                 {callStatusRef.current === 'perms_denied' && !isCheckingPermission && <AlertCircle className="h-8 w-8 text-destructive" />}
                  {/* Show VideoOff icon if camera is manually turned off */}
-                  {['ready', 'calling', 'receiving', 'connecting', 'in_call'].includes(callStatusRef.current) && isCameraOff && <VideoOff className="h-8 w-8 text-muted-foreground" />}
+                  {localStream && ['ready', 'calling', 'receiving', 'connecting', 'in_call'].includes(callStatusRef.current) && isCameraOff && <VideoOff className="h-8 w-8 text-muted-foreground" />}
                   {/* Show user avatar as fallback */}
-                  {(!localStream || ['idle', 'ended', 'error', 'perms_denied'].includes(callStatusRef.current) || isCameraOff) && currentUser && (
+                  {currentUser && (!localStream || ['idle', 'ended', 'error', 'perms_denied'].includes(callStatusRef.current) || isCameraOff) && !isCheckingPermission && (
                      <Avatar className="h-12 w-12">
                           <AvatarImage src={currentUser.photoURL || undefined} />
                           <AvatarFallback>{getInitials(currentUser.displayName)}</AvatarFallback>
@@ -780,7 +764,6 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
             )}
 
            {/* Placeholder for 'Accept' - Implicitly handled by answering the offer */}
-           {/* You might add a visual cue or button here if desired */}
            {/* {callStatusRef.current === 'receiving' && ( ... )} */}
 
           {/* Loading Indicator during calling/connecting */}
@@ -814,5 +797,3 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
     </Dialog>
   );
 }
-
-
