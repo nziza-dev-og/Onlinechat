@@ -1,8 +1,7 @@
-
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { app } from '@/lib/firebase'; // Import app only
+import { app, db as firebaseDb } from '@/lib/firebase'; // Import app and renamed db
 import { collection, query, orderBy, onSnapshot, limit, where, addDoc, serverTimestamp, doc, getDoc, setDoc, Timestamp, updateDoc, type Unsubscribe, type FirestoreError, getFirestore, type Firestore } from 'firebase/firestore'; // Keep full imports here
 import type { Message, UserProfile, Chat } from '@/types';
 import { ChatMessage } from './chat-message';
@@ -89,11 +88,15 @@ export function ChatWindow() {
   // Initialize Firestore instance on mount
   useEffect(() => {
     try {
-        const currentDb = getFirestore(app);
-        setDbInstance(currentDb);
-        console.log("Firestore instance obtained successfully.");
-    } catch (error) {
-        console.error("🔴 Failed to get Firestore instance in ChatWindow:", error);
+        // Use the db instance directly imported from firebase.ts
+        // This assumes firebase.ts successfully initializes and exports db
+        if (!firebaseDb) {
+             throw new Error("Firestore service (db) is not available from firebase.ts");
+        }
+        setDbInstance(firebaseDb);
+        console.log("Firestore instance obtained successfully from firebase.ts.");
+    } catch (error: any) {
+        console.error("🔴 Failed to get Firestore instance in ChatWindow:", error.message, error);
         toast({
             title: "Database Error",
             description: "Could not connect to the database. Chat features may be limited.",
@@ -101,7 +104,7 @@ export function ChatWindow() {
             duration: 10000, // Make it persistent
         });
     }
-  }, [toast]);
+  }, [toast]); // Only run on mount
 
 
    const scrollToBottom = useCallback(() => {
@@ -125,38 +128,40 @@ export function ChatWindow() {
     useEffect(() => {
         let intervalId: NodeJS.Timeout | null = null;
         let isFocused = typeof document !== 'undefined' ? document.hasFocus() : true;
+        let currentChatIdForCleanup: string | null = null; // Variable to hold chatId for cleanup
 
         const updateUserPresence = async (reason: string) => {
-        if (!user?.uid) {
-            // console.log("Presence update skipped: No authenticated user.");
-            return;
-        }
-        // Check if dbInstance is available before calling the service
-        if (!dbInstance) {
-            console.warn(`Presence update skipped for ${user.uid} (${reason}): DB instance not ready.`);
-            return;
-        }
+            if (!user?.uid) {
+                // console.log("Presence update skipped: No authenticated user.");
+                return;
+            }
+            // Use the dbInstance state variable
+            if (!dbInstance) {
+                console.warn(`Presence update skipped for ${user.uid} (${reason}): DB instance not ready.`);
+                return;
+            }
 
             try {
-                // Pass the user ID and the timestamp sentinel
                 await updateUserProfileDocument(user.uid, {
                     lastSeen: 'SERVER_TIMESTAMP'
                 });
                 // console.log(`✅ User presence updated for ${user.uid} (${reason}).`);
             } catch (error: any) {
-                // Log the detailed error from the service function
-                console.error(`🔴 Error updating user presence for ${user.uid} (${reason}):`, error.message, error);
-                // Optional: Show a less technical toast to the user
-                 toast({
-                     title: "Presence Error",
-                     description: `Could not update online status: ${error.message}.`,
-                     variant: "destructive",
-                     duration: 5000,
-                 });
+                // Log the detailed error from the service function, but avoid redundant console.error if the service already logs
+                console.error(`🔴 Error updating user presence for ${user.uid} (${reason}): "${error.message}"`, error);
+                // Show a less technical toast to the user if it's not just a network blip
+                 if (!error.message?.includes("Network Error")) { // Example check
+                    toast({
+                        title: "Presence Error",
+                        description: `Could not update online status.`, // More generic message
+                        variant: "destructive",
+                        duration: 5000,
+                    });
+                 }
             }
         };
 
-
+        // --- Presence Logic ---
         const initialTimeoutId = setTimeout(() => updateUserPresence('initial'), 1500);
         intervalId = setInterval(() => updateUserPresence('interval'), 4 * 60 * 1000); // 4 minutes
 
@@ -172,9 +177,11 @@ export function ChatWindow() {
 
         const handleBlur = async () => {
             isFocused = false;
-            if (user?.uid && chatId && dbInstance) {
+            // Update currentChatIdForCleanup when chatId changes
+            currentChatIdForCleanup = chatId;
+            if (user?.uid && currentChatIdForCleanup && dbInstance) {
                 try {
-                    await updateTypingStatus(chatId, user.uid, false);
+                    await updateTypingStatus(currentChatIdForCleanup, user.uid, false);
                 } catch (typingError) {
                     console.error("Error clearing typing status on blur:", typingError);
                 }
@@ -187,19 +194,22 @@ export function ChatWindow() {
         }
         handleFocus(); // Initial focus check
 
+
         return () => {
-            clearTimeout(initialTimeoutId);
-            if (intervalId) clearInterval(intervalId);
-            if (typeof window !== 'undefined') {
-                window.removeEventListener('focus', handleFocus);
-                window.removeEventListener('blur', handleBlur);
-            }
-            // Cleanup typing status on unmount
-            if (user?.uid && chatId && dbInstance) {
-                updateTypingStatus(currentChatId || chatId, user.uid, false).catch(err => console.error("Cleanup error for typing status:", err));
-            }
-        };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+             console.log("Cleaning up presence and typing effect...");
+             clearTimeout(initialTimeoutId);
+             if (intervalId) clearInterval(intervalId);
+             if (typeof window !== 'undefined') {
+                 window.removeEventListener('focus', handleFocus);
+                 window.removeEventListener('blur', handleBlur);
+             }
+             // Cleanup typing status on unmount using the captured chatId
+              if (user?.uid && currentChatIdForCleanup && dbInstance) {
+                  updateTypingStatus(currentChatIdForCleanup, user.uid, false)
+                     .catch(err => console.error("Cleanup error for typing status:", err));
+              }
+         };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user?.uid, chatId, toast, dbInstance]); // Add dbInstance to dependency array
 
 
@@ -307,12 +317,11 @@ export function ChatWindow() {
 
 
   // Fetch messages and listen to chat document for typing status
-   let currentChatId: string | null = null; // Define outside useEffect for cleanup access
    useEffect(() => {
      // Ensure cleanup runs if dependencies change or component unmounts
      const unsubscribeMessages = messageListenerUnsubscribe.current;
      const unsubscribeChatDoc = chatDocListenerUnsubscribe.current;
-     const chatIdForCleanup = currentChatId; // Capture chatId for cleanup
+     const chatIdForCleanup = chatId; // Capture chatId for cleanup
 
      return () => {
         if (unsubscribeMessages) {
@@ -330,7 +339,7 @@ export function ChatWindow() {
               updateTypingStatus(chatIdForCleanup, user.uid, false).catch(err => console.error("Cleanup error for typing status:", err));
          }
       };
-   }, []); // Run cleanup only on unmount
+   }, [chatId, user?.uid, dbInstance]); // Add dependencies chatId, user?.uid, dbInstance
 
    useEffect(() => {
     // Re-setup listeners if dependencies change
@@ -345,10 +354,10 @@ export function ChatWindow() {
           chatDocListenerUnsubscribe.current = null;
       }
 
-    if (!user || !selectedChatPartner || !dbInstance) {
+    if (!user || !selectedChatPartner || !dbInstance || !chatId) { // Ensure chatId is also set
         setMessages([]);
         setLoadingMessages(false);
-        setChatId(null);
+        // Do not set chatId to null here, let handleSelectUser manage it
         setIsPartnerTyping(false);
         setReplyingToMessage(null);
         setIsVideoButtonDisabled(true);
@@ -358,22 +367,14 @@ export function ChatWindow() {
 
     setLoadingMessages(true);
     isInitialMessagesLoadForScroll.current = true;
-    currentChatId = getChatId(user.uid, selectedChatPartner.uid); // Assign to the outer scope variable
-    setChatId(currentChatId);
+    // chatId is now set by handleSelectUser
     setIsVideoButtonDisabled(false);
-    // Clear unread status for the selected chat when opened
-     setHasUnreadMap(prevMap => {
-         const newMap = new Map(prevMap);
-         if (newMap.has(selectedChatPartner.uid)) {
-             newMap.set(selectedChatPartner.uid, false);
-             console.log(`Cleared unread status for user ${selectedChatPartner.uid}`);
-         }
-         return newMap;
-     });
-     console.log(`Setting up listeners for chat: ${currentChatId}`);
+    // Clear unread status handled in handleSelectUser
+
+     console.log(`Setting up listeners for chat: ${chatId}`);
 
     const messagesQuery = query(
-      collection(dbInstance, 'chats', currentChatId, 'messages'),
+      collection(dbInstance, 'chats', chatId, 'messages'),
       orderBy('timestamp', 'asc'),
       limit(100) // Consider pagination
     );
@@ -492,7 +493,7 @@ export function ChatWindow() {
         }, 100);
 
     }, (error: FirestoreError) => {
-        console.error(`🔴 Error fetching messages for chat ${currentChatId}:`, error.code, error.message, error);
+        console.error(`🔴 Error fetching messages for chat ${chatId}:`, error.code, error.message, error);
         setLoadingMessages(false);
         isInitialMessagesLoadForScroll.current = false;
         messageListenerUnsubscribe.current = null;
@@ -504,24 +505,30 @@ export function ChatWindow() {
     });
 
     // Listener for typing status
-    const chatDocRef = doc(dbInstance, 'chats', currentChatId);
+    const chatDocRef = doc(dbInstance, 'chats', chatId);
     chatDocListenerUnsubscribe.current = onSnapshot(chatDocRef, (docSnap) => {
         if (docSnap.exists()) {
             const chatData = docSnap.data() as Chat;
-            const partnerTyping = chatData.typing?.[selectedChatPartner.uid] ?? false;
-            setIsPartnerTyping(partnerTyping);
+            // Ensure selectedChatPartner is not null before accessing uid
+            const partnerUid = selectedChatPartner?.uid;
+            if (partnerUid) {
+                 const partnerTyping = chatData.typing?.[partnerUid] ?? false;
+                 setIsPartnerTyping(partnerTyping);
+            } else {
+                setIsPartnerTyping(false); // Partner not selected, can't be typing
+            }
         } else {
-            console.warn(`Chat document ${currentChatId} does not exist yet for typing listener.`);
+            console.warn(`Chat document ${chatId} does not exist yet for typing listener.`);
             setIsPartnerTyping(false);
         }
     }, (error: FirestoreError) => {
-        console.error(`🔴 Error listening to chat document ${currentChatId}:`, error.code, error.message);
+        console.error(`🔴 Error listening to chat document ${chatId}:`, error.code, error.message);
         setIsPartnerTyping(false);
         chatDocListenerUnsubscribe.current = null;
     });
 
     // Return statement handled by the first useEffect for cleanup
-   }, [user, selectedChatPartner, dbInstance, toast, scrollToBottom]); // Add dbInstance and other deps
+   }, [user, selectedChatPartner, dbInstance, chatId, toast, scrollToBottom]); // Add chatId here
 
 
   // Focus handling for notification title and unread status update
@@ -590,7 +597,7 @@ export function ChatWindow() {
      setIsVideoButtonDisabled(true);
      isInitialMessagesLoadForScroll.current = true;
      const newChatId = getChatId(user.uid, partner.uid);
-     setChatId(newChatId);
+     setChatId(newChatId); // Set the new chat ID state
       console.log(`Selected user ${partner.uid}, switching to chat ${newChatId}`);
 
       // Clear unread status immediately on selection
@@ -611,17 +618,23 @@ export function ChatWindow() {
             await setDoc(chatDocRef, {
                 participants: [user.uid, partner.uid],
                 createdAt: serverTimestamp(),
-                typing: {}
+                typing: {} // Initialize typing map
             });
              console.log(`Firestore: Created chat document ${newChatId}`);
         } else {
              const chatData = chatDocSnap.data();
+             // Ensure typing field exists, add if missing
              if (!chatData?.typing) {
                  console.log(`Chat document ${newChatId} missing 'typing' field. Adding...`);
-                 await updateDoc(chatDocRef, { typing: {} });
+                  try {
+                     await updateDoc(chatDocRef, { typing: {} }); // Add the typing field
+                 } catch (updateError) {
+                     console.error(`Error adding 'typing' field to chat ${newChatId}:`, updateError);
+                      // Handle error, maybe show toast
+                 }
              }
         }
-        setIsVideoButtonDisabled(false);
+        setIsVideoButtonDisabled(false); // Enable video button after ensuring doc exists
      } catch (error) {
         console.error(`Error ensuring chat document ${newChatId} exists:`, error);
         toast({
@@ -631,7 +644,7 @@ export function ChatWindow() {
         });
         setIsVideoButtonDisabled(true);
      }
-  }, [selectedChatPartner?.uid, user?.uid, chatId, toast, dbInstance]); // Add dbInstance
+  }, [selectedChatPartner?.uid, user?.uid, chatId, toast, dbInstance]); // Include chatId in dependencies
 
 
    const filteredUsers = users.filter(u =>

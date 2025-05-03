@@ -1,4 +1,3 @@
-
 'use server'; // Indicate this runs on the server or can be called from server components/actions
 
 // Import types and FirebaseError check utility
@@ -78,38 +77,51 @@ export const createOrUpdateUserProfile = async (
             console.log(`Firestore: Updating profile for existing user ${uid}`);
         }
 
+        // Prepare the base data object
         const firestoreData: Record<string, any> = {
             uid: uid,
             email: email?.toLowerCase() ?? null,
-            // Use provided value OR existing value OR null
-            displayName: displayName !== undefined ? (displayName || null) : (docSnap.exists() ? docSnap.data().displayName : null),
-            photoURL: photoURL !== undefined ? (photoURL || null) : (docSnap.exists() ? docSnap.data().photoURL : null),
-            status: status !== undefined ? (status || null) : (docSnap.exists() ? docSnap.data().status : null),
-            lastSeen: firestoreServerTimestamp(), // Always update lastSeen
+            // Only update fields if they are explicitly provided in userData
+            // Use existing data as fallback ONLY if it's an update, not for creation
+            ...(displayName !== undefined && { displayName: displayName || null }),
+            ...(photoURL !== undefined && { photoURL: photoURL || null }),
+            ...(status !== undefined && { status: status || null }),
+            lastSeen: firestoreServerTimestamp(), // Always update lastSeen on any interaction
         };
 
         if (isNewUser) {
+            // Fields to set ONLY for new users
             firestoreData.createdAt = firestoreServerTimestamp();
-            // Initialize flags only for new users
             firestoreData.passwordChangeRequested = false;
             firestoreData.passwordChangeApproved = false;
             firestoreData.isAdmin = false; // Default to false
 
-            // Handle admin status only for new users based on the secret code
+            // Handle admin status ONLY for new users based on the secret code
             // WARNING: This is insecure. Do not use in production without server-side validation.
             if (adminCode === ADMIN_SECRET_CODE) {
                 console.warn(`Firestore: Assigning ADMIN role to new user ${uid} based on client-provided secret code.`);
                 firestoreData.isAdmin = true;
             }
-            // Ensure status is null if not provided for new user
-            if (status === undefined) {
-                 firestoreData.status = null;
+
+            // Set defaults for fields not provided during signup
+            if (displayName === undefined) firestoreData.displayName = null;
+            if (photoURL === undefined) firestoreData.photoURL = null;
+            if (status === undefined) firestoreData.status = null;
+
+            console.log(`Attempting Firestore set for NEW user ${uid}`);
+            await setDoc(userRef, firestoreData); // Use setDoc for new users
+            console.log(`Firestore: User profile created for user: ${uid}`);
+        } else {
+            // For existing users, update only the provided fields + lastSeen
+            console.log(`Attempting Firestore update for user ${uid}`);
+            if (Object.keys(firestoreData).length > 1 || 'lastSeen' in firestoreData) { // Ensure there's something to update besides uid
+                await updateDoc(userRef, firestoreData); // Use updateDoc for existing users
+                 console.log(`Firestore: User profile updated for user: ${uid}`);
+            } else {
+                console.log(`Firestore: No new data provided to update profile for user: ${uid}`);
             }
         }
 
-        console.log(`Attempting Firestore ${isNewUser ? 'set' : 'set with merge'} for user ${uid}`);
-        await setDoc(userRef, firestoreData, { merge: !isNewUser }); // Use merge only for updates
-        console.log(`Firestore: User profile ${isNewUser ? 'created' : 'updated'} for user: ${uid}`);
 
     } catch (error: any) {
         const detailedErrorMessage = `Failed to ${isNewUser ? 'create' : 'update'} user profile in Firestore for UID ${uid}. Error: ${error.message || 'Unknown Firestore error'}${error.code ? ` (Code: ${error.code})` : ''}`;
@@ -195,27 +207,30 @@ export const updateUserProfileDocument = async (uid: string, data: UserProfileUp
     const userRef = doc(db, 'users', uid);
 
     try {
-         // Optionally check if doc exists before updating, though updateDoc handles non-existent docs gracefully (by failing)
-         // const docSnap = await getDoc(userRef);
-         // if (!docSnap.exists()) {
-         //     console.warn(`Firestore: updateUserProfileDocument - Document for user ${uid} does not exist. Cannot update.`);
-         //     throw new Error(`User profile document for UID ${uid} does not exist.`);
-         // }
-
          console.log(`Attempting Firestore update for user ${uid} with data:`, JSON.stringify(updateData)); // Don't stringify complex objects like timestamps
          await updateDoc(userRef, updateData);
-         console.log(`Firestore: Document for user ${uid} updated successfully.`);
+         // console.log(`Firestore: Document for user ${uid} updated successfully.`); // Reduce successful logging noise
 
     } catch (error: any) {
          const baseErrorMessage = `Failed to update Firestore document for UID ${uid}.`;
-         const firestoreErrorDetails = error.message || 'Unknown Firestore error';
-         const errorCode = error.code ? ` (Code: ${error.code})` : '';
+         let firestoreErrorDetails = 'Unknown Firestore error';
+         let errorCode = 'unknown';
+
+        if (isFirebaseError(error)) {
+            firestoreErrorDetails = error.message;
+            errorCode = error.code;
+            console.error(`🔴 Firestore Update Error (Code: ${errorCode}) for UID ${uid}: ${firestoreErrorDetails}`, error);
+         } else {
+            firestoreErrorDetails = error.message || firestoreErrorDetails;
+            console.error(`🔴 Generic Update Error for UID ${uid}: ${firestoreErrorDetails}`, error);
+         }
+
          const attemptedDataString = JSON.stringify(updateData); // Stringify here for error message
+         const detailedErrorMessage = `${baseErrorMessage} Error: ${firestoreErrorDetails} (Code: ${errorCode}). Data attempted: ${attemptedDataString}`;
 
-         const detailedErrorMessage = `${baseErrorMessage} Error: ${firestoreErrorDetails}${errorCode}. Data attempted: ${attemptedDataString}`;
-         console.error("🔴 Detailed Firestore Update Error:", detailedErrorMessage, error);
-
-         // Provide a more user-friendly error message while still logging details
+         // Log the detailed error but throw a more generic one to the client
+         // This prevents exposing too much internal detail or potentially sensitive data.
+         console.error("🔴 Detailed Firestore Update Error Log:", detailedErrorMessage);
          throw new Error(`${baseErrorMessage} Please check connection or try again.`);
     }
 };
