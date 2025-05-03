@@ -7,14 +7,14 @@ import { format, formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import Image from 'next/image';
-import { Reply, Mic, Play, Pause, Video as VideoIcon, FileText, Download } from 'lucide-react'; // Added FileText, Download
-import { Button } from '@/components/ui/button'; // Import Button for reply action
-import * as React from 'react'; // Import React for audio handling and state
-import { FullScreenImageViewer } from './full-screen-image-viewer'; // Import the modal
+import { Reply, Mic, Play, Pause, Video as VideoIcon, FileText, Download } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import * as React from 'react';
+import { FullScreenImageViewer } from './full-screen-image-viewer';
 
 interface ChatMessageProps {
   message: Message;
-  onReply: (message: Message) => void; // Callback function to initiate reply
+  onReply: (message: Message) => void;
 }
 
 const getInitials = (name: string | null | undefined): string => {
@@ -112,6 +112,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
 
    // Format time in MM:SS
    const formatAudioTime = (timeInSeconds: number): string => {
+     if (isNaN(timeInSeconds) || !isFinite(timeInSeconds)) return '0:00'; // Handle invalid duration
     const minutes = Math.floor(timeInSeconds / 60);
     const seconds = Math.floor(timeInSeconds % 60);
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
@@ -140,7 +141,9 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
         setCurrentTime(0); // Reset time when metadata loads
     };
      const handleTimeUpdate = () => {
-        setCurrentTime(audioElement.currentTime);
+         if (!isNaN(audioElement.currentTime)) { // Ensure currentTime is valid
+            setCurrentTime(audioElement.currentTime);
+         }
      };
      const handleError = (e: Event) => {
          console.error("Audio playback error:", (e.target as HTMLAudioElement).error);
@@ -241,8 +244,9 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
                      onClick={togglePlay}
                      className="h-8 w-8 sm:h-9 sm:w-9 text-foreground/80 hover:text-foreground flex-shrink-0" // Responsive button size
                      aria-label={isPlaying ? "Pause voice note" : "Play voice note"}
-                     disabled={!audioDuration && message.audioUrl} // Disable play if URL exists but duration is not loaded yet
+                     disabled={!message.audioUrl} // Disable only if URL is missing
                  >
+                      {/* Show loading state? */}
                      {isPlaying ? <Pause className="h-4 w-4 sm:h-5 sm:w-5" /> : <Play className="h-4 w-4 sm:h-5 sm:w-5" />}
                  </Button>
                  {/* Hidden audio element */}
@@ -251,7 +255,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
                  </audio>
                  {/* Display Time */}
                  <span className="text-xs text-muted-foreground font-mono w-14 sm:w-16 text-right flex-shrink-0"> {/* Responsive width */}
-                     {audioDuration !== null ? `${formatAudioTime(currentTime)} / ${formatAudioTime(audioDuration)}` : (message.audioUrl ? '...' : 'N/A')} {/* Loading indicator */}
+                      {formatAudioTime(currentTime)} / {audioDuration !== null ? formatAudioTime(audioDuration) : '?:??'} {/* Show duration or placeholder */}
                  </span>
              </div>
          )}
@@ -278,7 +282,6 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
          {/* Display Video */}
           {message.videoUrl && !message.audioUrl && !message.imageUrl && !message.fileUrl && (
              <div className="relative aspect-video w-full max-w-sm sm:max-w-md my-2 rounded-lg overflow-hidden border shadow-inner"> {/* Responsive max-width */}
-                 {/* Basic HTML5 Video Player */}
                  <video
                      src={message.videoUrl}
                      controls
@@ -292,7 +295,6 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
                          Watch video
                      </a>
                  </video>
-                 {/* Consider adding a more robust video player component later if needed */}
              </div>
           )}
 
