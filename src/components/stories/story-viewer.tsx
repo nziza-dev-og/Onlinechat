@@ -1,4 +1,3 @@
-
 "use client";
 
 import * as React from 'react';
@@ -8,10 +7,11 @@ import Image from 'next/image';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { getInitials } from '@/lib/utils'; // Assuming getInitials is moved to utils
-import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog"; // For full-screen view
+import { Dialog, DialogContent, DialogTrigger, DialogTitle } from "@/components/ui/dialog"; // Import DialogTitle
 import { X } from 'lucide-react';
 import { Button } from '../ui/button';
 import { AnimatePresence, motion } from 'framer-motion';
+import { cn } from '@/lib/utils'; // Import cn for sr-only class
 
 interface StoryViewerProps {
   stories: PostSerializable[];
@@ -139,16 +139,21 @@ export function StoryViewer({ stories }: StoryViewerProps) {
              className="p-0 max-w-md w-[95vw] h-[85vh] border-none bg-black shadow-none flex flex-col items-center justify-center outline-none focus:outline-none overflow-hidden rounded-lg"
              onEscapeKeyDown={handleCloseStory}
              // Removed onPointerDownOutside to allow clicking next/prev areas
-             aria-label="Story viewer"
+             aria-label="Story viewer" // Keep aria-label as fallback
+             aria-describedby={activeStory ? `story-caption-${activeStory.id}` : undefined} // Describe content if caption exists
           >
+             {/* Visually Hidden Title for Accessibility */}
+             <DialogTitle className={cn("sr-only")}>
+               Story by {activeStory?.displayName || 'User'}
+             </DialogTitle>
              {activeStory && (
                 <div className="relative w-full h-full">
                    {/* Navigation Areas */}
-                   <div className="absolute top-0 left-0 h-full w-1/3 z-30 cursor-pointer" onClick={handlePrevStory}></div>
-                   <div className="absolute top-0 right-0 h-full w-1/3 z-30 cursor-pointer" onClick={handleNextStory}></div>
+                   <div className="absolute top-0 left-0 h-full w-1/3 z-30 cursor-pointer" onClick={handlePrevStory} aria-label="Previous story"></div>
+                   <div className="absolute top-0 right-0 h-full w-1/3 z-30 cursor-pointer" onClick={handleNextStory} aria-label="Next story"></div>
 
                    {/* Progress Bar */}
-                   <div className="absolute top-2 left-2 right-2 z-40 h-1 bg-white/30 rounded-full overflow-hidden">
+                   <div className="absolute top-2 left-2 right-2 z-40 h-1 bg-white/30 rounded-full overflow-hidden" aria-hidden="true">
                       <div ref={progressRef} className="h-full bg-white rounded-full" style={{ width: '0%', transition: 'none' }}></div>
                    </div>
 
@@ -190,6 +195,7 @@ export function StoryViewer({ stories }: StoryViewerProps) {
                             src={activeStory.videoUrl}
                             autoPlay
                             playsInline
+                            muted // Mute story videos by default? Consider user preference.
                             className="w-full h-full object-contain"
                             onEnded={handleNextStory} // Go to next story when video ends
                             data-ai-hint="story full view video"
@@ -201,7 +207,10 @@ export function StoryViewer({ stories }: StoryViewerProps) {
 
                     {/* Optional Caption */}
                     {activeStory.text && (
-                       <div className="absolute bottom-4 left-4 right-4 z-40 p-2 bg-black/40 rounded-md text-white text-sm text-center">
+                       <div
+                          id={`story-caption-${activeStory.id}`} // ID for aria-describedby
+                          className="absolute bottom-4 left-4 right-4 z-40 p-2 bg-black/40 rounded-md text-white text-sm text-center"
+                       >
                           {activeStory.text}
                        </div>
                     )}
