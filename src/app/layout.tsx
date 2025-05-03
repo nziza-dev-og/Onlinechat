@@ -6,7 +6,7 @@ import './globals.css';
 import { AuthProvider } from '@/contexts/auth-context';
 import { Toaster } from "@/components/ui/toaster"; // Import Toaster
 import { Button } from '@/components/ui/button'; // Import Button
-import { User, MessageSquareText, Home, Image as ImageIcon, MessageCircle, Shield } from 'lucide-react'; // Import User, MessageSquareText, Home, Image, MessageCircle, Shield icons
+import { User, MessageSquareText, Home, Image as ImageIcon, MessageCircle, Shield, LayoutDashboard } from 'lucide-react'; // Added LayoutDashboard
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -33,7 +33,13 @@ export default function RootLayout({
                  <span className="font-bold inline-block">Jules Chatting Platform</span> {/* Updated app name */}
                </Link>
                <nav className="flex items-center gap-1 sm:gap-2"> {/* Reduced gap */}
-                   {/* Home/Chat Link */}
+                   {/* Dashboard Link */}
+                   <Button variant="ghost" size="icon" asChild>
+                      <Link href="/dashboard" aria-label="Go to Dashboard">
+                          <LayoutDashboard className="h-5 w-5" />
+                      </Link>
+                   </Button>
+                   {/* Chat Link */}
                    <Button variant="ghost" size="icon" asChild>
                       <Link href="/" aria-label="Go to Chat">
                           <Home className="h-5 w-5" />
@@ -79,3 +85,5 @@ export default function RootLayout({
     </html>
   );
 }
+
+    
