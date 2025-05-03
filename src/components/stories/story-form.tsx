@@ -1,9 +1,7 @@
-
-
 "use client";
 
 import * as React from 'react';
-import { useForm } from 'react-hook-form';
+import { useForm, Controller } from 'react-hook-form'; // Import Controller
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { Textarea } from '@/components/ui/textarea';
@@ -11,19 +9,39 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, Send, Image as ImageIcon, Video, Music } from 'lucide-react'; // Added Music icon
+import { Loader2, Send, Image as ImageIcon, Video, Music } from 'lucide-react';
 import { Separator } from '@/components/ui/separator';
 import { useAuth } from '@/hooks/use-auth';
 import { useToast } from '@/hooks/use-toast';
-import { addPost, type PostInput } from '@/lib/posts.service'; // Reuse addPost service
+import { addPost, type PostInput } from '@/lib/posts.service';
 import type { Post } from '@/types';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"; // Import Select components
+
+// --- Predefined Music Playlist ---
+// In a real app, fetch this from a config or database
+const musicPlaylist = [
+    { title: "No Music", url: "" },
+    { title: "Uplifting Adventure", url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" }, // Placeholder URL
+    { title: "Chill Lo-fi", url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3" }, // Placeholder URL
+    { title: "Epic Trailer", url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3" }, // Placeholder URL
+    { title: "Happy Acoustic", url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3" }, // Placeholder URL
+];
+// --- End Playlist ---
+
 
 // Validation schema specifically for stories
+// Remove musicUrl URL validation, just check if it's a string (or empty/null)
 const storySchema = z.object({
-  text: z.string().max(200, { message: "Story text cannot exceed 200 characters." }).optional().nullable(), // Shorter limit for stories?
+  text: z.string().max(200, { message: "Story text cannot exceed 200 characters." }).optional().nullable(),
   imageUrl: z.string().url({ message: "Please enter a valid image URL." }).max(1024).optional().or(z.literal('')).nullable(),
   videoUrl: z.string().url({ message: "Please enter a valid video URL." }).max(1024).optional().or(z.literal('')).nullable(),
-  musicUrl: z.string().url({ message: "Please enter a valid music URL." }).max(1024).optional().or(z.literal('')).nullable(), // Added musicUrl validation
+  selectedMusicUrl: z.string().optional().nullable(), // Store the selected URL from the dropdown
 }).refine(data => !!data.imageUrl?.trim() || !!data.videoUrl?.trim(), {
     // Stories must have visual content
     message: "Story must include an image URL or a video URL.",
@@ -47,7 +65,7 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
       text: '',
       imageUrl: '',
       videoUrl: '',
-      musicUrl: '', // Initialize musicUrl
+      selectedMusicUrl: "", // Initialize music selection
     },
   });
 
@@ -58,7 +76,7 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
     }
 
     setIsSubmitting(true);
-    // Prepare data for the addPost service, including musicUrl
+    // Use selectedMusicUrl from form data
     const storyInput: PostInput = {
         uid: user.uid,
         displayName: user.displayName,
@@ -66,7 +84,7 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
         text: data.text?.trim() || null,
         imageUrl: data.imageUrl?.trim() || null,
         videoUrl: data.videoUrl?.trim() || null,
-        musicUrl: data.musicUrl?.trim() || null, // Include musicUrl
+        musicUrl: data.selectedMusicUrl || null, // Use the value from the select dropdown
         type: 'story', // Explicitly set type to 'story'
     };
 
@@ -157,22 +175,36 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
 
            <Separator />
 
-           {/* Background Music URL Input (Optional) */}
+           {/* Background Music Select (Optional) */}
            <div className="grid w-full gap-1.5">
-             <Label htmlFor="musicUrlStory" className="flex items-center gap-1.5">
-                <Music className="h-4 w-4 text-muted-foreground"/> Background Music URL (Optional)
-             </Label>
-             <Input
-               id="musicUrlStory"
-               type="url"
-               placeholder="https://example.com/music.mp3"
-               {...form.register('musicUrl')}
-               disabled={isSubmitting}
-             />
-             {form.formState.errors.musicUrl && (
-               <p className="text-sm text-destructive">{form.formState.errors.musicUrl.message}</p>
-             )}
-             <p className="text-xs text-muted-foreground">Add a URL to an audio file (e.g., mp3).</p>
+              <Label htmlFor="musicSelectStory" className="flex items-center gap-1.5">
+                 <Music className="h-4 w-4 text-muted-foreground"/> Background Music (Optional)
+              </Label>
+              {/* Use Controller to integrate Select with react-hook-form */}
+              <Controller
+                 name="selectedMusicUrl"
+                 control={form.control}
+                 render={({ field }) => (
+                    <Select
+                      value={field.value ?? ""} // Handle null/undefined for Select value
+                      onValueChange={field.onChange}
+                      disabled={isSubmitting}
+                    >
+                      <SelectTrigger id="musicSelectStory">
+                        <SelectValue placeholder="Select music..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {musicPlaylist.map((song) => (
+                          <SelectItem key={song.url || 'no-music'} value={song.url}>
+                            {song.title}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                 )}
+              />
+              {/* No specific error needed here unless validation changes */}
+              <p className="text-xs text-muted-foreground">Select a song from the list.</p>
            </div>
 
 
@@ -209,4 +241,3 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
     </Card>
   );
 }
-
