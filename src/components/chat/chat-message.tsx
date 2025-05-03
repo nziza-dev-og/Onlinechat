@@ -2,11 +2,11 @@
 import type { Message } from '@/types';
 import { useAuth } from '@/hooks/use-auth';
 import { cn } from '@/lib/utils';
-import { format, formatDistanceToNow } from 'date-fns';
+import { format, formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import Image from 'next/image';
-import { Reply, Mic, Play } from 'lucide-react'; // Import Reply icon and Mic icon, Play
+import { Reply, Mic, Play, Pause } from 'lucide-react'; // Ensure Pause is imported
 import { Button } from '@/components/ui/button'; // Import Button for reply action
 import * as React from 'react'; // Import React for audio handling
 
@@ -26,37 +26,44 @@ const getInitials = (name: string | null | undefined): string => {
     return '?';
 };
 
+// Helper to safely format Firestore Timestamp or ISO string
+const formatTimestamp = (timestamp: any, formatString: string): string => {
+    if (!timestamp) return '';
+    let date: Date | null = null;
+    try {
+        if (timestamp instanceof Date) {
+            date = timestamp;
+        } else if (timestamp && typeof timestamp.toDate === 'function') { // Firestore Timestamp
+            date = timestamp.toDate();
+        } else if (typeof timestamp === 'string') { // ISO string
+            date = parseISO(timestamp);
+        } else if (typeof timestamp === 'number') { // Unix timestamp (seconds or ms)
+             date = new Date(timestamp > 100000000000 ? timestamp : timestamp * 1000); // Heuristic for ms vs s
+        }
+
+        if (date && !isNaN(date.getTime())) {
+            return format(date, formatString);
+        } else {
+            console.warn("Could not parse timestamp:", timestamp);
+            return 'Invalid date';
+        }
+    } catch (error) {
+        console.error("Error formatting timestamp:", error, timestamp);
+        return 'Invalid date';
+    }
+};
+
+const formatShortTimestamp = (timestamp: any): string => formatTimestamp(timestamp, 'p'); // Format like 1:23 PM
+const formatFullTimestamp = (timestamp: any): string => formatTimestamp(timestamp, 'PPpp'); // Format like 'Jun 15th, 2024 at 1:23:45 PM'
+
 export function ChatMessage({ message, onReply }: ChatMessageProps) {
   const { user } = useAuth();
   const isSender = user?.uid === message.uid;
   const audioRef = React.useRef<HTMLAudioElement>(null);
   const [isPlaying, setIsPlaying] = React.useState(false);
+  const [audioDuration, setAudioDuration] = React.useState<number | null>(null);
+  const [currentTime, setCurrentTime] = React.useState(0);
 
-  const formatShortTimestamp = (timestamp: any): string => {
-    if (timestamp && typeof timestamp.toDate === 'function') {
-      try {
-        return format(timestamp.toDate(), 'p'); // Format like 1:23 PM
-      } catch (error) {
-        console.error("Error formatting short timestamp:", error, timestamp);
-        return 'Invalid date';
-      }
-    }
-    return '';
-  };
-
-   const formatFullTimestamp = (timestamp: any): string => {
-    if (timestamp && typeof timestamp.toDate === 'function') {
-      try {
-        const date = timestamp.toDate();
-        // Format like 'Jun 15th, 2024 at 1:23:45 PM'
-        return format(date, 'PPpp');
-      } catch (error) {
-        console.error("Error formatting full timestamp:", error, timestamp);
-        return 'Invalid date';
-      }
-    }
-    return '';
-  };
 
   const handleReplyClick = (e: React.MouseEvent) => {
       e.stopPropagation(); // Prevent triggering other click events if needed
@@ -66,35 +73,92 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
   // --- Audio Playback Handling ---
   const togglePlay = () => {
     const audioElement = audioRef.current;
-    if (!audioElement) return;
+    if (!audioElement) {
+        console.error("Audio element ref not found.");
+        return;
+    }
 
     if (isPlaying) {
       audioElement.pause();
     } else {
-      audioElement.play().catch(err => console.error("Error playing audio:", err));
+      audioElement.play().catch(err => {
+          console.error("Error playing audio:", err);
+          setIsPlaying(false); // Reset state on play error
+      });
     }
-    setIsPlaying(!isPlaying);
+    // Note: isPlaying state is primarily controlled by the event listeners now
   };
 
-  // Reset isPlaying state when audio ends
+   // Format time in MM:SS
+   const formatAudioTime = (timeInSeconds: number): string => {
+    const minutes = Math.floor(timeInSeconds / 60);
+    const seconds = Math.floor(timeInSeconds % 60);
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  };
+
+
+  // Event listeners for audio state changes
   React.useEffect(() => {
     const audioElement = audioRef.current;
-    if (!audioElement) return;
+    if (!audioElement || !message.audioUrl) return; // Only run if audio exists
 
-    const handleEnded = () => setIsPlaying(false);
-    const handlePause = () => setIsPlaying(false); // Also set to false on manual pause
     const handlePlay = () => setIsPlaying(true);
+    const handlePause = () => setIsPlaying(false);
+    const handleEnded = () => {
+        setIsPlaying(false);
+        setCurrentTime(0); // Reset time on end
+    };
+    const handleLoadedMetadata = () => {
+        console.log("Audio metadata loaded. Duration:", audioElement.duration);
+        if (isFinite(audioElement.duration)) { // Check if duration is a valid number
+            setAudioDuration(audioElement.duration);
+        } else {
+            console.warn("Audio duration is infinite or NaN.");
+            setAudioDuration(null); // Set to null if invalid
+        }
+        setCurrentTime(0); // Reset time when metadata loads
+    };
+     const handleTimeUpdate = () => {
+        setCurrentTime(audioElement.currentTime);
+     };
+     const handleError = (e: Event) => {
+         console.error("Audio playback error:", (e.target as HTMLAudioElement).error);
+         setIsPlaying(false); // Ensure playing state is false on error
+         setAudioDuration(null);
+         setCurrentTime(0);
+     };
 
-    audioElement.addEventListener('ended', handleEnded);
-    audioElement.addEventListener('pause', handlePause);
+
     audioElement.addEventListener('play', handlePlay);
+    audioElement.addEventListener('pause', handlePause);
+    audioElement.addEventListener('ended', handleEnded);
+    audioElement.addEventListener('loadedmetadata', handleLoadedMetadata);
+    audioElement.addEventListener('timeupdate', handleTimeUpdate);
+    audioElement.addEventListener('error', handleError);
+
+    // If the src changes, ensure we reset state and listeners
+     audioElement.load(); // Explicitly load metadata when src might change
+
+    console.log(`Audio listeners attached for message ${message.id}`);
 
     return () => {
-      audioElement.removeEventListener('ended', handleEnded);
-       audioElement.removeEventListener('pause', handlePause);
-      audioElement.removeEventListener('play', handlePlay);
+        console.log(`Cleaning up audio listeners for message ${message.id}`);
+        audioElement.removeEventListener('play', handlePlay);
+        audioElement.removeEventListener('pause', handlePause);
+        audioElement.removeEventListener('ended', handleEnded);
+        audioElement.removeEventListener('loadedmetadata', handleLoadedMetadata);
+        audioElement.removeEventListener('timeupdate', handleTimeUpdate);
+        audioElement.removeEventListener('error', handleError);
+        // Pause audio if unmounting while playing
+        if (!audioElement.paused) {
+            audioElement.pause();
+        }
+        // Reset state on cleanup related to this specific message/audioUrl
+        setIsPlaying(false);
+        setAudioDuration(null);
+        setCurrentTime(0);
     };
-  }, []);
+  }, [message.id, message.audioUrl]); // Re-run effect if message ID or audio URL changes
   // --- End Audio Playback Handling ---
 
   // Determine reply context text
@@ -143,26 +207,33 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
 
          {/* Display Audio Player if audioUrl exists */}
          {message.audioUrl && (
-            <div className={cn(
-                "my-2 p-2 rounded-md flex items-center gap-2",
+             <div className={cn(
+                 "my-2 p-2 rounded-md flex items-center gap-3", // Increased gap
                  isSender ? "bg-accent/80" : "bg-muted/60" // Slightly different background
-            )}>
+             )}>
                  <Button
                      variant="ghost"
                      size="icon"
                      onClick={togglePlay}
-                     className="h-8 w-8 text-foreground/80 hover:text-foreground"
+                     className="h-9 w-9 text-foreground/80 hover:text-foreground flex-shrink-0" // Slightly larger button
                      aria-label={isPlaying ? "Pause voice note" : "Play voice note"}
+                     disabled={!audioDuration && message.audioUrl} // Disable play if URL exists but duration is not loaded yet
                  >
-                    {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                     {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
                  </Button>
                  {/* Hidden audio element */}
-                <audio ref={audioRef} src={message.audioUrl} preload="metadata" className="hidden">
-                  Your browser does not support the audio element.
-                </audio>
-                {/* Optional: Display duration or waveform here */}
-                <span className="text-xs text-muted-foreground">Voice note</span>
-            </div>
+                 <audio ref={audioRef} src={message.audioUrl} preload="metadata" className="hidden">
+                     Your browser does not support the audio element.
+                 </audio>
+                 {/* Progress bar simulation or actual if needed */}
+                 {/* <div className="flex-1 h-1 bg-foreground/20 rounded-full overflow-hidden">
+                     <div className="h-full bg-primary transition-all duration-150" style={{ width: `${audioDuration ? (currentTime / audioDuration) * 100 : 0}%` }}></div>
+                 </div> */}
+                 {/* Display Time */}
+                 <span className="text-xs text-muted-foreground font-mono w-16 text-right flex-shrink-0">
+                     {audioDuration !== null ? `${formatAudioTime(currentTime)} / ${formatAudioTime(audioDuration)}` : (message.audioUrl ? 'Loading...' : 'No audio')}
+                 </span>
+             </div>
          )}
 
         {message.imageUrl && !message.audioUrl && ( // Don't show image if audio is present

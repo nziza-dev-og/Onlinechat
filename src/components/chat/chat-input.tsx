@@ -44,20 +44,33 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
   const audioRef = useRef<HTMLAudioElement>(null); // Ref for audio preview player
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
   const streamRef = useRef<MediaStream | null>(null); // Ref to hold the current audio stream
+  const [isCheckingPermission, setIsCheckingPermission] = useState(true); // State for initial permission check
 
-  // Check browser support on mount
+  // Check browser support and initial permission status on mount
   useEffect(() => {
     if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      console.warn("Browser does not support MediaDevices API needed for audio recording.");
       setBrowserSupportsMedia(false);
       setHasMicPermission(false);
-      console.warn("Browser does not support MediaDevices API needed for audio recording.");
+      setIsCheckingPermission(false);
     } else {
-        checkMicPermissionStatus(); // Check permission status on load
+      checkMicPermissionStatus().finally(() => setIsCheckingPermission(false));
     }
      // Cleanup function
      return () => {
       stopStream(); // Ensure stream is stopped on unmount
+      // Clean up recorder refs and listeners
+      if (mediaRecorderRef.current) {
+          mediaRecorderRef.current.ondataavailable = null;
+          mediaRecorderRef.current.onstop = null;
+          mediaRecorderRef.current.onerror = null;
+          if (mediaRecorderRef.current.state === "recording") {
+             try { mediaRecorderRef.current.stop(); } catch (e) { console.warn("Cleanup: Error stopping recorder", e); }
+          }
+          mediaRecorderRef.current = null;
+      }
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
 
@@ -117,20 +130,27 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
   // Function to stop the current audio stream and release the mic
    const stopStream = useCallback(() => {
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current.getTracks().forEach(track => {
+        track.stop();
+        console.log(`Audio track ${track.id} stopped.`);
+      });
       streamRef.current = null;
-      console.log("Audio stream stopped.");
+      console.log("Audio stream stopped and released.");
     }
   }, []);
 
 
   // Function to check permission status without prompting
-  const checkMicPermissionStatus = async () => {
-    if (!browserSupportsMedia) return;
+  const checkMicPermissionStatus = useCallback(async () => {
+    if (!browserSupportsMedia || !navigator.permissions) return;
+    console.log("Checking microphone permission status...");
+    setIsCheckingPermission(true);
     try {
       const permissionStatus = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+      console.log("Microphone permission status:", permissionStatus.state);
       setHasMicPermission(permissionStatus.state === 'granted');
        permissionStatus.onchange = () => {
+          console.log("Microphone permission status changed to:", permissionStatus.state);
           setHasMicPermission(permissionStatus.state === 'granted');
           if (permissionStatus.state !== 'granted' && isRecording) {
               stopRecording(true); // Force stop if permission revoked during recording
@@ -140,12 +160,15 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
     } catch (error) {
        setHasMicPermission(null); // Indicate unknown status if query fails
        console.warn("Microphone permission query failed, will ask on first use.", error);
+    } finally {
+        setIsCheckingPermission(false);
     }
-  };
+  }, [browserSupportsMedia, isRecording, toast]);
 
 
   // Request microphone permission and get stream
   const getMicStream = async (): Promise<MediaStream | null> => {
+      console.log("Attempting to get microphone stream...");
       if (!browserSupportsMedia) {
          toast({ variant: 'destructive', title: 'Unsupported Browser', description: 'Audio recording is not supported by your browser.' });
          return null;
@@ -156,18 +179,21 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
       }
 
       try {
+        // Ensure any previous stream is stopped before requesting a new one
+        stopStream();
+
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         setHasMicPermission(true); // Update state if permission was granted via prompt
         streamRef.current = stream; // Store the stream
-        console.log("Microphone access granted, stream obtained.");
+        console.log("Microphone access granted, stream obtained.", stream.id);
         return stream;
       } catch (error: any) {
-        console.error('Error accessing microphone:', error);
+        console.error('Error accessing microphone:', error.name, error.message, error);
         setHasMicPermission(false); // Explicitly set to false on error/denial
         toast({
           variant: 'destructive',
-          title: error.name === 'NotAllowedError' ? 'Permission Denied' : 'Microphone Error',
-          description: error.name === 'NotAllowedError' ? 'Microphone access denied. Please allow in browser settings.' : `Could not access microphone: ${error.message}`,
+          title: error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError' ? 'Permission Denied' : 'Microphone Error',
+          description: error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError' ? 'Microphone access denied. Please allow in browser settings.' : `Could not access microphone: ${error.message}`,
         });
         stopStream(); // Ensure any partial stream is stopped
         return null;
@@ -176,65 +202,82 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
 
 
   const startRecording = async () => {
+    console.log("Start recording requested.");
     discardRecording(); // Clear any previous recording/preview first
-    stopStream(); // Ensure any existing stream is stopped
 
     const stream = await getMicStream();
-    if (!stream) return; // Permission denied or error getting stream
+    if (!stream) {
+        console.error("Failed to get microphone stream. Cannot start recording.");
+        return; // Permission denied or error getting stream
+    }
 
 
     try {
         // Determine supported MIME type
-        let mimeType = 'audio/webm';
-        if (!MediaRecorder.isTypeSupported(mimeType)) {
-            mimeType = 'audio/ogg; codecs=opus'; // Try ogg
-            if (!MediaRecorder.isTypeSupported(mimeType)) {
-                 mimeType = 'audio/mp4'; // Try mp4 (less common for mic recording)
-                 if (!MediaRecorder.isTypeSupported(mimeType)) {
-                    mimeType = ''; // Fallback, might record in browser default (often webm anyway)
-                    console.warn("Could not find preferred MIME type (webm, ogg, mp4). Using browser default.");
-                 }
+        const mimeTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg', 'audio/mp4'];
+        let supportedMimeType = '';
+        for (const type of mimeTypes) {
+            if (MediaRecorder.isTypeSupported(type)) {
+                supportedMimeType = type;
+                break;
             }
         }
-        console.log("Using MIME type:", mimeType || "browser default");
+        if (!supportedMimeType) {
+            console.warn(`Could not find preferred MIME type. Using browser default (likely '${mediaRecorderRef.current?.mimeType || 'unknown'}'). Recording might fail or have unexpected format.`);
+        }
+        console.log("Using MIME type:", supportedMimeType || "browser default");
 
-        const options = mimeType ? { mimeType } : {};
+        const options = supportedMimeType ? { mimeType: supportedMimeType } : {};
         const recorder = new MediaRecorder(stream, options);
         mediaRecorderRef.current = recorder;
         audioChunksRef.current = [];
 
         recorder.ondataavailable = (event) => {
             if (event.data.size > 0) {
+                console.log(`Audio data available: ${event.data.size} bytes`);
                 audioChunksRef.current.push(event.data);
+            } else {
+                 console.warn("Audio data available event fired with 0 size chunk.");
             }
         };
 
         recorder.onstop = () => {
+            console.log("MediaRecorder stopped.");
             if (audioChunksRef.current.length === 0) {
-                console.warn("Recording stopped with no data chunks.");
+                console.error("Recording stopped but no audio data was captured. Discarding.");
                 discardRecording(); // Clean up if no data
+                toast({ variant: 'destructive', title: 'Recording Failed', description: 'No audio data was captured. Please try again.' });
                 return;
             }
-            // Use the determined mimeType or default if none was set
-            const blobMimeType = mimeType || recorder.mimeType || 'audio/webm';
-            const audioBlob = new Blob(audioChunksRef.current, { type: blobMimeType });
-            setAudioBlob(audioBlob);
-            const url = URL.createObjectURL(audioBlob);
-            setAudioPreviewUrl(url);
-            console.log("Recording stopped, Blob created:", blobMimeType, audioBlob.size);
-            // Stream tracks are stopped via streamRef cleanup or explicitly in stopRecording
+            // Use the determined mimeType or the recorder's actual mimeType
+            const blobMimeType = supportedMimeType || recorder.mimeType || 'audio/webm';
+            try {
+                const audioBlob = new Blob(audioChunksRef.current, { type: blobMimeType });
+                setAudioBlob(audioBlob);
+                const url = URL.createObjectURL(audioBlob);
+                setAudioPreviewUrl(url);
+                console.log("Audio Blob created:", blobMimeType, audioBlob.size);
+            } catch (blobError) {
+                console.error("Error creating Blob:", blobError);
+                 toast({ variant: 'destructive', title: 'Recording Error', description: 'Could not process recorded audio.' });
+                 discardRecording();
+            } finally {
+                // Ensure stream is stopped *after* recorder is stopped and blob is processed
+                 stopStream();
+            }
         };
 
-        recorder.onerror = (event: Event) => {
-             console.error("MediaRecorder error:", event);
-             toast({ variant: 'destructive', title: 'Recording Error', description: 'An error occurred during recording.' });
+        recorder.onerror = (event: Event & { error?: DOMException }) => {
+             const error = (event as any).error || new Error('Unknown MediaRecorder error');
+             console.error("MediaRecorder error:", error.name, error.message, event);
+             toast({ variant: 'destructive', title: 'Recording Error', description: `An error occurred: ${error.message}` });
              stopRecording(true); // Force stop and cleanup
         };
 
 
         recorder.start();
         setIsRecording(true);
-        console.log("Recording started...");
+        console.log("Recording started successfully.");
 
         // Stop any typing indicator
         if (typingTimeoutRef.current) {
@@ -244,8 +287,8 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
         sendTypingUpdate(false);
 
     } catch (error) {
-        console.error("Error creating MediaRecorder:", error);
-        toast({ variant: 'destructive', title: 'Recording Error', description: 'Could not start recording. Check browser compatibility or permissions.' });
+        console.error("Error setting up or starting MediaRecorder:", error);
+        toast({ variant: 'destructive', title: 'Recording Start Error', description: 'Could not start recording. Check browser compatibility or permissions.' });
         stopStream(); // Ensure stream tracks are stopped on error too
         setIsRecording(false); // Reset state
     }
@@ -254,27 +297,42 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
   // Modified stopRecording to accept a 'force' flag for error scenarios
   const stopRecording = useCallback((force = false) => {
     if (mediaRecorderRef.current && (isRecording || force)) {
+       console.log(`Stopping recording (Force: ${force}, State: ${mediaRecorderRef.current.state})...`);
       try {
           if (mediaRecorderRef.current.state === "recording") {
              mediaRecorderRef.current.stop(); // Triggers onstop handler
-             console.log("MediaRecorder stopped.");
+          } else if (force) {
+             console.warn("Forcing stop on non-recording recorder.");
+              // If forced, manually stop stream as onstop might not fire correctly
+             stopStream();
           }
       } catch (error) {
           console.error("Error stopping MediaRecorder:", error);
+           // Attempt to stop stream anyway if recorder fails
+          stopStream();
+      } finally {
+          setIsRecording(false);
+          // Stream stopping is now handled within onstop or explicitly above if forced stop on non-recording
+          // stopStream(); // Removed from here
+          // Don't nullify ref here, let onstop handle cleanup or useEffect cleanup
+          // mediaRecorderRef.current = null;
       }
-      setIsRecording(false);
-      stopStream(); // Stop the stream tracks now that recording is done
-      mediaRecorderRef.current = null;
     } else if (!isRecording && !force) {
         console.warn("Stop recording called but not currently recording.");
     }
   }, [isRecording, stopStream]);
 
   const discardRecording = useCallback(() => {
+    console.log("Discarding recording...");
     if (isRecording) {
+        console.log("Currently recording, stopping first.");
         stopRecording(true); // Force stop if currently recording
     }
+    if (audioRef.current && !audioRef.current.paused) {
+      audioRef.current.pause();
+    }
     if (audioPreviewUrl) {
+      console.log("Revoking object URL:", audioPreviewUrl);
       URL.revokeObjectURL(audioPreviewUrl); // Clean up object URL
     }
     setAudioBlob(null);
@@ -285,28 +343,42 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
   }, [audioPreviewUrl, isRecording, stopRecording]);
 
   const togglePreview = () => {
-      if (!audioRef.current) return;
+      if (!audioRef.current) {
+        console.error("Audio preview element ref not available.");
+        return;
+      }
       if (isPreviewPlaying) {
+          console.log("Pausing audio preview.");
           audioRef.current.pause();
-          audioRef.current.currentTime = 0; // Reset to start on pause
+          // Resetting currentTime might cause issues if user wants to resume
+          // audioRef.current.currentTime = 0; // Reset to start on pause
       } else {
+          console.log("Playing audio preview.");
           audioRef.current.play().catch(err => console.error("Error playing audio preview:", err));
       }
+      // State is toggled via event listeners
   };
 
-  const handleAudioEnded = () => {
+  // Moved ended handler here to use useCallback
+  const handleAudioEnded = useCallback(() => {
+    console.log("Audio preview ended.");
     setIsPreviewPlaying(false);
-   };
+    if (audioRef.current) {
+        audioRef.current.currentTime = 0; // Reset to start when ended
+    }
+   }, []);
 
   useEffect(() => {
       const audioElement = audioRef.current;
-      if (audioElement) {
+      if (audioElement && audioPreviewUrl) { // Only attach if URL exists
           const handlePlay = () => setIsPreviewPlaying(true);
           const handlePause = () => setIsPreviewPlaying(false);
 
+          // Use the memoized handleAudioEnded
           audioElement.addEventListener('play', handlePlay);
           audioElement.addEventListener('pause', handlePause);
           audioElement.addEventListener('ended', handleAudioEnded);
+          console.log("Audio event listeners attached.");
 
           return () => {
               audioElement.removeEventListener('play', handlePlay);
@@ -316,15 +388,17 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
               if (!audioElement.paused) {
                   audioElement.pause();
               }
+              console.log("Audio event listeners removed.");
           };
       }
-  }, [audioPreviewUrl]); // Re-attach listeners if URL changes
+  }, [audioPreviewUrl, handleAudioEnded]); // Depend on URL and the stable callback
 
 
   // Clean up Object URL when component unmounts or blob changes
   useEffect(() => {
     return () => {
-      discardRecording(); // Use discardRecording for comprehensive cleanup
+      // Ensure cleanup runs on unmount
+       discardRecording();
     };
   }, [discardRecording]); // Depend on the memoized discard function
 
@@ -337,8 +411,12 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
     // Prioritize audio if present
     const hasContent = trimmedMessage || trimmedImageUrl || audioBlob;
 
-    if (!user || !chatId || !hasContent || isSending) return;
+    if (!user || !chatId || !hasContent || isSending) {
+        console.warn("Send message condition not met:", { user: !!user, chatId: !!chatId, hasContent, isSending });
+        return;
+    }
 
+    console.log("Sending message...");
     setIsSending(true);
     setUploadProgress(null); // Reset progress
     if (typingTimeoutRef.current) {
@@ -353,21 +431,23 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
     try {
       // 1. Upload audio if present
       if (audioBlob) {
+         console.log("Audio blob detected, starting upload...");
          setUploadProgress(0); // Indicate start of upload
          const timestamp = Date.now();
          // Ensure MIME type is available, default to webm if needed
-         const fileExtension = (audioBlob.type.split('/')[1] || 'webm').split(';')[0]; // Get extension like 'webm' or 'ogg'
+          const fileExtension = (audioBlob.type.split('/')[1] || 'webm').split(';')[0] || 'webm'; // Robust extension extraction
          const audioPath = `chats/${chatId}/audio/${uid}_${timestamp}.${fileExtension}`; // Unique path with extension
+         console.log(`Uploading audio to path: ${audioPath} (Type: ${audioBlob.type}, Size: ${audioBlob.size})`);
 
-         // Use a callback for progress updates if uploadAudio supports it
-         // For now, simulate progress
+         // Use a callback for progress updates
          const updateProgress = (progress: number) => setUploadProgress(progress);
 
          try {
              finalAudioUrl = await uploadAudio(audioBlob, audioPath, updateProgress); // Pass progress callback
              setUploadProgress(100); // Ensure it reaches 100 on success
+             console.log("Audio upload successful, URL:", finalAudioUrl);
          } catch (uploadError: any) {
-             console.error("Error uploading audio:", uploadError);
+             console.error("Error during audio upload:", uploadError);
              toast({
                  title: "Audio Upload Failed",
                  description: uploadError.message || "Could not upload voice note.",
@@ -389,53 +469,76 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
         audioUrl: finalAudioUrl, // Save the uploaded audio URL
         timestamp: serverTimestamp(),
         uid,
-        displayName,
-        photoURL,
+        displayName: displayName ?? null, // Use null if undefined
+        photoURL: photoURL ?? null, // Use null if undefined
         replyToMessageId: replyingTo?.id ?? null,
         replyToMessageText: replyingTo?.text ?? (replyingTo?.imageUrl ? 'Image' : (replyingTo?.audioUrl ? 'Voice note' : null)), // Include type for media replies
         replyToMessageAuthor: replyingTo?.displayName ?? null,
       };
+      console.log("Adding message to Firestore:", messageData);
 
       await addDoc(messagesRef, messageData);
+      console.log("Message added successfully to Firestore.");
       setMessage('');
       setImageUrl('');
       setShowImageUrlInput(false);
       discardRecording(); // Clear audio state after successful send
       onClearReply(); // Clear reply context after sending
     } catch (error) {
-        console.error("Error sending message:", error);
+        console.error("Error sending message (Firestore or general):", error);
         toast({
             title: "Send Error",
             description: "Could not send message. Please try again.",
             variant: "destructive"
         });
     } finally {
+        console.log("Finished sending message process.");
         setIsSending(false);
         setUploadProgress(null); // Ensure progress is cleared
     }
   };
 
   const toggleImageUrlInput = () => {
-    setShowImageUrlInput(!showImageUrlInput);
-    if (showImageUrlInput) {
+    const nextShowState = !showImageUrlInput;
+    console.log("Toggling image URL input to:", nextShowState);
+    setShowImageUrlInput(nextShowState);
+    if (!nextShowState) { // If hiding
       setImageUrl('');
+    } else { // If showing
+      discardRecording(); // Discard audio if user switches to image URL input
     }
-    discardRecording(); // Discard audio if user switches to image URL input
   };
 
   const handleMicButtonClick = () => {
-      if (showImageUrlInput) setShowImageUrlInput(false); // Hide image input if mic is clicked
+      console.log("Mic button clicked. Current state:", { isRecording, hasMicPermission, browserSupportsMedia });
+      if (showImageUrlInput) {
+        console.log("Hiding image input because mic was clicked.");
+        setShowImageUrlInput(false);
+        setImageUrl('');
+      }
       if (isRecording) {
           stopRecording();
       } else {
-          startRecording();
+          // Check permission again just before starting, in case it changed
+          checkMicPermissionStatus().then(() => {
+              // Use the latest permission state after checking
+              if (hasMicPermission === false) {
+                  toast({ variant: 'destructive', title: 'Microphone Required', description: 'Please enable microphone permission in browser settings.'});
+              } else if (browserSupportsMedia) {
+                   startRecording();
+              } else {
+                  toast({ variant: 'destructive', title: 'Unsupported Browser', description: 'Audio recording is not supported.' });
+              }
+          });
       }
   }
 
   const canSendMessage = user && chatId && (!!message.trim() || !!imageUrl.trim() || !!audioBlob) && !isSending;
   // Update canRecord logic based on permission and browser support
-  const canRecord = browserSupportsMedia && user && chatId && !isSending && hasMicPermission !== false;
-  const micButtonDisabledReason = !browserSupportsMedia ? "Audio recording not supported"
+  const canRecord = browserSupportsMedia && user && chatId && !isSending && !isCheckingPermission; // Check browser support and that permission check is done
+  const micButtonDisabled = isCheckingPermission || !canRecord; // Disable while checking permission or if cannot record
+  const micButtonDisabledReason = isCheckingPermission ? "Checking permissions..."
+                                 : !browserSupportsMedia ? "Audio recording not supported"
                                  : !user ? "Login required"
                                  : !chatId ? "Select a chat"
                                  : isSending ? "Sending message..."
@@ -559,11 +662,17 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
                             variant={isRecording ? "destructive" : "ghost"}
                             size="icon"
                             onClick={handleMicButtonClick}
-                            disabled={!canRecord}
+                            disabled={micButtonDisabled} // Use combined disabled state
                             aria-label={isRecording ? "Stop recording" : (micButtonDisabledReason || "Start recording")}
                             className="flex-shrink-0"
                         >
-                            {isRecording ? <Square className="h-5 w-5" /> : (hasMicPermission === false || !browserSupportsMedia ? <AlertCircle className="h-5 w-5 text-destructive" /> : <Mic className="h-5 w-5" />)}
+                            {isRecording
+                               ? <Square className="h-5 w-5" />
+                               : (hasMicPermission === false || !browserSupportsMedia
+                                    ? <AlertCircle className="h-5 w-5 text-destructive" />
+                                    : <Mic className="h-5 w-5" />
+                                  )
+                             }
                         </Button>
                      </span>
                  </TooltipTrigger>
@@ -613,3 +722,4 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
     </div>
   );
 }
+
