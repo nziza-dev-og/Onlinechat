@@ -14,22 +14,23 @@ import {
   UserCredential, // Import UserCredential
   updateProfile as updateAuthProfile, // Import Firebase Auth update function
 } from 'firebase/auth';
-import { auth, storage } from '@/lib/firebase'; // Import auth (storage might not be needed here anymore)
+import { auth } from '@/lib/firebase'; // Import auth
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { LogIn, UserPlus, Chrome, User as UserIcon } from 'lucide-react'; // Changed icons
+import { LogIn, UserPlus, Chrome, User as UserIcon, KeyRound } from 'lucide-react'; // Added KeyRound icon
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { createOrUpdateUserProfile, type UserProfileInput } from '@/lib/user-profile.service'; // Import the service and the input type
 
-// Schema for sign up, removed photoFile
+// Schema for sign up, adding adminCode
 const signUpSchema = z.object({
   email: z.string().email({ message: 'Invalid email address.' }),
   password: z.string().min(6, { message: 'Password must be at least 6 characters.' }),
-  displayName: z.string().min(1, { message: "Display name is required." }).max(50, { message: "Display name too long." }).optional(), // Optional but with validation if present
+  displayName: z.string().min(1, { message: "Display name is required." }).max(50, { message: "Display name too long." }).optional(),
+  adminCode: z.string().max(50).optional().nullable(), // Added adminCode field
 });
 
 const signInSchema = z.object({
@@ -93,6 +94,7 @@ export function AuthForm() {
       email: '',
       password: '',
       displayName: '',
+      adminCode: '', // Initialize adminCode
     },
   });
 
@@ -155,7 +157,8 @@ export function AuthForm() {
             uid: userId,
             email: userEmail,
             displayName: finalDisplayName, // Use the potentially updated display name
-            photoURL: user.photoURL // Use default photoURL from auth if any, or null
+            photoURL: user.photoURL, // Use default photoURL from auth if any, or null
+            adminCode: signUpData.adminCode || null, // Pass the admin code
         };
 
         // Call the service function to create/update the Firestore document
@@ -178,6 +181,7 @@ export function AuthForm() {
         const profileData: UserProfileInput = {
             uid: userId,
             email: userEmail,
+            // Do not pass admin code on sign-in
         };
 
         // Update lastSeen in Firestore on successful sign-in using the service
@@ -219,6 +223,7 @@ export function AuthForm() {
       console.log("Signed in with Google:", user.uid, user.displayName, user.photoURL);
 
       // Prepare data for Firestore profile update (using primitives from Google's profile)
+      // Admin code is NOT relevant for Google Sign-In
       const profileData: UserProfileInput = {
           uid: user.uid,
           email: user.email,
@@ -396,6 +401,27 @@ export function AuthForm() {
                     <p className="text-sm text-destructive">{signUpForm.formState.errors.password.message}</p>
                   )}
                 </div>
+
+                 {/* --- Admin Secret Code --- */}
+                 <div className="space-y-2">
+                   <Label htmlFor="adminCode-signup" className="flex items-center gap-1">
+                       <KeyRound className="h-4 w-4 text-muted-foreground" />
+                       Admin Secret Code (Optional)
+                   </Label>
+                   <Input
+                     id="adminCode-signup"
+                     type="password" // Use password type to obscure the code
+                     placeholder="Enter code if applicable"
+                     {...signUpForm.register('adminCode')}
+                     disabled={isSubmitting}
+                     aria-invalid={!!signUpForm.formState.errors.adminCode}
+                   />
+                    {signUpForm.formState.errors.adminCode && (
+                       <p className="text-sm text-destructive">{signUpForm.formState.errors.adminCode.message}</p>
+                    )}
+                    <p className="text-xs text-muted-foreground">Enter the secret code to register as an admin.</p>
+                 </div>
+
               </CardContent>
                {/* --- Card Footer --- */}
               <CardFooter className="flex flex-col gap-4">
@@ -424,4 +450,3 @@ export function AuthForm() {
     </div>
   );
 }
-

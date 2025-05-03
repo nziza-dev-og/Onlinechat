@@ -6,7 +6,7 @@ import './globals.css';
 import { AuthProvider } from '@/contexts/auth-context';
 import { Toaster } from "@/components/ui/toaster"; // Import Toaster
 import { Button } from '@/components/ui/button'; // Import Button
-import { User, MessageSquareText, Home, Image as ImageIcon, MessageCircle } from 'lucide-react'; // Import User, MessageSquareText, Home, Image, MessageCircle icons
+import { User, MessageSquareText, Home, Image as ImageIcon, MessageCircle, Shield } from 'lucide-react'; // Import User, MessageSquareText, Home, Image, MessageCircle, Shield icons
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -32,7 +32,7 @@ export default function RootLayout({
                  <MessageCircle className="h-6 w-6 text-primary" />
                  <span className="font-bold inline-block">Jules Chatting Platform</span> {/* Updated app name */}
                </Link>
-               <nav className="flex items-center gap-2 sm:gap-4"> {/* Reduced gap on small screens */}
+               <nav className="flex items-center gap-1 sm:gap-2"> {/* Reduced gap */}
                    {/* Home/Chat Link */}
                    <Button variant="ghost" size="icon" asChild>
                       <Link href="/" aria-label="Go to Chat">
@@ -57,6 +57,12 @@ export default function RootLayout({
                          <User className="h-5 w-5" />
                      </Link>
                   </Button>
+                   {/* Admin Link/Button (Consider conditional rendering based on user role) */}
+                   <Button variant="ghost" size="icon" asChild>
+                       <Link href="/admin" aria-label="Admin Dashboard">
+                           <Shield className="h-5 w-5" />
+                       </Link>
+                   </Button>
                </nav>
              </div>
            </header>

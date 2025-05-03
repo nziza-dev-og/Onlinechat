@@ -4,6 +4,7 @@ import type { Timestamp } from 'firebase/firestore';
 
 export interface User extends FirebaseUser {
   // Add any additional custom user properties if needed
+  // We might add the isAdmin flag here eventually if needed directly on the auth object via custom claims
 }
 
 export interface Message {
@@ -31,6 +32,10 @@ export interface UserProfile {
     // Allow Date for input, Firestore converts to Timestamp. Reading will likely be Timestamp.
     lastSeen?: Timestamp | Date;
     createdAt?: Timestamp | Date;
+    isAdmin?: boolean; // Flag to identify administrators
+    // Flags for custom password change flow
+    passwordChangeRequested?: boolean;
+    passwordChangeApproved?: boolean;
 }
 
 
