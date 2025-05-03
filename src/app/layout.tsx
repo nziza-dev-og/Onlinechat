@@ -7,7 +7,7 @@ import { AuthProvider } from '@/contexts/auth-context';
 import { ThemeProvider } from '@/components/theme/theme-provider'; // Import ThemeProvider
 import { Toaster } from "@/components/ui/toaster"; // Import Toaster
 import { Button } from '@/components/ui/button'; // Import Button
-import { User, MessageSquareText, Home, Image as ImageIcon, MessageCircle, Shield, LayoutDashboard } from 'lucide-react'; // Added LayoutDashboard
+import { User, MessageSquareText, Home, Image as ImageIcon, MessageCircle, Shield, LayoutDashboard, Clapperboard } from 'lucide-react'; // Added LayoutDashboard, Clapperboard
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -61,6 +61,12 @@ export default function RootLayout({
                              <ImageIcon className="h-5 w-5" />
                          </Link>
                      </Button>
+                     {/* Stories Link */}
+                     <Button variant="ghost" size="icon" asChild>
+                         <Link href="/stories" aria-label="View Stories">
+                             <Clapperboard className="h-5 w-5" />
+                         </Link>
+                     </Button>
                      {/* Status Link/Button */}
                      <Button variant="ghost" size="icon" asChild>
                         <Link href="/status" aria-label="Update Status">
@@ -96,4 +102,3 @@ export default function RootLayout({
     </html>
   );
 }
-

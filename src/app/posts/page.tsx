@@ -27,8 +27,11 @@ export default function PostsPage() {
     }
     setError(null);
     try {
-      const fetchedPosts = await fetchPosts(50);
-      setPosts(fetchedPosts);
+      // Fetch all posts/stories initially
+      const fetchedItems = await fetchPosts(50);
+      // Filter to show only posts on this page
+      const filteredPosts = fetchedItems.filter(item => item.type === 'post');
+      setPosts(filteredPosts);
       initialLoadComplete.current = true;
     } catch (err: any) {
       console.error("Error loading posts:", err);
@@ -44,16 +47,22 @@ export default function PostsPage() {
     return () => clearInterval(intervalId);
   }, [loadPosts]);
 
-  const handleNewPost = (newPost: Post) => {
-     const serializablePost: PostSerializable = {
-       ...newPost,
-       timestamp: (newPost.timestamp instanceof Date ? newPost.timestamp : new Date()).toISOString(),
+  // Handles both Posts and Stories added via the form (assuming form is updated)
+  const handleNewItemAdded = (newItem: Post) => {
+     const serializableItem: PostSerializable = {
+       ...newItem,
+       timestamp: (newItem.timestamp instanceof Date ? newItem.timestamp : new Date()).toISOString(),
        likeCount: 0,
        likedBy: [],
        commentCount: 0,
+       type: newItem.type || 'post', // Ensure type is set
      };
-     setPosts(prevPosts => [serializablePost, ...prevPosts]);
+     // Only add to this page's state if it's a 'post'
+     if (serializableItem.type === 'post') {
+        setPosts(prevPosts => [serializableItem, ...prevPosts]);
+     }
   };
+
 
   const handleLikeChange = (postId: string, liked: boolean, newLikeCount: number) => {
       setPosts(prevPosts =>
@@ -108,7 +117,8 @@ export default function PostsPage() {
                </CardFooter>
            </Card>
         ) : user ? (
-          <PostForm onPostAdded={handleNewPost} />
+          // Pass the updated handler to PostForm
+          <PostForm onPostAdded={handleNewItemAdded} />
         ) : (
           <Card className="w-full shadow-md mb-8 text-center border-dashed border-primary/60 bg-primary/10 p-6">
               <CardHeader className="p-0">

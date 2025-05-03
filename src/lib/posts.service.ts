@@ -33,13 +33,15 @@ export interface PostInput {
   text?: string | null;
   imageUrl?: string | null;
   videoUrl?: string | null;
+  type?: 'post' | 'story'; // Added type field, optional, defaults to 'post'
 }
 
 /**
  * Adds a new post document to the 'posts' collection in Firestore.
  * Initializes likeCount and commentCount to 0 and likedBy to an empty array.
+ * Saves the post type, defaulting to 'post'.
  *
- * @param postData - An object containing the post details (uid, text, imageUrl, videoUrl).
+ * @param postData - An object containing the post details (uid, text, imageUrl, videoUrl, type).
  * @returns Promise<string> - The ID of the newly created post document.
  * @throws Error if post data is invalid, db is not initialized, or add operation fails.
  */
@@ -59,14 +61,16 @@ export const addPost = async (postData: PostInput): Promise<string> => {
 
   try {
     const postsCollectionRef = collection(db, 'posts');
-    const newPostDocRef = await addDoc(postsCollectionRef, {
+    const dataToSave = {
       ...postData,
+      type: postData.type || 'post', // Default to 'post' if type is not provided
       timestamp: firestoreServerTimestamp(), // Firestore handles this on the server
       likeCount: 0, // Initialize like count
       likedBy: [], // Initialize likedBy array
       commentCount: 0, // Initialize comment count
-    });
-    console.log(`Firestore: Post created with ID: ${newPostDocRef.id}`);
+    };
+    const newPostDocRef = await addDoc(postsCollectionRef, dataToSave);
+    console.log(`Firestore: Post created with ID: ${newPostDocRef.id}, Type: ${dataToSave.type}`);
     return newPostDocRef.id;
   } catch (error: any) {
      const detailedErrorMessage = `Failed to add post to Firestore. Error: ${error.message || 'Unknown Firestore error'}${error.code ? ` (Code: ${error.code})` : ''}`;
@@ -121,6 +125,7 @@ export const fetchPosts = async (count: number = 50): Promise<PostSerializable[]
         text: data.text ?? null,
         imageUrl: data.imageUrl ?? null,
         videoUrl: data.videoUrl ?? null,
+        type: data.type || 'post', // Include type, default to 'post'
         // Convert Timestamp to ISO string for serialization
         timestamp: data.timestamp.toDate().toISOString(),
         likeCount: data.likeCount ?? 0, // Default to 0 if missing
