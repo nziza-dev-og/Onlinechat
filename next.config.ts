@@ -44,6 +44,38 @@ const nextConfig: NextConfig = {
           port: '',
           pathname: '/**',
       },
+       // Add pattern for YouTube thumbnails
+      {
+          protocol: 'https',
+          hostname: 'i.ytimg.com', // Common domain for YouTube thumbnails
+          port: '',
+          pathname: '/vi/**',
+      },
+      {
+          protocol: 'https',
+          hostname: 'img.youtube.com', // Another possible domain
+          port: '',
+          pathname: '/vi/**',
+      },
+      // Add pattern for Instagram CDN
+      {
+          protocol: 'https',
+          hostname: '*.cdninstagram.com', // Wildcard for Instagram CDN subdomains
+          port: '',
+          pathname: '/**',
+      },
+       {
+          protocol: 'https',
+          hostname: 'instagram.com', // Base domain if needed, might not serve images directly
+          port: '',
+          pathname: '/**',
+       },
+       {
+          protocol: 'https',
+          hostname: 'scontent.cdninstagram.com', // Specific CDN host often used
+          port: '',
+          pathname: '/**',
+       },
     ],
   },
    // The `env` block is removed. NEXT_PUBLIC_ prefixed variables are automatically available client-side.
