@@ -1,3 +1,4 @@
+
 import type { User as FirebaseUser } from 'firebase/auth';
 import type { Timestamp } from 'firebase/firestore';
 
@@ -131,3 +132,28 @@ export interface NotificationSerializable {
     senderId?: string | null; // Optional sender info
 }
 
+
+// --- WebRTC Signaling Types ---
+export interface SignalingOffer {
+  senderId: string;
+  type: 'offer';
+  payload: RTCSessionDescriptionInit;
+  timestamp?: object; // Use serverTimestamp() for RTDB
+}
+
+export interface SignalingAnswer {
+  senderId: string;
+  type: 'answer';
+  payload: RTCSessionDescriptionInit;
+  timestamp?: object;
+}
+
+export interface SignalingCandidate {
+  senderId: string;
+  type: 'candidate';
+  payload: RTCIceCandidateInit | null; // Allow null candidate for end-of-candidates signal
+  timestamp?: object;
+}
+
+export type SignalingMessage = SignalingOffer | SignalingAnswer | SignalingCandidate;
+// --- End WebRTC Signaling Types ---
