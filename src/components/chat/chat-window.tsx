@@ -2,8 +2,8 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { db } from '@/lib/firebase';
-import { collection, query, orderBy, onSnapshot, limit, where, addDoc, serverTimestamp, doc, getDoc, setDoc, Timestamp, updateDoc, type Unsubscribe, type FirestoreError } from 'firebase/firestore';
+import { db, app } from '@/lib/firebase'; // Import app
+import { collection, query, orderBy, onSnapshot, limit, where, addDoc, serverTimestamp, doc, getDoc, setDoc, Timestamp, updateDoc, type Unsubscribe, type FirestoreError, getFirestore } from 'firebase/firestore'; // Import getFirestore
 import type { Message, UserProfile, Chat } from '@/types';
 import { ChatMessage } from './chat-message';
 import { ChatInput } from './chat-input';
@@ -105,27 +105,34 @@ export function ChatWindow() {
     let isFocused = typeof document !== 'undefined' ? document.hasFocus() : true;
 
     const updateUserPresence = async (reason: string) => {
-        if (!user?.uid) {
-            return;
-        }
-        // Get Firestore instance within the async function context
-        const currentDb = getFirestore(app); // Use initialized app
-        if (!currentDb) {
-             console.warn(`Presence update skipped for ${user.uid} (${reason}): DB service not ready.`);
-             return;
+       if (!user?.uid) {
+          // console.log("Presence update skipped: No authenticated user.");
+          return;
+       }
+        // Check if db is available before calling the service
+        if (!db) {
+          console.warn(`Presence update skipped for ${user.uid}: DB service not ready.`);
+          return;
         }
 
         try {
             // Call server action for update
-             await updateUserProfileDocument(user.uid, { lastSeen: 'SERVER_TIMESTAMP' });
-        } catch (error: any) {
-             console.error(`🔴 Error updating user presence for ${user.uid} (${reason}):`, error.message, error);
-             toast({
-                 title: "Presence Error",
-                 description: `Could not update online status: ${error.message}`,
-                 variant: "destructive",
-                 duration: 5000,
+             // Pass user data as primitives to the server action
+             await updateUserProfileDocument({
+                 uid: user.uid,
+                 lastSeen: 'SERVER_TIMESTAMP'
              });
+             // console.log(`✅ User presence updated for ${user.uid} (${reason}).`);
+        } catch (error: any) {
+           // Log the detailed error from the service function
+           console.error(`🔴 Error updating user presence for ${user.uid} (${reason}):`, error.message, error);
+           // Optional: Show a less technical toast to the user
+           toast({
+               title: "Presence Error",
+               description: `Could not update online status. Please check your connection.`,
+               variant: "destructive",
+               duration: 5000,
+           });
         }
       };
 
@@ -341,16 +348,17 @@ export function ChatWindow() {
                 // Notification Logic
                  const isDifferentUser = message.uid !== user?.uid;
                  const isTabHidden = typeof document !== 'undefined' && document.hidden;
-                 const isChatSelected = selectedChatPartner?.uid === message.uid || selectedChatPartner?.uid === user?.uid; // Check if the message belongs to the selected chat
+                 // Determine if the current chat window is focused on this specific chat partner
+                  const isCurrentChatSelected = selectedChatPartner?.uid === message.uid || message.uid === user?.uid;
 
-                 // Only notify if the message is from the other user, the tab is hidden, and the correct chat is selected
-                 if (isDifferentUser && isTabHidden && isChatSelected && hasNonPendingChanges) { // Only notify for non-local changes
+                 // Only notify if the message is from the other user, the tab is hidden, and this specific chat is selected
+                 if (isDifferentUser && isTabHidden && isCurrentChatSelected && hasNonPendingChanges) { // Only notify for non-local changes
                      const notificationText = message.text ? (message.text.substring(0, 50) + (message.text.length > 50 ? '...' : ''))
                                             : message.imageUrl ? 'Sent an image'
                                             : message.audioUrl ? 'Sent a voice note'
                                             : 'Sent a message';
                      toast({
-                         title: `New message from ${message.displayName || 'User'}`,
+                         title: `(*) New message from ${message.displayName || 'User'}`, // Add indicator to title
                          description: notificationText,
                          duration: 5000,
                      });
@@ -493,7 +501,7 @@ export function ChatWindow() {
      const newChatId = getChatId(user.uid, partner.uid);
      setChatId(newChatId); // Set the new chat ID - triggers the messages useEffect
 
-     // Ensure chat document exists (or create it) - moved inside useEffect? No, needed for immediate listener setup
+     // Ensure chat document exists (or create it)
      const chatDocRef = doc(currentDb, 'chats', newChatId);
      try {
         const chatDocSnap = await getDoc(chatDocRef);
@@ -508,9 +516,9 @@ export function ChatWindow() {
         } else {
              // Ensure 'typing' field exists if the document already exists
              const chatData = chatDocSnap.data();
-             if (!chatData.typing) {
-                 await updateDoc(chatDocRef, { typing: {} });
-                 console.log(`Firestore: Added 'typing' field to existing chat document ${newChatId}`);
+             if (!chatData?.typing) { // Check if typing field exists
+                 console.log(`Chat document ${newChatId} missing 'typing' field. Adding...`);
+                 await updateDoc(chatDocRef, { typing: {} }); // Add the typing field
              }
         }
         setIsVideoButtonDisabled(false); // Enable video button after ensuring chat doc exists
@@ -731,3 +739,4 @@ export function ChatWindow() {
      </>
   );
 }
+
