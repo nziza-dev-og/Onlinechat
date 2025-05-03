@@ -13,6 +13,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { formatDistanceToNowStrict, parseISO } from 'date-fns'; // Import date-fns if needed for timestamps
+import { getFirestore, doc, getDoc, type Firestore } from 'firebase/firestore'; // Import Firestore functions
 
 // Helper to get initials
 const getInitials = (name: string | null | undefined): string => {
@@ -52,20 +53,23 @@ export default function AdminPage() {
       return;
     }
 
-    // Assume user profile service can fetch current user's profile including isAdmin flag
-    // This might require another service function or fetching the profile directly here
-    // For now, we'll simulate checking admin status from the auth user object if available,
-    // or fetch the profile. A dedicated check function is better.
-    const checkAdminAndFetchRequests = async () => {
+    // Need db instance here
+     const db = getFirestore(); // Get db instance here
+     if (!db) {
+        console.error("Failed to get Firestore instance in AdminPage");
+        setError("Database unavailable.");
+        setIsAdmin(false);
+        setLoadingRequests(false);
+        return;
+     }
+
+    // Define the async function inside useEffect or useCallback
+    const checkAdminAndFetchRequests = async (firestoreInstance: Firestore) => {
         setLoadingRequests(true);
         setError(null);
         try {
-             // Replace with actual admin check, e.g., fetching user profile
-             // const userProfile = await fetchUserProfile(user.uid); // Fictional function
-             // setIsAdmin(userProfile?.isAdmin ?? false);
-
              // Placeholder: fetch profile to check isAdmin flag
-             const profile = await getDoc(doc(db, 'users', user.uid)); // Requires db import
+             const profile = await getDoc(doc(firestoreInstance, 'users', user.uid)); // Use the passed instance
              const isAdminUser = profile.exists() && profile.data()?.isAdmin === true;
              setIsAdmin(isAdminUser);
 
@@ -86,16 +90,8 @@ export default function AdminPage() {
         }
     };
 
-    // Need to import db and doc from firestore for the placeholder check
-    import('firebase/firestore').then(({ getDoc, doc, getFirestore }) => {
-         const db = getFirestore(); // Get db instance here
-         checkAdminAndFetchRequests(db); // Pass db to the function
-     }).catch(err => {
-         console.error("Failed to dynamically import Firestore for admin check:", err);
-         setError("Database unavailable.");
-         setIsAdmin(false);
-         setLoadingRequests(false);
-     });
+    // Call the function with the db instance
+    checkAdminAndFetchRequests(db);
 
   }, [user, authLoading]); // Add db dependency if used directly
 
@@ -241,3 +237,4 @@ export default function AdminPage() {
     </div>
   );
 }
+
