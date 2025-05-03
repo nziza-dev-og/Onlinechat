@@ -16,9 +16,12 @@ export interface Message {
   imageUrl?: string | null; // Optional image URL for chat messages
   audioUrl?: string | null; // Optional audio URL for voice notes
   videoUrl?: string | null; // Optional video URL for chat messages
+  fileUrl?: string | null; // Optional URL for generic files
+  fileName?: string | null; // Optional original filename
+  fileType?: string | null; // Optional MIME type for generic files
   // Fields for reply functionality
   replyToMessageId?: string | null;
-  replyToMessageText?: string | null; // Can be text, 'Image', 'Voice note', or 'Video'
+  replyToMessageText?: string | null; // Can be text, 'Image', 'Voice note', 'Video', or 'File'
   replyToMessageAuthor?: string | null;
 }
 
@@ -116,3 +119,15 @@ export interface AdminMessage {
     repliedAt?: string | null; // ISO string
     repliedBy?: string | null; // Admin UID
 }
+
+// Interface for serializable notification data passed to the client.
+export interface NotificationSerializable {
+    id: string;
+    message: string;
+    timestamp: string; // ISO string
+    isGlobal: boolean;
+    targetUserId?: string | null;
+    isRead?: boolean; // Only relevant for targeted
+    senderId?: string | null; // Optional sender info
+}
+

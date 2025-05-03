@@ -6,7 +6,7 @@ import { format, formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import Image from 'next/image';
-import { Reply, Mic, Play, Pause, Video as VideoIcon } from 'lucide-react'; // Added VideoIcon
+import { Reply, Mic, Play, Pause, Video as VideoIcon, FileText, Download } from 'lucide-react'; // Added FileText, Download
 import { Button } from '@/components/ui/button'; // Import Button for reply action
 import * as React from 'react'; // Import React for audio handling and state
 import { FullScreenImageViewer } from './full-screen-image-viewer'; // Import the modal
@@ -175,7 +175,8 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
       if (msg.text) return msg.text;
       if (msg.imageUrl) return 'Image';
       if (msg.audioUrl) return 'Voice note';
-      if (msg.videoUrl) return 'Video'; // Add video case
+      if (msg.videoUrl) return 'Video';
+      if (msg.fileUrl) return msg.fileName || 'File'; // Use filename if available for files
       return 'Original message';
   }
 
@@ -211,13 +212,13 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
                     Replying to {message.replyToMessageAuthor || 'Unknown'}
                  </p>
                  <p className="text-muted-foreground truncate italic">
-                    {getReplyTextPreview(message)}
+                     {getReplyTextPreview(message)} {/* Use updated preview function */}
                  </p>
             </div>
          )}
 
          {/* Display Audio Player if audioUrl exists */}
-         {message.audioUrl && (
+         {message.audioUrl && !message.imageUrl && !message.videoUrl && !message.fileUrl && (
              <div className={cn(
                  "my-2 p-2 rounded-md flex items-center gap-3", // Increased gap
                  isSender ? "bg-accent/80" : "bg-muted/60" // Slightly different background
@@ -244,7 +245,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
          )}
 
         {/* Display Image - Wrapped in Button */}
-         {message.imageUrl && !message.audioUrl && !message.videoUrl && (
+         {message.imageUrl && !message.audioUrl && !message.videoUrl && !message.fileUrl && (
           <Button
               variant="ghost"
               className="relative aspect-video w-48 max-w-full my-2 p-0 h-auto rounded-md overflow-hidden border block cursor-pointer" // Make it a block, remove default padding
@@ -263,7 +264,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
          )}
 
          {/* Display Video */}
-          {message.videoUrl && !message.audioUrl && !message.imageUrl && (
+          {message.videoUrl && !message.audioUrl && !message.imageUrl && !message.fileUrl && (
              <div className="relative aspect-video w-full max-w-md my-2 rounded-lg overflow-hidden border shadow-inner">
                  {/* Basic HTML5 Video Player */}
                  <video
@@ -282,6 +283,32 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
                  {/* Consider adding a more robust video player component later if needed */}
              </div>
           )}
+
+          {/* Display Generic File */}
+           {message.fileUrl && !message.audioUrl && !message.imageUrl && !message.videoUrl && (
+                <div className={cn(
+                    "my-2 p-3 rounded-md flex items-center gap-3 border",
+                    isSender ? "bg-accent/70 border-accent/80" : "bg-muted/50 border-muted/60"
+                )}>
+                    <FileText className="h-6 w-6 text-foreground/70 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-foreground truncate" title={message.fileName || 'Attached file'}>
+                            {message.fileName || 'Attached file'}
+                        </p>
+                         {message.fileType && <p className="text-xs text-muted-foreground">{message.fileType}</p>}
+                    </div>
+                     <Button
+                         variant="ghost"
+                         size="icon"
+                         asChild // Use asChild to make it a link
+                         className="h-8 w-8 text-primary flex-shrink-0"
+                     >
+                         <a href={message.fileUrl} target="_blank" rel="noopener noreferrer" download={message.fileName || true} aria-label="Download file">
+                             <Download className="h-5 w-5" />
+                         </a>
+                     </Button>
+                </div>
+           )}
 
 
         {message.text && (
@@ -338,3 +365,4 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
     </>
   );
 }
+
