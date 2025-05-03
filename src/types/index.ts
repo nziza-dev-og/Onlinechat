@@ -39,6 +39,9 @@ export interface Post {
     imageUrl?: string | null; // Optional image URL
     videoUrl?: string | null; // Optional video URL
     timestamp: Timestamp | Date; // Can be Timestamp or Date (e.g., for optimistic updates)
+    likeCount?: number; // Number of likes
+    likedBy?: string[]; // Array of UIDs who liked the post
+    commentCount?: number; // Number of comments
 }
 
 // New Post type with serializable timestamp for passing to Client Components
@@ -51,8 +54,10 @@ export interface PostSerializable {
     imageUrl?: string | null;
     videoUrl?: string | null;
     timestamp: string; // Use ISO string for serialization
+    likeCount?: number;
+    likedBy?: string[];
+    commentCount?: number;
 }
-
 
 // Interface representing the structure of the main chat document in Firestore (`chats/{chatId}`)
 export interface Chat {
@@ -63,4 +68,26 @@ export interface Chat {
     [userId: string]: boolean; // Map of userId to typing status (true if typing)
   };
   // Add other chat-level metadata if needed
+}
+
+// Interface for comments on a post
+export interface Comment {
+  id: string;
+  postId: string; // ID of the post this comment belongs to
+  uid: string; // User ID of the commenter
+  displayName: string | null; // Commenter's display name
+  photoURL: string | null; // Commenter's photo URL
+  text: string; // Comment text
+  timestamp: Timestamp | Date; // Timestamp of the comment
+}
+
+// Serializable version of Comment
+export interface CommentSerializable {
+  id: string;
+  postId: string;
+  uid: string;
+  displayName: string | null;
+  photoURL: string | null;
+  text: string;
+  timestamp: string; // ISO string
 }

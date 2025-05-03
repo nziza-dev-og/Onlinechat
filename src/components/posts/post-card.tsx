@@ -1,14 +1,26 @@
 
-import type { PostSerializable } from '@/types'; // Import PostSerializable
-import { formatDistanceToNowStrict, parseISO } from 'date-fns'; // Import parseISO
+'use client'; // Need client component for state and interactions
+
+import * as React from 'react';
+import type { PostSerializable, CommentSerializable } from '@/types'; // Import CommentSerializable
+import { formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import Image from 'next/image';
 import { cn } from '@/lib/utils';
-import { User, Image as ImageIcon, Video } from 'lucide-react'; // Add icons
+import { User, Image as ImageIcon, Video, Heart, MessageCircle } from 'lucide-react'; // Add Heart, MessageCircle
+import { Button } from '@/components/ui/button';
+import { useAuth } from '@/hooks/use-auth';
+import { likePost, unlikePost } from '@/lib/posts.service'; // Import like/unlike functions
+import { useToast } from '@/hooks/use-toast';
+import { motion, AnimatePresence } from "framer-motion"; // Import animation library
+import { CommentSection } from './comment-section'; // Import CommentSection (to be created)
 
 interface PostCardProps {
   post: PostSerializable; // Expect PostSerializable with string timestamp
+  // Optimistic update callbacks (optional)
+  onLikeChange?: (postId: string, liked: boolean, newLikeCount: number) => void;
+  onCommentAdded?: (postId: string, newCommentCount: number) => void; // Placeholder
 }
 
 // Consistent Helper function to get initials
@@ -29,9 +41,7 @@ const formatTimestamp = (timestampISO: string | null | undefined): string => {
         return 'just now'; // Fallback if no timestamp string
     }
     try {
-        // Parse the ISO string into a Date object
         const date = parseISO(timestampISO);
-        // Format the distance
         return formatDistanceToNowStrict(date, { addSuffix: true });
     } catch (error) {
         console.error("Error formatting ISO timestamp:", error, timestampISO);
@@ -39,76 +49,216 @@ const formatTimestamp = (timestampISO: string | null | undefined): string => {
     }
 };
 
-export function PostCard({ post }: PostCardProps) {
+export function PostCard({ post, onLikeChange, onCommentAdded }: PostCardProps) {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const [isLiked, setIsLiked] = React.useState(post.likedBy?.includes(user?.uid ?? '') ?? false);
+  const [likeCount, setLikeCount] = React.useState(post.likeCount ?? 0);
+  const [isLiking, setIsLiking] = React.useState(false); // Prevent double clicks
+  const [showComments, setShowComments] = React.useState(false); // State to toggle comments
+
+  // Update local state if the likedBy prop changes externally
+  React.useEffect(() => {
+     setIsLiked(post.likedBy?.includes(user?.uid ?? '') ?? false);
+     setLikeCount(post.likeCount ?? 0);
+  }, [post.likedBy, post.likeCount, user?.uid]);
+
+  const handleLikeToggle = async () => {
+    if (!user || isLiking) return;
+
+    setIsLiking(true);
+    const currentlyLiked = isLiked;
+    const newLikeState = !currentlyLiked;
+    const newLikeCount = currentlyLiked ? likeCount - 1 : likeCount + 1;
+
+    // Optimistic UI update
+    setIsLiked(newLikeState);
+    setLikeCount(newLikeCount);
+    onLikeChange?.(post.id, newLikeState, newLikeCount); // Notify parent
+
+    try {
+      if (newLikeState) {
+        await likePost(post.id, user.uid);
+      } else {
+        await unlikePost(post.id, user.uid);
+      }
+      // Optional: Success toast (can be noisy)
+      // toast({ title: newLikeState ? "Post Liked" : "Post Unliked" });
+    } catch (error: any) {
+      console.error("Error liking/unliking post:", error);
+      toast({
+        title: "Error",
+        description: `Could not ${currentlyLiked ? 'unlike' : 'like'} post. ${error.message}`,
+        variant: "destructive",
+      });
+      // Revert optimistic update on error
+      setIsLiked(currentlyLiked);
+      setLikeCount(currentlyLiked ? newLikeCount + 1 : newLikeCount - 1);
+       onLikeChange?.(post.id, currentlyLiked, currentlyLiked ? newLikeCount + 1 : newLikeCount - 1);
+    } finally {
+      setIsLiking(false);
+    }
+  };
+
+  const toggleCommentSection = () => {
+     setShowComments(prev => !prev);
+  };
+
   return (
-    <Card className="w-full shadow-lg rounded-lg overflow-hidden border border-border/50 bg-card"> {/* Added border and shadow */}
-      <CardHeader className="flex flex-row items-center gap-3 p-4 border-b bg-muted/20"> {/* Slightly different header bg */}
-        <Avatar className="h-10 w-10 border"> {/* Slightly larger avatar */}
-          <AvatarImage src={post.photoURL || undefined} alt={post.displayName || 'User Avatar'} data-ai-hint="user post avatar"/>
-          <AvatarFallback className="bg-background text-muted-foreground">
-             {getInitials(post.displayName)}
-          </AvatarFallback>
-        </Avatar>
-        <div className="flex flex-col">
-          <span className="font-semibold text-sm text-card-foreground leading-tight">{post.displayName || 'Anonymous User'}</span>
-          {/* Use the updated formatTimestamp function */}
-          <span className="text-xs text-muted-foreground leading-tight">{formatTimestamp(post.timestamp)}</span>
-        </div>
-      </CardHeader>
-
-      <CardContent className="p-5 space-y-4"> {/* Increased padding and spacing */}
-         {/* Post Text */}
-         {post.text && (
-           <p className="text-base text-foreground whitespace-pre-wrap break-words">{post.text}</p> // Slightly larger text
-         )}
-
-         {/* Post Image */}
-         {post.imageUrl && (
-           <div className="relative aspect-video w-full rounded-lg overflow-hidden border shadow-inner"> {/* Added inner shadow */}
-             <Image
-               src={post.imageUrl}
-               alt={post.text ? `Image for post: ${post.text.substring(0,30)}...` : "Post image"}
-               fill // Use fill layout
-               style={{ objectFit: 'cover' }} // Cover the container
-               className="bg-muted" // Background while loading
-               data-ai-hint="user post image"
-               sizes="(max-width: 768px) 100vw, (max-width: 1200px) 80vw, 60vw" // Adjusted sizes
-             />
-           </div>
-         )}
-
-          {/* Post Video */}
-         {post.videoUrl && (
-            <div className="aspect-video w-full rounded-lg overflow-hidden border bg-black shadow-inner"> {/* Added inner shadow */}
-                 {/* Use standard video tag */}
-                 <video
-                    src={post.videoUrl}
-                    controls // Add default controls
-                    className="w-full h-full object-contain bg-black" // Contain video, ensure black bg
-                    preload="metadata" // Preload metadata for duration/dimensions
-                    data-ai-hint="user post video"
-                    title={post.text ? `Video for post: ${post.text.substring(0,30)}...` : "Post video"}
-                 >
-                    Your browser does not support the video tag. <a href={post.videoUrl} target="_blank" rel="noopener noreferrer">Watch video</a>
-                </video>
+     <motion.div
+         initial={{ opacity: 0, y: 20 }}
+         animate={{ opacity: 1, y: 0 }}
+         exit={{ opacity: 0, y: -20 }} // Exit animation if wrapped in AnimatePresence
+         transition={{ duration: 0.3 }}
+     >
+        <Card className="w-full shadow-lg rounded-lg overflow-hidden border border-border/50 bg-card transition-shadow duration-300 hover:shadow-xl"> {/* Hover effect */}
+          <CardHeader className="flex flex-row items-center gap-3 p-4 border-b bg-muted/20">
+            <Avatar className="h-10 w-10 border">
+              <AvatarImage src={post.photoURL || undefined} alt={post.displayName || 'User Avatar'} data-ai-hint="user post avatar"/>
+              <AvatarFallback className="bg-background text-muted-foreground">
+                 {getInitials(post.displayName)}
+              </AvatarFallback>
+            </Avatar>
+            <div className="flex flex-col">
+              <span className="font-semibold text-sm text-card-foreground leading-tight">{post.displayName || 'Anonymous User'}</span>
+              <span className="text-xs text-muted-foreground leading-tight">{formatTimestamp(post.timestamp)}</span>
             </div>
-         )}
+          </CardHeader>
 
-         {/* Display placeholder if no content (should ideally be filtered out before rendering) */}
-          {!post.text && !post.imageUrl && !post.videoUrl && (
-              <p className="text-sm text-muted-foreground italic">[Empty post]</p>
-          )}
+          <CardContent className="p-5 space-y-4">
+             {post.text && (
+               <p className="text-base text-foreground whitespace-pre-wrap break-words">{post.text}</p>
+             )}
 
-      </CardContent>
+             {post.imageUrl && (
+               <div className="relative aspect-video w-full rounded-lg overflow-hidden border shadow-inner">
+                 <Image
+                   src={post.imageUrl}
+                   alt={post.text ? `Image for post: ${post.text.substring(0,30)}...` : "Post image"}
+                   fill
+                   style={{ objectFit: 'cover' }}
+                   className="bg-muted"
+                   data-ai-hint="user post image"
+                   sizes="(max-width: 768px) 100vw, (max-width: 1200px) 80vw, 60vw"
+                 />
+               </div>
+             )}
 
-      {/* Optional Footer (e.g., indicating media type if text is short) */}
-       {((post.imageUrl && !post.text) || (post.videoUrl && !post.text)) && (
-           <CardFooter className="p-4 pt-0 border-t text-muted-foreground text-xs flex items-center gap-1.5">
-                {post.imageUrl && <ImageIcon className="h-3.5 w-3.5"/>}
-                {post.videoUrl && <Video className="h-3.5 w-3.5"/>}
-               <span>{post.imageUrl ? 'Image post' : 'Video post'}</span>
-           </CardFooter>
-       )}
-    </Card>
+             {post.videoUrl && (
+                <div className="aspect-video w-full rounded-lg overflow-hidden border bg-black shadow-inner">
+                     <video
+                        src={post.videoUrl}
+                        controls
+                        className="w-full h-full object-contain bg-black"
+                        preload="metadata"
+                        data-ai-hint="user post video"
+                        title={post.text ? `Video for post: ${post.text.substring(0,30)}...` : "Post video"}
+                     >
+                        Your browser does not support the video tag. <a href={post.videoUrl} target="_blank" rel="noopener noreferrer">Watch video</a>
+                    </video>
+                </div>
+             )}
+
+             {!post.text && !post.imageUrl && !post.videoUrl && (
+                  <p className="text-sm text-muted-foreground italic">[Empty post]</p>
+              )}
+
+          </CardContent>
+
+          <CardFooter className="p-3 border-t flex justify-between items-center bg-muted/20">
+              <div className="flex items-center gap-4">
+                  {/* Like Button */}
+                  <Button
+                      variant="ghost"
+                      size="sm"
+                      className="flex items-center gap-1.5 text-muted-foreground hover:text-destructive px-2"
+                      onClick={handleLikeToggle}
+                      disabled={!user || isLiking}
+                      aria-pressed={isLiked}
+                  >
+                      <Heart className={cn("h-4 w-4 transition-colors duration-200", isLiked ? "fill-destructive text-destructive" : "text-muted-foreground")} />
+                      <span className="text-xs font-medium">{likeCount}</span>
+                      <span className="sr-only">{isLiked ? 'Unlike' : 'Like'} post</span>
+                  </Button>
+
+                  {/* Comment Button */}
+                   <Button
+                       variant="ghost"
+                       size="sm"
+                       className="flex items-center gap-1.5 text-muted-foreground hover:text-primary px-2"
+                       onClick={toggleCommentSection}
+                       aria-expanded={showComments}
+                   >
+                       <MessageCircle className="h-4 w-4" />
+                       <span className="text-xs font-medium">{post.commentCount ?? 0}</span>
+                       <span className="sr-only">View comments</span>
+                   </Button>
+              </div>
+
+              {/* Placeholder for share or other actions */}
+               {/* <Button variant="ghost" size="icon" className="text-muted-foreground h-8 w-8">
+                   <Share2 className="h-4 w-4" />
+                   <span className="sr-only">Share post</span>
+               </Button> */}
+          </CardFooter>
+
+           {/* Comment Section (Conditionally Rendered with Animation) */}
+          <AnimatePresence>
+             {showComments && (
+                 <motion.div
+                     initial={{ opacity: 0, height: 0 }}
+                     animate={{ opacity: 1, height: 'auto' }}
+                     exit={{ opacity: 0, height: 0 }}
+                     transition={{ duration: 0.3, ease: "easeInOut" }}
+                     className="overflow-hidden border-t"
+                 >
+                     {/* CommentSection component will go here */}
+                     <CommentSection postId={post.id} onCommentAdded={onCommentAdded} />
+                 </motion.div>
+             )}
+          </AnimatePresence>
+
+        </Card>
+     </motion.div>
   );
 }
+
+// Placeholder for CommentSection component
+// Create this file: src/components/posts/comment-section.tsx
+/*
+import React from 'react';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Send } from 'lucide-react';
+// Import hooks and types as needed
+
+interface CommentSectionProps {
+    postId: string;
+    onCommentAdded?: (postId: string, newCommentCount: number) => void;
+}
+
+export const CommentSection = ({ postId, onCommentAdded }: CommentSectionProps) => {
+    // State for comments, loading, input, etc.
+    // Fetch comments for postId
+    // Handle comment submission
+
+    return (
+        <div className="p-4 space-y-4 bg-background">
+            <p className="text-sm font-medium text-muted-foreground">Comments</p>
+            {/* Comment List Placeholder *}
+            <div className="space-y-3 max-h-60 overflow-y-auto p-1">
+                <p className="text-xs text-center text-muted-foreground italic">No comments yet.</p>
+                {/* Map through fetched comments here *}
+            </div>
+            {/* Comment Input Form *}
+            <form className="flex items-center gap-2 pt-2 border-t">
+                <Input placeholder="Add a comment..." className="flex-1 h-9" />
+                <Button type="submit" size="icon" className="h-9 w-9">
+                    <Send className="h-4 w-4" />
+                </Button>
+            </form>
+        </div>
+    );
+};
+*/
+
