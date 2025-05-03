@@ -1,4 +1,3 @@
-
 "use client";
 
 import * as React from 'react';
@@ -8,14 +7,19 @@ import type { UserProfile } from '@/types';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Loader2, ShieldAlert, CheckCircle, XCircle, UserCheck, UserX, BarChart2, Bell, Settings, ShieldCheck } from 'lucide-react';
+import { Loader2, ShieldAlert, CheckCircle, XCircle, UserCheck, UserX, BarChart2, Bell, Settings, ShieldCheck, Send } from 'lucide-react'; // Added Send
 import { useToast } from '@/hooks/use-toast';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"; // Import Tabs components
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { getFirestore, doc, getDoc, type Firestore } from 'firebase/firestore';
-import { app } from '@/lib/firebase'; // Import the initialized app
-import { getOnlineUsersCount } from '@/lib/admin.service'; // Import analytics service
+import { app } from '@/lib/firebase';
+import { getOnlineUsersCount } from '@/lib/admin.service';
+import { sendNotification } from '@/lib/notification.service'; // Import notification service
+import { Textarea } from '@/components/ui/textarea'; // Import Textarea
+import { Label } from '@/components/ui/label'; // Import Label
+import { Switch } from "@/components/ui/switch"; // Import Switch for settings
+import { Input } from "@/components/ui/input"; // Import Input for settings/security
 
 // Helper to get initials
 const getInitials = (name: string | null | undefined): string => {
@@ -36,9 +40,17 @@ export default function AdminPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [isAdmin, setIsAdmin] = React.useState<boolean | null>(null);
   const [processingUserId, setProcessingUserId] = React.useState<string | null>(null);
-  const [onlineUsers, setOnlineUsers] = React.useState<number | null>(null); // For Analytics
-  const [loadingAnalytics, setLoadingAnalytics] = React.useState(true); // Loading state for analytics
-  const [dbInstance, setDbInstance] = React.useState<Firestore | null>(null); // Hold Firestore instance
+  const [onlineUsers, setOnlineUsers] = React.useState<number | null>(null);
+  const [loadingAnalytics, setLoadingAnalytics] = React.useState(true);
+  const [dbInstance, setDbInstance] = React.useState<Firestore | null>(null);
+  const [notificationMessage, setNotificationMessage] = React.useState(''); // State for notification input
+  const [isSendingNotification, setIsSendingNotification] = React.useState(false); // State for notification sending
+
+  // Placeholder states for Settings
+  const [allowEmoji, setAllowEmoji] = React.useState(true);
+  const [allowFileUploads, setAllowFileUploads] = React.useState(true);
+  const [isSavingSettings, setIsSavingSettings] = React.useState(false);
+
 
   const { toast } = useToast();
 
@@ -110,6 +122,10 @@ export default function AdminPage() {
                      setLoadingAnalytics(false); // Analytics loaded (or failed)
                 }
 
+                // TODO: Fetch initial settings values from config service
+                // const config = await getPlatformConfig();
+                // setAllowEmoji(config.allowEmoji ?? true);
+                // setAllowFileUploads(config.allowFileUploads ?? true);
 
              } else {
                 setError("You do not have permission to access this page.");
@@ -158,6 +174,46 @@ export default function AdminPage() {
     }
   };
 
+   // Handle sending notifications
+   const handleSendNotification = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!notificationMessage.trim() || isSendingNotification) return;
+
+        setIsSendingNotification(true);
+        try {
+            await sendNotification(notificationMessage.trim()); // Send global announcement
+            toast({
+                title: 'Announcement Sent',
+                description: 'Your announcement has been broadcast.',
+            });
+            setNotificationMessage(''); // Clear input
+        } catch (error: any) {
+            toast({
+                title: 'Send Failed',
+                description: error.message || 'Could not send the announcement.',
+                variant: 'destructive',
+            });
+        } finally {
+            setIsSendingNotification(false);
+        }
+   };
+
+   // Handle saving settings (placeholder)
+   const handleSaveSettings = async () => {
+      setIsSavingSettings(true);
+      try {
+          console.log("Saving settings:", { allowEmoji, allowFileUploads });
+          // TODO: Call updatePlatformConfig service
+          // await updatePlatformConfig({ allowEmoji, allowFileUploads });
+          await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate network delay
+          toast({ title: 'Settings Saved (Placeholder)' });
+      } catch (error: any) {
+          toast({ title: 'Save Failed', description: error.message, variant: 'destructive' });
+      } finally {
+          setIsSavingSettings(false);
+      }
+   };
+
 
   // --- Render Logic ---
 
@@ -196,12 +252,12 @@ export default function AdminPage() {
         </div>
 
         <Tabs defaultValue="requests" className="w-full">
-          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 md:grid-cols-5"> {/* Adjust columns for different screen sizes */}
-            <TabsTrigger value="requests"><ShieldCheck className="mr-2 h-4 w-4 inline-block"/> Requests</TabsTrigger> {/* Updated Icon */}
+          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 md:grid-cols-5 mb-4"> {/* Added mb-4 */}
+            <TabsTrigger value="requests"><ShieldCheck className="mr-2 h-4 w-4 inline-block"/> Requests</TabsTrigger>
             <TabsTrigger value="analytics"><BarChart2 className="mr-2 h-4 w-4 inline-block"/> Analytics</TabsTrigger>
             <TabsTrigger value="notifications"><Bell className="mr-2 h-4 w-4 inline-block"/> Notifications</TabsTrigger>
             <TabsTrigger value="settings"><Settings className="mr-2 h-4 w-4 inline-block"/> Settings</TabsTrigger>
-            <TabsTrigger value="security"><ShieldAlert className="mr-2 h-4 w-4 inline-block"/> Security</TabsTrigger> {/* Updated Icon */}
+            <TabsTrigger value="security"><ShieldAlert className="mr-2 h-4 w-4 inline-block"/> Security</TabsTrigger>
           </TabsList>
 
           {/* Password Change Requests Tab */}
@@ -313,11 +369,33 @@ export default function AdminPage() {
               <Card className="shadow-lg mt-4">
                   <CardHeader>
                       <CardTitle>Notifications & Announcements</CardTitle>
-                      <CardDescription>Send messages to users or make platform-wide announcements.</CardDescription>
+                      <CardDescription>Send platform-wide announcements to all users.</CardDescription>
                   </CardHeader>
                   <CardContent>
-                       <p className="text-muted-foreground italic text-center">Notification and announcement features coming soon...</p>
-                      {/* Placeholder for notification form */}
+                        <form onSubmit={handleSendNotification} className="space-y-4">
+                             <div className="space-y-2">
+                                 <Label htmlFor="notification-message">Announcement Message</Label>
+                                 <Textarea
+                                     id="notification-message"
+                                     placeholder="Enter your announcement here..."
+                                     value={notificationMessage}
+                                     onChange={(e) => setNotificationMessage(e.target.value)}
+                                     required
+                                     minLength={10}
+                                     maxLength={500} // Example limits
+                                     disabled={isSendingNotification}
+                                     className="min-h-[100px]"
+                                 />
+                                  <p className="text-xs text-muted-foreground text-right">
+                                     {notificationMessage.length} / 500
+                                  </p>
+                             </div>
+                             <Button type="submit" disabled={!notificationMessage.trim() || isSendingNotification}>
+                                 {isSendingNotification ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Send className="mr-2 h-4 w-4"/>}
+                                 Send Announcement
+                             </Button>
+                        </form>
+                       <p className="text-muted-foreground italic text-center mt-6 text-sm">Targeted notifications (to specific users) coming soon...</p>
                   </CardContent>
               </Card>
            </TabsContent>
@@ -327,12 +405,46 @@ export default function AdminPage() {
               <Card className="shadow-lg mt-4">
                   <CardHeader>
                       <CardTitle>Platform Settings</CardTitle>
-                      <CardDescription>Configure chat features, branding, and integrations.</CardDescription>
+                      <CardDescription>Configure chat features and platform behavior.</CardDescription>
                   </CardHeader>
-                  <CardContent>
-                       <p className="text-muted-foreground italic text-center">Configuration options coming soon...</p>
-                      {/* Placeholder for settings form */}
-                  </CardContent>
+                   <CardContent className="space-y-6 pt-6"> {/* Add pt-6 */}
+                       <div className="flex items-center justify-between space-x-2 border p-4 rounded-md">
+                           <Label htmlFor="allow-emoji" className="flex flex-col space-y-1">
+                               <span>Emoji Support</span>
+                               <span className="font-normal leading-snug text-muted-foreground">
+                                    Allow users to use emojis in chat messages.
+                               </span>
+                           </Label>
+                           <Switch
+                               id="allow-emoji"
+                               checked={allowEmoji}
+                               onCheckedChange={setAllowEmoji}
+                               disabled={isSavingSettings}
+                           />
+                       </div>
+                        <div className="flex items-center justify-between space-x-2 border p-4 rounded-md">
+                           <Label htmlFor="allow-file-uploads" className="flex flex-col space-y-1">
+                               <span>File Uploads</span>
+                                <span className="font-normal leading-snug text-muted-foreground">
+                                    Enable or disable file uploading capabilities in chat.
+                                </span>
+                           </Label>
+                           <Switch
+                               id="allow-file-uploads"
+                               checked={allowFileUploads}
+                               onCheckedChange={setAllowFileUploads}
+                               disabled={isSavingSettings}
+                           />
+                       </div>
+                        <p className="text-muted-foreground italic text-center text-sm">More configuration options (branding, integrations) coming soon...</p>
+                       {/* Placeholder for more settings */}
+                   </CardContent>
+                  <CardFooter>
+                       <Button onClick={handleSaveSettings} disabled={isSavingSettings}>
+                           {isSavingSettings ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : null}
+                           Save Settings
+                       </Button>
+                  </CardFooter>
               </Card>
            </TabsContent>
 
@@ -341,10 +453,19 @@ export default function AdminPage() {
               <Card className="shadow-lg mt-4">
                   <CardHeader>
                       <CardTitle>Security & Access Control</CardTitle>
-                      <CardDescription>Monitor activity and manage platform security settings.</CardDescription>
+                      <CardDescription>Monitor activity and manage platform security.</CardDescription>
                   </CardHeader>
-                  <CardContent>
-                       <p className="text-muted-foreground italic text-center">Security monitoring and control features coming soon...</p>
+                  <CardContent className="space-y-4 pt-6">
+                        {/* Placeholder for IP Blocking */}
+                        <div className="border p-4 rounded-md space-y-3">
+                           <h4 className="font-medium">IP Address Blocking</h4>
+                           <div className="flex items-center gap-2">
+                                <Input type="text" placeholder="Enter IP address to block" className="flex-1" disabled />
+                                <Button variant="destructive" disabled>Block IP</Button>
+                           </div>
+                           <p className="text-xs text-muted-foreground italic">IP blocking functionality coming soon.</p>
+                        </div>
+                       <p className="text-muted-foreground italic text-center text-sm">More security monitoring and control features (audit logs, 2FA enforcement) coming soon...</p>
                       {/* Placeholder for security tools */}
                   </CardContent>
               </Card>

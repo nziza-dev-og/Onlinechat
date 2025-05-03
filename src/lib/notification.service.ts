@@ -1,39 +1,45 @@
-
 'use server';
 
 import { db } from '@/lib/firebase';
-// Import necessary Firestore functions if needed (e.g., addDoc, collection)
+import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 // Import Firebase Admin SDK for FCM if using push notifications
 
 /**
- * Placeholder function to send a notification or announcement.
+ * Sends a global announcement to all users by adding it to a dedicated Firestore collection.
  *
  * @param message - The notification message content.
- * @param targetUserId - Optional user ID to target a specific user. If null, send to all.
  * @returns Promise<void>
  */
-export const sendNotification = async (message: string, targetUserId: string | null = null): Promise<void> => {
+export const sendNotification = async (message: string): Promise<void> => {
   if (!db) {
     console.error("🔴 sendNotification Error: Firestore (db) not available.");
     throw new Error("Database service not available.");
   }
-  if (!message) {
+  if (!message || !message.trim()) {
     throw new Error("Notification message cannot be empty.");
   }
 
   try {
-    if (targetUserId) {
-      console.log(`Placeholder: Sending notification "${message}" to user ${targetUserId}`);
-      // TODO: Implement targeted notification logic (e.g., save to user's notification subcollection)
-    } else {
-      console.log(`Placeholder: Sending global announcement "${message}"`);
-      // TODO: Implement global announcement logic (e.g., save to a global announcements collection)
-    }
+    // Save the announcement to a global collection (e.g., 'announcements')
+    const announcementsRef = collection(db, 'announcements');
+    await addDoc(announcementsRef, {
+      message: message.trim(),
+      timestamp: serverTimestamp(),
+      // Add other relevant fields like sender (admin ID) if needed
+    });
+    console.log(`Firestore: Global announcement sent: "${message.trim()}"`);
+
     // TODO: Integrate with FCM if push notifications are needed.
+    // This would involve getting user FCM tokens and using the Firebase Admin SDK.
 
   } catch (error: any) {
-    const detailedErrorMessage = `Failed to send notification. Error: ${error.message || 'Unknown error'}`;
-    console.error("🔴 Notification Error:", detailedErrorMessage, error);
+    const detailedErrorMessage = `Failed to send announcement. Error: ${error.message || 'Unknown error'}`;
+    console.error("🔴 Announcement Error:", detailedErrorMessage, error);
     throw new Error(detailedErrorMessage);
   }
 };
+
+// Placeholder for targeted notifications (future implementation)
+// export const sendTargetedNotification = async (message: string, targetUserId: string): Promise<void> => {
+//   // ... implementation ...
+// };
