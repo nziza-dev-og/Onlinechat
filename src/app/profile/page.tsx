@@ -3,9 +3,8 @@
 
 import * as React from 'react';
 import { useAuth } from '@/hooks/use-auth';
-import { db, storage } from '@/lib/firebase'; // Import storage
+import { db } from '@/lib/firebase'; // Keep db import for profile fetching
 import { doc, getDoc, Timestamp } from 'firebase/firestore';
-import { getDownloadURL, ref, uploadString } from "firebase/storage";
 import type { UserProfile } from '@/types';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -13,13 +12,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useToast } from '@/hooks/use-toast'; // Moved hook import here
+import { useToast } from "@/hooks/use-toast";
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import * as z from 'zod';
 import { updateProfile as updateAuthProfile } from 'firebase/auth'; // Rename to avoid conflict
 import { updateUserProfileDocument } from '@/lib/user-profile.service'; // Import the service
-import { Edit, Save, User, Mail, CalendarDays, Camera, Loader2 } from 'lucide-react';
+import { Edit, Save, User, Mail, CalendarDays, Loader2, Image as ImageIcon } from 'lucide-react'; // Changed Camera to ImageIcon
 import { format } from 'date-fns'; // For formatting dates
 
 // Helper to get initials
@@ -34,10 +33,10 @@ const getInitials = (name: string | null | undefined): string => {
     return '?';
 };
 
-// Validation schema for the edit form
+// Validation schema for the edit form, using photoURL
 const profileSchema = z.object({
   displayName: z.string().min(1, { message: "Display name cannot be empty." }).max(50, { message: "Display name too long." }).optional(),
-  photoFile: z.instanceof(File).optional().nullable(),
+  photoURL: z.string().url({ message: "Please enter a valid URL." }).max(1024, { message: "URL is too long." }).or(z.literal('')).optional().nullable(), // Allow empty string or null
 });
 
 type ProfileFormData = z.infer<typeof profileSchema>;
@@ -48,50 +47,24 @@ export default function ProfilePage() {
   const [loadingProfile, setLoadingProfile] = React.useState(true);
   const [isEditing, setIsEditing] = React.useState(false);
   const [isSaving, setIsSaving] = React.useState(false);
-  const [photoPreview, setPhotoPreview] = React.useState<string | null>(null);
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const [photoPreview, setPhotoPreview] = React.useState<string | null>(null); // Use string for URL preview
   const { toast } = useToast();
 
   const form = useForm<ProfileFormData>({
     resolver: zodResolver(profileSchema),
     defaultValues: {
       displayName: '',
-      photoFile: null,
+      photoURL: '', // Initialize with empty string
     },
   });
 
-  // Upload photo helper
-  const uploadPhoto = async (file: File, uid: string): Promise<string | null> => {
-    if (!file) return null;
-
-    // Generate a unique file name to avoid overwrites and caching issues
-    const fileExtension = file.name.split('.').pop();
-    const uniqueFileName = `profile_${uid}_${Date.now()}${fileExtension ? '.' + fileExtension : ''}`;
-    const storageRef = ref(storage, `profilePictures/${uid}/${uniqueFileName}`);
-
-    try {
-       const reader = new FileReader();
-       const dataUrl = await new Promise<string>((resolve, reject) => {
-            reader.onload = (e) => resolve(e.target?.result as string);
-            reader.onerror = (e) => reject(reader.error || new Error("FileReader error"));
-            reader.readAsDataURL(file);
-       });
-
-      console.log(`Uploading photo for user ${uid} to ${storageRef.fullPath}...`);
-      const snapshot = await uploadString(storageRef, dataUrl, 'data_url');
-      const downloadURL = await getDownloadURL(snapshot.ref);
-      console.log(`Photo uploaded successfully: ${downloadURL}`);
-      return downloadURL;
-    } catch (error: any) {
-      console.error("Error uploading photo:", error);
-      toast({
-        title: "Photo Upload Failed",
-        description: `Could not upload profile picture: ${error.message || 'Unknown error'}`,
-        variant: "destructive",
-      });
-      return null;
+  // Watch photoURL field for preview updates
+  const watchedPhotoURL = form.watch('photoURL');
+  React.useEffect(() => {
+    if (isEditing) {
+      setPhotoPreview(watchedPhotoURL);
     }
-  };
+  }, [watchedPhotoURL, isEditing]);
 
 
   // Fetch profile data from Firestore
@@ -119,22 +92,26 @@ export default function ProfilePage() {
         if (docSnap.exists()) {
           const data = docSnap.data() as UserProfile;
           setProfileData(data);
-          form.reset({ displayName: data.displayName || '' }); // Pre-fill form
+          form.reset({
+             displayName: data.displayName || '',
+             photoURL: data.photoURL || '' // Pre-fill form with photoURL
+            });
           setPhotoPreview(data.photoURL); // Set initial preview
         } else {
           console.log("No such profile document! Using auth data as fallback.");
           // Use auth data as fallback
-           setProfileData({
+           const fallbackData = {
                uid: user.uid,
                email: user.email,
                displayName: user.displayName,
                photoURL: user.photoURL,
-               // createdAt and lastSeen might be missing if doc doesn't exist
-           });
-           form.reset({ displayName: user.displayName || '' });
-           setPhotoPreview(user.photoURL);
-           // Consider creating the profile document here if it's missing
-           // await createOrUpdateUserProfile({ uid: user.uid, email: user.email, displayName: user.displayName, photoURL: user.photoURL });
+           };
+           setProfileData(fallbackData);
+           form.reset({
+                displayName: fallbackData.displayName || '',
+                photoURL: fallbackData.photoURL || ''
+            });
+           setPhotoPreview(fallbackData.photoURL);
         }
       } catch (error) {
         console.error("Error fetching user profile:", error);
@@ -144,89 +121,55 @@ export default function ProfilePage() {
           variant: "destructive",
         });
         // Set minimal data from auth as fallback on error
-        setProfileData({ uid: user.uid, email: user.email, displayName: user.displayName, photoURL: user.photoURL });
-        form.reset({ displayName: user.displayName || '' });
-        setPhotoPreview(user.photoURL);
+        const fallbackData = { uid: user.uid, email: user.email, displayName: user.displayName, photoURL: user.photoURL };
+        setProfileData(fallbackData);
+        form.reset({
+            displayName: fallbackData.displayName || '',
+            photoURL: fallbackData.photoURL || ''
+        });
+        setPhotoPreview(fallbackData.photoURL);
       } finally {
         setLoadingProfile(false);
       }
     };
 
     fetchProfile();
-  }, [user, authLoading, toast, form]); // form added to dependency array
+  }, [user, authLoading, toast, form]);
 
-  // Handle file input change
-   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      if (file.size > 5 * 1024 * 1024) { // 5MB limit
-          toast({ title: "File Too Large", description: "Image must be smaller than 5MB.", variant: "destructive" });
-          if (fileInputRef.current) fileInputRef.current.value = "";
-          return;
-      }
-       if (!file.type.startsWith('image/')) {
-            toast({ title: "Invalid File Type", description: "Please select an image (JPG, PNG, GIF).", variant: "destructive" });
-            if (fileInputRef.current) fileInputRef.current.value = "";
-             return;
-        }
-
-      form.setValue('photoFile', file, { shouldValidate: true });
-      const reader = new FileReader();
-      reader.onloadend = () => setPhotoPreview(reader.result as string);
-      reader.readAsDataURL(file);
-    } else {
-       form.setValue('photoFile', null, { shouldValidate: true });
-       // Revert preview to original photoURL if file is removed
-       setPhotoPreview(profileData?.photoURL ?? user?.photoURL ?? null);
-    }
-  };
 
   // Handle profile update submission
   const onSubmit = async (data: ProfileFormData) => {
      if (!user || !profileData) return; // Should not happen if button is enabled
 
      setIsSaving(true);
-     let newPhotoURL: string | null | undefined = undefined; // undefined means no change requested
+     // Get the new photo URL from form data. Handle empty string as null.
+     const newPhotoURL = data.photoURL === '' ? null : data.photoURL;
+     const newDisplayName = data.displayName?.trim() || null; // Trim whitespace, fallback to null
 
      try {
-        // 1. Upload new photo if provided
-        if (data.photoFile) {
-            newPhotoURL = await uploadPhoto(data.photoFile, user.uid);
-             if (newPhotoURL === null) {
-                 // Upload failed, toast shown in uploadPhoto, stop saving
-                 setIsSaving(false);
-                 return;
-             }
-        }
-
-        // 2. Prepare update data for Firebase Auth
+        // 1. Prepare update data for Firebase Auth
          const authUpdateData: { displayName?: string | null; photoURL?: string | null } = {};
          // Only include fields if they actually changed OR if they are being set for the first time
-         const newDisplayName = data.displayName?.trim(); // Trim whitespace
-         if (newDisplayName !== undefined && newDisplayName !== (profileData.displayName ?? user.displayName)) {
-            authUpdateData.displayName = newDisplayName || null; // Use null if empty string after trim
+         if (newDisplayName !== (profileData.displayName ?? user.displayName)) {
+            authUpdateData.displayName = newDisplayName;
          }
-         // Always update photoURL in Auth if a new one was successfully uploaded
-         if (newPhotoURL !== undefined) {
+         if (newPhotoURL !== (profileData.photoURL ?? user.photoURL)) {
              authUpdateData.photoURL = newPhotoURL;
          }
 
-
-         // 3. Update Auth profile if necessary
+         // 2. Update Auth profile if necessary
          if (Object.keys(authUpdateData).length > 0) {
             await updateAuthProfile(user, authUpdateData);
              console.log("Firebase Auth profile updated:", authUpdateData);
          }
 
-        // 4. Update Firestore document using the Server Action
-        // Prepare data specifically for the Firestore update service
+        // 3. Update Firestore document using the Server Action
         const firestoreUpdateData: { displayName?: string | null; photoURL?: string | null } = {};
          if ('displayName' in authUpdateData) {
              firestoreUpdateData.displayName = authUpdateData.displayName;
          }
-         // Ensure photoURL update is included if it was changed/uploaded
-         if (newPhotoURL !== undefined) {
-             firestoreUpdateData.photoURL = newPhotoURL;
+         if ('photoURL' in authUpdateData) {
+             firestoreUpdateData.photoURL = authUpdateData.photoURL;
          }
 
          // Only call the update service if there's actually data to update
@@ -244,19 +187,16 @@ export default function ProfilePage() {
         setIsEditing(false); // Exit edit mode
         form.reset({ // Reset form with potentially new data
             displayName: firestoreUpdateData.displayName ?? profileData.displayName ?? user.displayName ?? '',
-            photoFile: null // Clear file input state
+            photoURL: firestoreUpdateData.photoURL ?? profileData.photoURL ?? user.photoURL ?? '',
         });
-        // Clear visual file input
-        if (fileInputRef.current) fileInputRef.current.value = "";
-        // Update preview to the final URL (could be new or existing)
+        // Update preview to the final URL
         setPhotoPreview(firestoreUpdateData.photoURL !== undefined ? firestoreUpdateData.photoURL : (profileData?.photoURL ?? user?.photoURL ?? null));
 
 
      } catch (error: any) {
          console.error("Error during profile update onSubmit:", error);
-          // Check if the error came from the server action
          const errorMessage = error.message || 'Unknown error during profile update';
-         console.error(`Detailed error: ${errorMessage}`); // Log the raw error message
+         console.error(`Detailed error: ${errorMessage}`);
 
          toast({
            title: 'Update Failed',
@@ -273,10 +213,9 @@ export default function ProfilePage() {
     // Reset form and preview to original state
     form.reset({
       displayName: profileData?.displayName || user?.displayName || '',
-      photoFile: null
+      photoURL: profileData?.photoURL || user?.photoURL || '',
     });
     setPhotoPreview(profileData?.photoURL ?? user?.photoURL ?? null);
-    if (fileInputRef.current) fileInputRef.current.value = ""; // Clear file input
   };
 
   // Handle loading states
@@ -335,7 +274,7 @@ export default function ProfilePage() {
       <Card className="w-full max-w-2xl shadow-xl rounded-lg overflow-hidden">
          <form onSubmit={form.handleSubmit(onSubmit)}>
             <CardHeader className="items-center text-center bg-card p-6 border-b">
-                 {/* Avatar and Edit */}
+                 {/* Avatar (shows current or preview) */}
                  <div className="relative mb-4">
                     <Avatar className="h-28 w-28 border-4 border-background shadow-md">
                          {/* Use photoPreview for instant feedback */}
@@ -344,31 +283,13 @@ export default function ProfilePage() {
                             {getInitials(isEditing ? form.watch('displayName') : profileData.displayName)}
                         </AvatarFallback>
                     </Avatar>
-                    {/* Edit button for photo */}
+                    {/* Icon indicates photo URL field in edit mode */}
                     {isEditing && (
-                        <Button
-                            type="button"
-                            size="icon"
-                            variant="outline"
-                            className="absolute bottom-0 right-0 rounded-full bg-background hover:bg-muted border shadow-sm h-9 w-9"
-                            onClick={() => fileInputRef.current?.click()}
-                            disabled={isSaving}
-                            aria-label="Change profile picture"
-                        >
-                            <Camera className="h-5 w-5" />
-                        </Button>
+                        <div className="absolute bottom-0 right-0 rounded-full bg-background border shadow-sm h-9 w-9 flex items-center justify-center">
+                            <ImageIcon className="h-5 w-5 text-muted-foreground" />
+                        </div>
                     )}
                  </div>
-                 {/* Hidden file input */}
-                 <Input
-                    id="photo-upload-profile"
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={handleFileChange}
-                    ref={fileInputRef}
-                    disabled={!isEditing || isSaving}
-                 />
 
                 {/* Display Name */}
                 {isEditing ? (
@@ -402,15 +323,24 @@ export default function ProfilePage() {
             </CardHeader>
 
             <CardContent className="p-6 space-y-5">
-                 {/* Simple placeholder for additional profile info */}
-                 {/* <div className="space-y-2">
-                    <Label className="text-sm font-medium text-muted-foreground">About Me</Label>
-                    {isEditing ? (
-                        <Textarea placeholder="Tell us a bit about yourself..." disabled={isSaving} />
-                    ) : (
-                        <p className="text-foreground leading-relaxed">{profileData.bio || "No bio yet."}</p>
-                    )}
-                 </div> */}
+                 {/* Photo URL Input Field (Only in Edit Mode) */}
+                 {isEditing && (
+                     <div className="space-y-2">
+                         <Label htmlFor="photoURL">Profile Picture URL</Label>
+                         <Input
+                            id="photoURL"
+                            type="url"
+                            placeholder="https://example.com/your-photo.jpg"
+                            {...form.register('photoURL')}
+                            disabled={isSaving}
+                         />
+                         {form.formState.errors.photoURL && (
+                            <p className="text-sm text-destructive">{form.formState.errors.photoURL.message}</p>
+                         )}
+                         <p className="text-xs text-muted-foreground">Enter the URL of your desired profile image. Leave blank to remove.</p>
+                     </div>
+                 )}
+
 
                  <div className="flex items-center justify-between p-3 bg-muted/50 rounded-md">
                      <div className="flex items-center gap-3">
@@ -429,7 +359,7 @@ export default function ProfilePage() {
                         <Button type="button" variant="outline" onClick={handleCancelEdit} disabled={isSaving}>
                              Cancel
                         </Button>
-                        <Button type="submit" disabled={isSaving || !form.formState.isDirty}> {/* Disable save if nothing changed */}
+                        <Button type="submit" disabled={isSaving || !form.formState.isDirty}>
                              {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                              Save Changes
                         </Button>
@@ -445,3 +375,4 @@ export default function ProfilePage() {
     </div>
   );
 }
+

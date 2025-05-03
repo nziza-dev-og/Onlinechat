@@ -14,24 +14,22 @@ import {
   UserCredential, // Import UserCredential
   updateProfile as updateAuthProfile, // Import Firebase Auth update function
 } from 'firebase/auth';
-import { auth, storage } from '@/lib/firebase'; // Import storage
+import { auth, storage } from '@/lib/firebase'; // Import auth (storage might not be needed here anymore)
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { LogIn, UserPlus, Chrome, ImagePlus, Upload } from 'lucide-react';
-import { getStorage, ref, uploadString, getDownloadURL } from "firebase/storage"; // Firebase Storage
+import { LogIn, UserPlus, Chrome, User as UserIcon } from 'lucide-react'; // Changed icons
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { createOrUpdateUserProfile, type UserProfileInput } from '@/lib/user-profile.service'; // Import the service and the new input type
+import { createOrUpdateUserProfile, type UserProfileInput } from '@/lib/user-profile.service'; // Import the service and the input type
 
-// Extend schema for sign up to include optional display name and photo URL
+// Schema for sign up, removed photoFile
 const signUpSchema = z.object({
   email: z.string().email({ message: 'Invalid email address.' }),
   password: z.string().min(6, { message: 'Password must be at least 6 characters.' }),
-  displayName: z.string().optional(),
-  photoFile: z.instanceof(File).optional().nullable(), // Allow File or null/undefined
+  displayName: z.string().min(1, { message: "Display name is required." }).max(50, { message: "Display name too long." }).optional(), // Optional but with validation if present
 });
 
 const signInSchema = z.object({
@@ -88,9 +86,6 @@ export function AuthForm() {
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [activeTab, setActiveTab] = React.useState<'signin' | 'signup'>('signin');
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
-  const [photoPreview, setPhotoPreview] = React.useState<string | null>(null);
-
 
   const signUpForm = useForm<SignUpFormData>({
     resolver: zodResolver(signUpSchema),
@@ -98,7 +93,6 @@ export function AuthForm() {
       email: '',
       password: '',
       displayName: '',
-      photoFile: null, // Initialize as null
     },
   });
 
@@ -112,83 +106,11 @@ export function AuthForm() {
 
   // Determine which form is active based on the tab
   const form = activeTab === 'signup' ? signUpForm : signInForm;
-  const currentErrors = form.formState.errors;
-
-
-  // Handle file selection and preview
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      // Basic validation (optional: add size/type checks here)
-      if (file.size > 5 * 1024 * 1024) { // Example: 5MB limit
-          toast({
-            title: "File Too Large",
-            description: "Please select an image smaller than 5MB.",
-            variant: "destructive",
-          });
-          if (fileInputRef.current) fileInputRef.current.value = ""; // Clear input
-          return;
-      }
-       if (!file.type.startsWith('image/')) {
-             toast({
-               title: "Invalid File Type",
-               description: "Please select an image file (e.g., JPG, PNG, GIF).",
-               variant: "destructive",
-             });
-            if (fileInputRef.current) fileInputRef.current.value = ""; // Clear input
-             return;
-        }
-
-      signUpForm.setValue('photoFile', file, { shouldValidate: true }); // Set file in form state and validate
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setPhotoPreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    } else {
-       signUpForm.setValue('photoFile', null, { shouldValidate: true }); // Set back to null
-       setPhotoPreview(null);
-    }
-  };
-
-   // Upload photo to Firebase Storage
-   const uploadPhoto = async (file: File, uid: string): Promise<string | null> => {
-    if (!file || !storage) return null; // No file provided or storage not initialized
-
-    // Use a consistent file name or a unique ID for the profile picture
-    const fileName = `profile_${uid}.${file.name.split('.').pop()}`; // e.g., profile_userId.png
-    const storageRef = ref(storage, `profilePictures/${uid}/${fileName}`);
-
-    try {
-      // Convert file to data URL for uploadString
-       const reader = new FileReader();
-       const dataUrl = await new Promise<string>((resolve, reject) => {
-            reader.onload = (e) => resolve(e.target?.result as string);
-            reader.onerror = (e) => reject(reader.error || new Error("FileReader error"));
-            reader.readAsDataURL(file);
-       });
-
-      console.log(`Uploading photo for user ${uid} to ${storageRef.fullPath}...`);
-      const snapshot = await uploadString(storageRef, dataUrl, 'data_url');
-      const downloadURL = await getDownloadURL(snapshot.ref);
-      console.log(`Photo uploaded successfully: ${downloadURL}`);
-      return downloadURL;
-    } catch (error: any) {
-      console.error("Error uploading photo:", error);
-      toast({
-        title: "Photo Upload Failed",
-        description: `Could not upload profile picture: ${error.message || 'Unknown error'}`,
-        variant: "destructive",
-      });
-      return null; // Return null if upload fails
-    }
-  };
 
 
   const handleEmailPasswordAuth = async (data: SignUpFormData | SignInFormData) => {
     setIsSubmitting(true);
     const isSignUp = activeTab === 'signup';
-    let finalPhotoURL: string | null = null; // Keep track of the photo URL
     let finalDisplayName: string | null = null;
 
     if (!auth) {
@@ -214,34 +136,17 @@ export function AuthForm() {
         userEmail = user.email;
         console.log("User created in Auth:", userId);
 
-        // 2. Upload photo if provided
-        if (signUpData.photoFile && user) {
-             finalPhotoURL = await uploadPhoto(signUpData.photoFile, user.uid);
-             if (!finalPhotoURL) {
-                console.warn("Photo upload failed during sign up, proceeding without profile picture.");
-                // Optionally toast a warning?
-             }
-        }
-        // Ensure displayName is string or null, not undefined
-        finalDisplayName = signUpData.displayName || null;
+        // 2. Prepare displayName (use provided or null)
+        finalDisplayName = signUpData.displayName?.trim() || null;
 
-        // 3. Update Firebase Auth Profile (displayName, photoURL) - Happens Client-Side
-        const authProfileUpdates: { displayName?: string | null; photoURL?: string | null } = {};
+        // 3. Update Firebase Auth Profile (displayName only) - Happens Client-Side
         if (finalDisplayName !== user.displayName) {
-             authProfileUpdates.displayName = finalDisplayName;
-        }
-         if (finalPhotoURL !== user.photoURL) {
-             authProfileUpdates.photoURL = finalPhotoURL;
-         }
-
-        if (Object.keys(authProfileUpdates).length > 0) {
             try {
-                await updateAuthProfile(user, authProfileUpdates);
-                console.log("Firebase Auth profile updated:", authProfileUpdates);
+                await updateAuthProfile(user, { displayName: finalDisplayName });
+                console.log("Firebase Auth profile updated (displayName):", finalDisplayName);
             } catch (authUpdateError: any) {
                  console.error("Error updating Firebase Auth profile during sign up:", authUpdateError);
-                 // Proceed with Firestore profile creation even if Auth update fails, but log it.
-                 toast({ title: "Auth Profile Update Warning", description: `Could not update Auth display name/photo: ${authUpdateError.message}`, variant: "default" });
+                 toast({ title: "Auth Profile Update Warning", description: `Could not update Auth display name: ${authUpdateError.message}`, variant: "default" });
             }
         }
 
@@ -250,7 +155,7 @@ export function AuthForm() {
             uid: userId,
             email: userEmail,
             displayName: finalDisplayName, // Use the potentially updated display name
-            photoURL: finalPhotoURL      // Use the potentially uploaded photo URL
+            photoURL: user.photoURL // Use default photoURL from auth if any, or null
         };
 
         // Call the service function to create/update the Firestore document
@@ -273,7 +178,6 @@ export function AuthForm() {
         const profileData: UserProfileInput = {
             uid: userId,
             email: userEmail,
-            // We don't need to send displayName/photoURL here as the service only updates lastSeen on sign-in
         };
 
         // Update lastSeen in Firestore on successful sign-in using the service
@@ -286,7 +190,6 @@ export function AuthForm() {
 
     } catch (error: any) {
       console.error(`${isSignUp ? 'Sign Up' : 'Sign In'} Error:`, error);
-      // Check if it's an AuthError first
       const errorMessage = error instanceof Error && 'code' in error
             ? getFirebaseAuthErrorMessage(error as AuthError)
             : error.message || 'An unexpected error occurred.';
@@ -348,10 +251,6 @@ export function AuthForm() {
       setActiveTab(value as 'signin' | 'signup');
       signInForm.reset(); // Reset sign-in form state and errors
       signUpForm.reset(); // Reset sign-up form state and errors
-      setPhotoPreview(null); // Reset photo preview
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ""; // Clear file input visually
-      }
       // Clear errors manually if reset doesn't do it consistently
       signInForm.clearErrors();
       signUpForm.clearErrors();
@@ -438,44 +337,20 @@ export function AuthForm() {
             </CardHeader>
              <form onSubmit={signUpForm.handleSubmit(handleEmailPasswordAuth)}>
               <CardContent className="space-y-4">
-                 {/* --- Profile Picture Upload --- */}
+                 {/* --- Default Avatar Placeholder --- */}
                 <div className="space-y-2 flex flex-col items-center">
-                     {/* Clickable Avatar/Label */}
-                     <Label htmlFor="photo-upload" className="cursor-pointer group">
-                        <Avatar className="h-20 w-20 mb-2 border-2 border-dashed group-hover:border-primary transition-colors">
-                            {/* Preview Image */}
-                            <AvatarImage src={photoPreview ?? undefined} alt="Profile Preview" data-ai-hint="user profile picture preview" />
-                             {/* Fallback with Initials or Icon */}
-                             <AvatarFallback className="bg-muted text-muted-foreground">
-                                {photoPreview && signUpForm.getValues('displayName') ? getInitials(signUpForm.getValues('displayName')) : <ImagePlus className="h-8 w-8" />}
-                             </AvatarFallback>
-                        </Avatar>
-                     </Label>
-                     {/* Hidden File Input */}
-                     <Input
-                        id="photo-upload"
-                        type="file"
-                        accept="image/*" // Accept only image files
-                        className="hidden" // Hide the default input visually
-                        onChange={handleFileChange}
-                        ref={fileInputRef}
-                        disabled={isSubmitting}
-                        aria-label="Upload profile picture (optional)"
-                     />
-                     {/* Trigger Button */}
-                     <Button type="button" variant="ghost" size="sm" onClick={() => fileInputRef.current?.click()} disabled={isSubmitting}>
-                        <Upload className="mr-2 h-4 w-4" />
-                        {photoPreview ? 'Change Photo' : 'Add Photo (Optional)'}
-                     </Button>
-                     {/* Error Message */}
-                     {signUpForm.formState.errors.photoFile && (
-                        <p className="text-sm text-destructive">{signUpForm.formState.errors.photoFile.message}</p>
-                    )}
+                    <Avatar className="h-20 w-20 mb-2 border-2 border-dashed">
+                         <AvatarFallback className="bg-muted text-muted-foreground">
+                            {/* Use initials if displayName is entered, otherwise default icon */}
+                            {signUpForm.watch('displayName') ? getInitials(signUpForm.watch('displayName')) : <UserIcon className="h-8 w-8" />}
+                         </AvatarFallback>
+                    </Avatar>
+                    <p className="text-xs text-muted-foreground">You can add a profile picture later on your profile page.</p>
                  </div>
 
                  {/* --- Display Name --- */}
                  <div className="space-y-2">
-                    <Label htmlFor="displayName-signup">Display Name (Optional)</Label>
+                    <Label htmlFor="displayName-signup">Display Name</Label>
                     <Input
                       id="displayName-signup"
                       type="text"
@@ -484,7 +359,6 @@ export function AuthForm() {
                       disabled={isSubmitting}
                       aria-invalid={!!signUpForm.formState.errors.displayName}
                     />
-                    {/* Only show error if specific validation (e.g., min/max length) is added */}
                      {signUpForm.formState.errors.displayName && (
                         <p className="text-sm text-destructive">{signUpForm.formState.errors.displayName.message}</p>
                       )}
@@ -550,3 +424,4 @@ export function AuthForm() {
     </div>
   );
 }
+
