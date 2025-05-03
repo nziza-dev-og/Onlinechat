@@ -31,6 +31,19 @@ const nextConfig: NextConfig = {
           port: '',
           pathname: '/**',
       },
+      // Add pattern for vimeo.com (Note: Vimeo primarily hosts videos, ensure URLs are for images like thumbnails if used with next/image)
+      {
+          protocol: 'https',
+          hostname: 'vimeo.com',
+          port: '',
+          pathname: '/**',
+      },
+      {
+          protocol: 'https',
+          hostname: 'i.vimeocdn.com', // Common CDN for Vimeo images
+          port: '',
+          pathname: '/**',
+      },
     ],
   },
    // The `env` block is removed. NEXT_PUBLIC_ prefixed variables are automatically available client-side.
