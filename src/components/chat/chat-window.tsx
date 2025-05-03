@@ -18,6 +18,8 @@ import { Separator } from '@/components/ui/separator'; // Import Separator
 import { cn } from '@/lib/utils'; // Import cn for conditional classes
 import { useToast } from "@/hooks/use-toast"; // Import useToast
 import { updateUserProfileDocument } from '@/lib/user-profile.service'; // Import the service
+import { isFirebaseError } from '@/lib/firebase-errors'; // Import the error checking utility
+
 
 // Helper function to create a unique chat ID between two users
 const getChatId = (uid1: string, uid2: string): string => {
@@ -64,47 +66,78 @@ export function ChatWindow() {
   }, []);
 
 
-  // Update user presence (lastSeen)
-  useEffect(() => {
-    const updateUserPresence = async () => {
-      if (!user?.uid) {
-        // console.log("Presence update skipped: No authenticated user.");
+   // Update user presence (lastSeen) periodically and on focus
+   useEffect(() => {
+    let intervalId: NodeJS.Timeout | null = null;
+    let isFocused = typeof document !== 'undefined' ? document.hasFocus() : true; // Assume focus on server
+
+    const updateUserPresence = async (reason: string) => {
+      if (!user?.uid || !db) {
+        // console.log(`Presence update skipped (${reason}): No user or DB.`);
         return;
       }
-       // Check if db is available before calling the service
-       if (!db) {
-         console.warn(`Presence update skipped for ${user.uid}: DB service not ready.`);
-         return;
-       }
 
       try {
-        // console.log(`Attempting to update presence for user ${user.uid}...`);
-        // Pass the special marker 'SERVER_TIMESTAMP' instead of the actual function
+        // console.log(`Updating presence for ${user.uid} (${reason})...`);
         await updateUserProfileDocument(user.uid, { lastSeen: 'SERVER_TIMESTAMP' });
-        // console.log("Successfully updated user presence for", user.uid);
+        // console.log(`Presence updated for ${user.uid} (${reason}).`);
       } catch (error: any) {
-          // Log the detailed error message propagated from the service
-         console.error(`Error updating user presence for ${user.uid}: "${error.message}"`, error);
-         // Optional: Show a less technical toast to the user
-         toast({
-             title: "Presence Error",
-             // Avoid showing overly technical details from the error object itself
-             description: `Could not update your online status. Please try again later.`,
-             variant: "destructive",
-             duration: 3000,
-         });
+         console.error(`Error updating user presence (${reason}) for ${user.uid}:`, error.message, error);
+         // Avoid showing toast for routine presence updates unless it's a permission error
+         if (isFirebaseError(error) && error.code === 'permission-denied') {
+             toast({
+                 title: "Presence Error",
+                 description: `Could not update online status due to permissions.`,
+                 variant: "destructive",
+                 duration: 5000,
+             });
+         } else if (!isFirebaseError(error)) { // Only toast for non-Firebase errors during routine updates
+             toast({
+                 title: "Presence Error",
+                 description: `Could not update online status. ${error.message}`,
+                 variant: "destructive",
+                 duration: 3000,
+            });
+         }
       }
     };
 
-    // Delay the initial presence update slightly
-    const timeoutId = setTimeout(updateUserPresence, 1500);
-    // Set up interval for periodic updates
-    const intervalId = setInterval(updateUserPresence, 5 * 60 * 1000); // 5 minutes
+    // Initial update
+    const initialTimeoutId = setTimeout(() => updateUserPresence('initial'), 1500);
 
-    // Cleanup on unmount
+    // Periodic update
+    intervalId = setInterval(() => updateUserPresence('interval'), 4 * 60 * 1000); // Every 4 minutes
+
+    // Update when window gains focus
+    const handleFocus = () => {
+        if (!isFocused) {
+            // console.log('Window gained focus');
+            isFocused = true;
+            updateUserPresence('focus');
+        }
+    };
+
+    // Track when window loses focus (useful for knowing when to show notifications)
+    const handleBlur = () => {
+        // console.log('Window lost focus');
+        isFocused = false;
+        // Optionally update presence immediately on blur?
+        // updateUserPresence('blur');
+    };
+
+    if (typeof window !== 'undefined') {
+        window.addEventListener('focus', handleFocus);
+        window.addEventListener('blur', handleBlur);
+    }
+
+    // Cleanup
     return () => {
-      clearTimeout(timeoutId);
-      clearInterval(intervalId);
+      clearTimeout(initialTimeoutId);
+      if (intervalId) clearInterval(intervalId);
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus', handleFocus);
+        window.removeEventListener('blur', handleBlur);
+      }
     };
   }, [user, toast]); // Depend on user and toast
 
@@ -227,8 +260,8 @@ export function ChatWindow() {
 
     // Store the new unsubscribe function
     messageListenerUnsubscribe.current = onSnapshot(messagesQuery, (querySnapshot) => {
-       const newMessages: Message[] = [];
-       let newMessagesReceived = false;
+       const newMessagesBatch: Message[] = []; // Collect new messages from this snapshot
+       let newMessagesReceivedAfterInitialLoad = false;
 
        querySnapshot.docChanges().forEach((change) => {
           if (change.type === "added") {
@@ -247,23 +280,24 @@ export function ChatWindow() {
                   displayName: data.displayName ?? null,
                   photoURL: data.photoURL ?? null,
                };
-               newMessages.push(message);
+               newMessagesBatch.push(message);
 
                 // --- Notification Logic ---
-                // Check if message is new *after* initial load and *not* from current user
+                // Check conditions: AFTER initial load, NOT from current user, and document is HIDDEN
                 if (!isInitialMessagesLoad.current && message.uid !== user?.uid) {
-                     newMessagesReceived = true; // Mark that new messages came in after initial load
+                    newMessagesReceivedAfterInitialLoad = true; // Mark that new messages came in after initial load
                      // Only show notification if the document (tab/window) is currently hidden
                      if (typeof document !== 'undefined' && document.hidden) {
-                          console.log("Document hidden, showing toast notification for new message.");
+                          console.log(`New message from ${message.displayName || 'User'} while tab hidden. Showing toast.`);
                           toast({
                               title: `New message from ${message.displayName || 'User'}`,
                               description: message.text.substring(0, 50) + (message.text.length > 50 ? '...' : ''),
-                              // Optional: Add an action to bring the window to focus? Requires more complex logic.
+                              duration: 5000, // Show for 5 seconds
+                              // Optional: Add an action? Requires more complex logic.
                               // action: <ToastAction altText="Show chat">Show</ToastAction>,
                           });
                      } else {
-                         console.log("Document visible, new message received but no toast shown.");
+                         console.log("New message received while tab visible, no toast shown.");
                      }
                 }
           }
@@ -271,9 +305,9 @@ export function ChatWindow() {
        });
 
        // Update state efficiently and ensure correct order
-       if (newMessages.length > 0) {
+       if (newMessagesBatch.length > 0) {
            setMessages(prevMessages => {
-               const combined = [...prevMessages, ...newMessages];
+               const combined = [...prevMessages, ...newMessagesBatch];
                // Remove potential duplicates (though unlikely with docChanges 'added')
                const uniqueMessages = Array.from(new Map(combined.map(m => [m.id, m])).values());
                // Ensure final sort order by timestamp
@@ -288,10 +322,16 @@ export function ChatWindow() {
         // Use setTimeout to allow React to render the new messages first
         setTimeout(() => {
             // Scroll if it's the initial load OR if new messages were received *after* the initial load
-            if (isInitialMessagesLoad.current || newMessagesReceived) {
-                 // console.log(`Scrolling to bottom. Initial load: ${isInitialMessagesLoad.current}, New msgs received: ${newMessagesReceived}`);
+             // AND the document is currently VISIBLE (don't auto-scroll if user is in another tab)
+            const shouldScroll = isInitialMessagesLoad.current || (newMessagesReceivedAfterInitialLoad && typeof document !== 'undefined' && !document.hidden);
+
+            if (shouldScroll) {
+                 // console.log(`Scrolling to bottom. Initial load: ${isInitialMessagesLoad.current}, New msgs received: ${newMessagesReceivedAfterInitialLoad}, Doc hidden: ${document?.hidden}`);
                  scrollToBottom();
+            } else {
+                 // console.log(`Scroll skipped. Initial load: ${isInitialMessagesLoad.current}, New msgs received: ${newMessagesReceivedAfterInitialLoad}, Doc hidden: ${document?.hidden}`);
             }
+
             // Mark initial load as complete *after* the first snapshot processing and potential scroll
             if (isInitialMessagesLoad.current) {
                  // console.log(`Initial messages loaded for chat ${currentChatId}.`);
@@ -432,12 +472,12 @@ export function ChatWindow() {
                         <div className="flex flex-col flex-1 min-w-0"> {/* Truncation container */}
                             <span className="font-medium truncate text-sm">{u.displayName || u.email || 'Unnamed User'}</span>
                              {/* Optional: Last seen status */}
-                             {u.lastSeen && (
+                             {/* Consider showing a more user-friendly relative time */}
+                             {/* {u.lastSeen && (
                                  <span className="text-xs text-muted-foreground truncate">
-                                     {/* Consider using formatDistanceToNowStrict or similar */}
-                                     Last seen: {u.lastSeen.toDate().toLocaleTimeString()}
+                                     Last seen: {formatDistanceToNow(u.lastSeen.toDate(), { addSuffix: true })}
                                  </span>
-                             )}
+                             )} */}
                         </div>
                     </Button>
                  ))}
