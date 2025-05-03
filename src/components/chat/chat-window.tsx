@@ -9,7 +9,7 @@ import { ChatMessage } from './chat-message';
 import { ChatInput } from './chat-input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useAuth } from '@/hooks/use-auth';
+import { useAuth } from '@/hooks/use-auth'; // Import useAuth hook
 import { Button } from '@/components/ui/button';
 import { LogOut, Users, MessageSquare, Search, CircleDot, Video as VideoIcon, Circle } from 'lucide-react'; // Added Circle
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -22,6 +22,7 @@ import { isFirebaseError } from '@/lib/firebase-errors';
 import { formatDistanceToNowStrict } from 'date-fns';
 import { updateTypingStatus } from '@/lib/chat.service';
 import { VideoCallModal } from '@/components/chat/video-call-modal'; // Import VideoCallModal
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'; // Import Card components
 
 // Helper function to create a unique chat ID between two users
 const getChatId = (uid1: string, uid2: string): string => {
@@ -78,7 +79,7 @@ export function ChatWindow() {
   const { toast } = useToast();
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
-  const { user } = useAuth();
+  const { user, signOut } = useAuth(); // Get signOut function from useAuth
   const isInitialMessagesLoadForScroll = useRef(true);
   const messageListenerUnsubscribe = useRef<Unsubscribe | null>(null);
   const userListenerUnsubscribe = useRef<Unsubscribe | null>(null);
@@ -120,85 +121,86 @@ export function ChatWindow() {
    }, []);
 
 
-   // Update user presence (lastSeen) periodically and on focus
-   useEffect(() => {
-    let intervalId: NodeJS.Timeout | null = null;
-    let isFocused = typeof document !== 'undefined' ? document.hasFocus() : true;
+    // Update user presence (lastSeen) periodically and on focus
+    useEffect(() => {
+        let intervalId: NodeJS.Timeout | null = null;
+        let isFocused = typeof document !== 'undefined' ? document.hasFocus() : true;
 
-    const updateUserPresence = async (reason: string) => {
-       if (!user?.uid) {
-          // console.log("Presence update skipped: No authenticated user.");
-          return;
-       }
-       // Use the state variable dbInstance
-       if (!dbInstance) {
-           console.warn(`Presence update skipped for ${user.uid}: DB instance not ready.`);
-           return;
-       }
-
-        try {
-             await updateUserProfileDocument(user.uid, {
-                 lastSeen: 'SERVER_TIMESTAMP'
-             });
-             // console.log(`✅ User presence updated for ${user.uid} (${reason}).`);
-        } catch (error: any) {
-           // Log the detailed error from the service function
-           console.error(`🔴 Error updating user presence for ${user.uid} (${reason}):`, error.message, error);
-           // Optional: Show a less technical toast to the user
-           // toast({
-           //     title: "Presence Error",
-           //     description: `Could not update online status. Please check your connection.`,
-           //     variant: "destructive",
-           //     duration: 5000,
-           // });
+        const updateUserPresence = async (reason: string) => {
+        if (!user?.uid) {
+            // console.log("Presence update skipped: No authenticated user.");
+            return;
         }
-      };
+        // Check if dbInstance is available before calling the service
+        if (!dbInstance) {
+            console.warn(`Presence update skipped for ${user.uid} (${reason}): DB instance not ready.`);
+            return;
+        }
 
-
-    const initialTimeoutId = setTimeout(() => updateUserPresence('initial'), 1500);
-    intervalId = setInterval(() => updateUserPresence('interval'), 4 * 60 * 1000); // 4 minutes
-
-    const handleFocus = () => {
-        if (!isFocused) {
-            isFocused = true;
-            updateUserPresence('focus');
-             if (typeof document !== 'undefined' && document.title.startsWith('(*)')) {
-                document.title = document.title.replace(/^\(\*\)\s*/, '');
+            try {
+                // Pass the user ID and the timestamp sentinel
+                await updateUserProfileDocument(user.uid, {
+                    lastSeen: 'SERVER_TIMESTAMP'
+                });
+                // console.log(`✅ User presence updated for ${user.uid} (${reason}).`);
+            } catch (error: any) {
+                // Log the detailed error from the service function
+                console.error(`🔴 Error updating user presence for ${user.uid} (${reason}):`, error.message, error);
+                // Optional: Show a less technical toast to the user
+                 toast({
+                     title: "Presence Error",
+                     description: `Could not update online status: ${error.message}.`,
+                     variant: "destructive",
+                     duration: 5000,
+                 });
             }
+        };
+
+
+        const initialTimeoutId = setTimeout(() => updateUserPresence('initial'), 1500);
+        intervalId = setInterval(() => updateUserPresence('interval'), 4 * 60 * 1000); // 4 minutes
+
+        const handleFocus = () => {
+            if (!isFocused) {
+                isFocused = true;
+                updateUserPresence('focus');
+                if (typeof document !== 'undefined' && document.title.startsWith('(*)')) {
+                    document.title = document.title.replace(/^\(\*\)\s*/, '');
+                }
+            }
+        };
+
+        const handleBlur = async () => {
+            isFocused = false;
+            if (user?.uid && chatId && dbInstance) {
+                try {
+                    await updateTypingStatus(chatId, user.uid, false);
+                } catch (typingError) {
+                    console.error("Error clearing typing status on blur:", typingError);
+                }
+            }
+        };
+
+        if (typeof window !== 'undefined') {
+            window.addEventListener('focus', handleFocus);
+            window.addEventListener('blur', handleBlur);
         }
-    };
+        handleFocus(); // Initial focus check
 
-    const handleBlur = async () => {
-        isFocused = false;
-         if (user?.uid && chatId && dbInstance) { // Ensure dbInstance is available here too
-             try {
-                await updateTypingStatus(chatId, user.uid, false);
-             } catch (typingError) {
-                 console.error("Error clearing typing status on blur:", typingError);
-             }
-         }
-    };
-
-    if (typeof window !== 'undefined') {
-        window.addEventListener('focus', handleFocus);
-        window.addEventListener('blur', handleBlur);
-    }
-     handleFocus(); // Initial focus check
-
-    return () => {
-      clearTimeout(initialTimeoutId);
-      if (intervalId) clearInterval(intervalId);
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('focus', handleFocus);
-        window.removeEventListener('blur', handleBlur);
-      }
-       // Cleanup typing status on unmount
-        if (user?.uid && chatId && dbInstance) {
-             updateTypingStatus(currentChatId || chatId, user.uid, false).catch(err => console.error("Cleanup error for typing status:", err));
-        }
-    };
-   // eslint-disable-next-line react-hooks/exhaustive-deps
-   }, [user?.uid, chatId, toast, dbInstance]); // Add dbInstance to dependency array
+        return () => {
+            clearTimeout(initialTimeoutId);
+            if (intervalId) clearInterval(intervalId);
+            if (typeof window !== 'undefined') {
+                window.removeEventListener('focus', handleFocus);
+                window.removeEventListener('blur', handleBlur);
+            }
+            // Cleanup typing status on unmount
+            if (user?.uid && chatId && dbInstance) {
+                updateTypingStatus(currentChatId || chatId, user.uid, false).catch(err => console.error("Cleanup error for typing status:", err));
+            }
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user?.uid, chatId, toast, dbInstance]); // Add dbInstance to dependency array
 
 
   // Fetch users from Firestore 'users' collection
@@ -861,5 +863,4 @@ export function ChatWindow() {
      </>
   );
 }
-
     
