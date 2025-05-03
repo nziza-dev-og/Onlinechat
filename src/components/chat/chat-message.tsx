@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { format, formatDistanceToNow } from 'date-fns';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"; // Import Tooltip components
+import Image from 'next/image'; // Import next/image
 
 interface ChatMessageProps {
   message: Message;
@@ -71,7 +72,7 @@ export function ChatMessage({ message }: ChatMessageProps) {
       {/* Message Bubble */}
       <div
         className={cn(
-          "max-w-[70%] rounded-xl px-3.5 py-2.5 shadow-sm text-sm", // Slightly larger padding and rounding
+          "max-w-[70%] rounded-xl px-3.5 py-2.5 shadow-sm", // Base bubble style
           isSender
             ? "bg-accent text-accent-foreground rounded-br-sm" // Sharper corner for sender
             : "bg-card text-card-foreground rounded-bl-sm" // Sharper corner for receiver
@@ -81,8 +82,27 @@ export function ChatMessage({ message }: ChatMessageProps) {
         {!isSender && message.displayName && (
            <p className="text-xs font-medium text-muted-foreground mb-1">{message.displayName}</p>
         )}
+
+        {/* Image Display */}
+        {message.imageUrl && (
+          <div className="relative aspect-square w-48 max-w-full my-2 rounded-md overflow-hidden border">
+            <Image
+              src={message.imageUrl}
+              alt="Chat image"
+              fill
+              style={{ objectFit: 'cover' }}
+              className="bg-muted"
+              data-ai-hint="chat message image"
+              sizes="(max-width: 768px) 70vw, 30vw" // Adjust sizes as needed
+            />
+          </div>
+        )}
+
         {/* Message Text */}
-        <p className="break-words whitespace-pre-wrap">{message.text}</p>
+        {message.text && (
+            <p className="text-sm break-words whitespace-pre-wrap">{message.text}</p>
+        )}
+
          {/* Timestamp with Tooltip */}
          <TooltipProvider delayDuration={300}>
             <Tooltip>

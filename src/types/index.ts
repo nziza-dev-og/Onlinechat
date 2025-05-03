@@ -13,6 +13,7 @@ export interface Message {
   uid: string;
   displayName: string | null;
   photoURL: string | null;
+  imageUrl?: string | null; // Optional image URL for chat messages
 }
 
 // UserProfile type remains unchanged
@@ -50,4 +51,16 @@ export interface PostSerializable {
     imageUrl?: string | null;
     videoUrl?: string | null;
     timestamp: string; // Use ISO string for serialization
+}
+
+
+// Interface representing the structure of the main chat document in Firestore (`chats/{chatId}`)
+export interface Chat {
+  id: string; // The chat ID (e.g., user1_user2)
+  participants: string[]; // Array of user UIDs participating in the chat
+  createdAt: Timestamp;
+  typing?: {
+    [userId: string]: boolean; // Map of userId to typing status (true if typing)
+  };
+  // Add other chat-level metadata if needed
 }

@@ -4,7 +4,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { db } from '@/lib/firebase';
 import { collection, query, orderBy, onSnapshot, limit, where, addDoc, serverTimestamp, doc, getDoc, setDoc, Timestamp, type Unsubscribe, type FirestoreError } from 'firebase/firestore';
-import type { Message, UserProfile } from '@/types'; // Import UserProfile
+import type { Message, UserProfile, Chat } from '@/types'; // Import Chat type
 import { ChatMessage } from './chat-message';
 import { ChatInput } from './chat-input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -17,10 +17,10 @@ import { Input } from '@/components/ui/input'; // Import Input for search
 import { Separator } from '@/components/ui/separator'; // Import Separator
 import { cn } from '@/lib/utils'; // Import cn for conditional classes
 import { useToast } from "@/hooks/use-toast"; // Import useToast
-import { updateUserProfileDocument, createOrUpdateUserProfile } from '@/lib/user-profile.service'; // Import the services
+import { updateUserProfileDocument } from '@/lib/user-profile.service'; // Import the services
 import { isFirebaseError } from '@/lib/firebase-errors'; // Import the error checking utility
 import { formatDistanceToNowStrict } from 'date-fns'; // Use strict format for online status
-
+import { updateTypingStatus } from '@/lib/chat.service'; // Import typing status service
 
 // Helper function to create a unique chat ID between two users
 const getChatId = (uid1: string, uid2: string): string => {
@@ -67,6 +67,7 @@ export function ChatWindow() {
   const [selectedChatPartner, setSelectedChatPartner] = useState<UserProfile | null>(null);
   const [chatId, setChatId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState(''); // State for search term
+  const [isPartnerTyping, setIsPartnerTyping] = useState(false); // State for typing indicator
   const { toast } = useToast(); // Get toast function
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
@@ -75,6 +76,8 @@ export function ChatWindow() {
   const isInitialMessagesLoadForScroll = useRef(true); // Ref to track initial message load ONLY for auto-scrolling
   const messageListenerUnsubscribe = useRef<Unsubscribe | null>(null); // Ref for unsubscribe function
   const userListenerUnsubscribe = useRef<Unsubscribe | null>(null); // Ref for user listener unsubscribe
+  const chatDocListenerUnsubscribe = useRef<Unsubscribe | null>(null); // Ref for chat doc listener
+
 
    // Auto-scrolling effect: Scrolls the viewport to the bottom
    const scrollToBottom = useCallback(() => {
@@ -111,12 +114,13 @@ export function ChatWindow() {
            // Log the detailed error from the service function
            console.error(`🔴 Error updating user presence for ${user.uid} (${reason}):`, error.message, error);
            // Optional: Show a less technical toast to the user
-           toast({
-               title: "Presence Error",
-               description: `Could not update online status. Please check console for details.`,
-               variant: "destructive",
-               duration: 5000,
-           });
+           // Avoid showing toast for presence errors unless critical, can be noisy
+           // toast({
+           //     title: "Presence Error",
+           //     description: `Could not update online status. Please check console for details.`,
+           //     variant: "destructive",
+           //     duration: 5000,
+           // });
         }
       };
 
@@ -141,7 +145,9 @@ export function ChatWindow() {
         // console.log('Window lost focus');
         isFocused = false;
         // Optionally update presence immediately on blur?
-        // updateUserPresence('blur');
+         if (user?.uid && chatId) {
+             updateTypingStatus(chatId, user.uid, false); // Ensure typing status is false on blur
+         }
     };
 
     if (typeof window !== 'undefined') {
@@ -157,8 +163,12 @@ export function ChatWindow() {
         window.removeEventListener('focus', handleFocus);
         window.removeEventListener('blur', handleBlur);
       }
+       // Ensure typing status is false on cleanup
+       if (user?.uid && chatId) {
+           updateTypingStatus(chatId, user.uid, false);
+       }
     };
-  }, [user, toast]); // Depend on user and toast
+  }, [user, chatId, toast]); // Depend on user, chatId and toast
 
 
   // Fetch users from Firestore 'users' collection
@@ -190,10 +200,10 @@ export function ChatWindow() {
 
     // Store the new unsubscribe function
     userListenerUnsubscribe.current = onSnapshot(usersQuery, (snapshot) => {
-      console.log(`Firestore 'users' snapshot received. Docs count: ${snapshot.docs.length}`);
-      if (snapshot.empty) {
-        console.log("No user documents found in 'users' collection.");
-      }
+      // console.log(`Firestore 'users' snapshot received. Docs count: ${snapshot.docs.length}`);
+      // if (snapshot.empty) {
+      //   console.log("No user documents found in 'users' collection.");
+      // }
 
       const fetchedUsers: UserProfile[] = snapshot.docs
         .map(doc => {
@@ -269,21 +279,27 @@ export function ChatWindow() {
   }, [user, toast]); // Re-run when user logs in/out or toast function changes (unlikely but safe)
 
 
-  // Fetch messages when a chat partner is selected
+  // Fetch messages and listen to chat document for typing status when a chat partner is selected
   useEffect(() => {
-     // Cleanup previous listener before setting up a new one
+     // Cleanup previous listeners before setting up new ones
      if (messageListenerUnsubscribe.current) {
         console.log("Unsubscribing from previous messages listener.");
         messageListenerUnsubscribe.current();
-        messageListenerUnsubscribe.current = null; // Reset the ref
+        messageListenerUnsubscribe.current = null;
+      }
+      if (chatDocListenerUnsubscribe.current) {
+          console.log("Unsubscribing from previous chat document listener.");
+          chatDocListenerUnsubscribe.current();
+          chatDocListenerUnsubscribe.current = null;
       }
 
     if (!user || !selectedChatPartner || !db) { // Also check for db
         setMessages([]); // Clear messages
         setLoadingMessages(false);
         setChatId(null);
+        setIsPartnerTyping(false); // Reset typing status
         isInitialMessagesLoadForScroll.current = true; // Reset initial scroll flag
-        // console.log("Message fetching skipped: No chat partner selected or DB not ready.");
+        // console.log("Message/Chat listener setup skipped: No chat partner selected or DB not ready.");
         return; // Exit early
     }
 
@@ -291,15 +307,15 @@ export function ChatWindow() {
     isInitialMessagesLoadForScroll.current = true; // Set flag for initial scroll
     const currentChatId = getChatId(user.uid, selectedChatPartner.uid);
     setChatId(currentChatId); // Store the current chat ID
-    console.log(`Setting up messages listener for chat: ${currentChatId}`);
+    console.log(`Setting up listeners for chat: ${currentChatId}`);
 
+    // 1. Listener for messages
     const messagesQuery = query(
       collection(db, 'chats', currentChatId, 'messages'),
       orderBy('timestamp', 'asc'), // Order by ascending timestamp
       limit(100) // Consider pagination for very long chats
     );
 
-    // Store the new unsubscribe function
     messageListenerUnsubscribe.current = onSnapshot(messagesQuery, (querySnapshot) => {
        const newMessagesBatch: Message[] = []; // Collect new messages from this snapshot
        let newMessagesAdded = false; // Track if actual new messages were added in this snapshot
@@ -308,14 +324,21 @@ export function ChatWindow() {
           if (change.type === "added") {
               const data = change.doc.data();
               // Basic validation
-              if (!data.text || !data.uid || !(data.timestamp instanceof Timestamp)) {
+              if (!(data.timestamp instanceof Timestamp) || !data.uid) { // Check uid as well
                  console.warn("Skipping invalid message:", change.doc.id, data);
                  return;
               }
+              // Check for at least text or imageUrl
+              if (typeof data.text !== 'string' && typeof data.imageUrl !== 'string') {
+                   console.warn("Skipping message with no text or image:", change.doc.id, data);
+                   return;
+              }
+
 
                const message: Message = {
                   id: change.doc.id,
-                  text: data.text,
+                  text: data.text ?? '', // Default to empty string if null/undefined
+                  imageUrl: data.imageUrl ?? null, // Default to null
                   timestamp: data.timestamp, // Already validated as Timestamp
                   uid: data.uid,
                   displayName: data.displayName ?? null,
@@ -325,81 +348,86 @@ export function ChatWindow() {
                newMessagesAdded = true; // Mark that a new message was processed
 
                 // --- Notification Logic ---
-                // Show notification if:
-                // 1. The message is NOT from the current user.
-                // 2. The document/tab is currently hidden.
-                 // 3. A chat partner IS selected (don't show for random messages if no chat is active)
                  const isDifferentUser = message.uid !== user?.uid;
                  const isTabHidden = typeof document !== 'undefined' && document.hidden;
-                 const isChatSelected = !!selectedChatPartner; // True if a partner is selected
+                 const isChatSelected = !!selectedChatPartner;
 
-                if (isDifferentUser && isTabHidden && isChatSelected) {
+                 if (isDifferentUser && isTabHidden && isChatSelected) {
                      console.log(`New message from ${message.displayName || 'User'} while tab hidden. Showing toast.`);
                      toast({
                          title: `New message from ${message.displayName || 'User'}`,
                          description: message.text.substring(0, 50) + (message.text.length > 50 ? '...' : ''),
-                         duration: 5000, // Show for 5 seconds
+                         duration: 5000,
                      });
-                     // Also update the document title to indicate a new message
                       if (typeof document !== 'undefined' && !document.title.startsWith('(*)')) {
                            document.title = `(*) ${document.title}`;
                       }
-                } else {
-                    // console.log("New message received while tab visible, from self, or no chat selected. No toast/title update.");
-                }
+                 }
           }
           // Handle 'modified' or 'removed' if needed
        });
 
-       // Update state efficiently and ensure correct order ONLY if new messages were added
        if (newMessagesAdded) {
            setMessages(prevMessages => {
                const existingIds = new Set(prevMessages.map(m => m.id));
                const trulyNewMessages = newMessagesBatch.filter(m => !existingIds.has(m.id));
-               if (trulyNewMessages.length === 0) return prevMessages; // No actual new messages to add
+               if (trulyNewMessages.length === 0) return prevMessages;
 
                const combined = [...prevMessages, ...trulyNewMessages];
-               // Ensure final sort order by timestamp
                return combined.sort((a, b) => a.timestamp.toMillis() - b.timestamp.toMillis());
            });
        }
 
        setLoadingMessages(false);
 
-        // Scroll to bottom logic
         setTimeout(() => {
-            // Scroll only if it's the initial load OR if new messages were actually added
-            // AND the document is currently VISIBLE
-             // AND a chat partner IS selected
             const shouldScroll = (isInitialMessagesLoadForScroll.current || newMessagesAdded)
                                   && typeof document !== 'undefined' && !document.hidden
                                   && !!selectedChatPartner;
-
             if (shouldScroll) {
-                 // console.log(`Scrolling to bottom. Initial scroll flag: ${isInitialMessagesLoadForScroll.current}, New msgs added: ${newMessagesAdded}, Doc hidden: ${document?.hidden}`);
                  scrollToBottom();
-            } else {
-                 // console.log(`Scroll skipped. Initial scroll flag: ${isInitialMessagesLoadForScroll.current}, New msgs added: ${newMessagesAdded}, Doc hidden: ${document?.hidden}`);
             }
-
-            // Mark initial scroll flag as complete *after* the first snapshot processing where messages were potentially added
             if (isInitialMessagesLoadForScroll.current && newMessagesAdded) {
-                 // console.log(`Initial message scroll check complete for chat ${currentChatId}.`);
                  isInitialMessagesLoadForScroll.current = false;
             }
-        }, 100); // Small delay often helps
+        }, 100);
 
     }, (error: FirestoreError) => {
         console.error(`🔴 Error fetching messages for chat ${currentChatId}:`, error.code, error.message, error);
         setLoadingMessages(false);
-        isInitialMessagesLoadForScroll.current = false; // Ensure flag is reset on error
-        messageListenerUnsubscribe.current = null; // Clear ref on error
+        isInitialMessagesLoadForScroll.current = false;
+        messageListenerUnsubscribe.current = null;
         toast({
             title: "Error Fetching Messages",
             description: `Could not load messages: ${error.message} (${error.code})`,
             variant: "destructive",
         });
     });
+
+    // 2. Listener for the chat document itself (for typing indicators)
+    const chatDocRef = doc(db, 'chats', currentChatId);
+    chatDocListenerUnsubscribe.current = onSnapshot(chatDocRef, (docSnap) => {
+        if (docSnap.exists()) {
+            const chatData = docSnap.data() as Chat;
+            const partnerTyping = chatData.typing?.[selectedChatPartner.uid] ?? false;
+            // console.log(`Chat Doc Snapshot (${currentChatId}): Partner typing = ${partnerTyping}`, chatData.typing);
+            setIsPartnerTyping(partnerTyping);
+        } else {
+            // Chat document might not exist initially, handle this case
+            console.warn(`Chat document ${currentChatId} does not exist yet for typing listener.`);
+            setIsPartnerTyping(false);
+        }
+    }, (error: FirestoreError) => {
+        console.error(`🔴 Error listening to chat document ${currentChatId}:`, error.code, error.message);
+        setIsPartnerTyping(false); // Reset on error
+        chatDocListenerUnsubscribe.current = null;
+         // toast({
+         //     title: "Chat Status Error",
+         //     description: `Could not get typing status: ${error.message}`,
+         //     variant: "destructive",
+         // });
+    });
+
 
     // Cleanup function for this effect
      return () => {
@@ -408,9 +436,14 @@ export function ChatWindow() {
           messageListenerUnsubscribe.current();
           messageListenerUnsubscribe.current = null;
         }
+        if (chatDocListenerUnsubscribe.current) {
+            console.log(`Unsubscribing from chat document listener for chat ${chatId ?? 'unknown'}`);
+            chatDocListenerUnsubscribe.current();
+            chatDocListenerUnsubscribe.current = null;
+        }
       };
 
-  }, [user, selectedChatPartner, toast, scrollToBottom]); // Add scrollToBottom to dependencies
+  }, [user, selectedChatPartner, toast, scrollToBottom]); // Add scrollToBottom, selectedChatPartner to dependencies
 
 
   // Effect to remove the (*) from the title when the window/tab gains focus
@@ -442,28 +475,46 @@ export function ChatWindow() {
   const handleSelectUser = useCallback(async (partner: UserProfile) => {
      if (selectedChatPartner?.uid !== partner.uid && user?.uid) { // Only proceed if a *different* user is selected and current user exists
         console.log(`Selecting chat partner: ${partner.displayName || partner.email} (${partner.uid})`);
+
+        // If there was a previous chat, set typing status to false before switching
+        if (chatId && user.uid) {
+            try {
+                await updateTypingStatus(chatId, user.uid, false);
+            } catch (error) {
+                 console.error("Error setting typing to false on chat switch:", error);
+            }
+        }
+
+
         setSelectedChatPartner(partner);
         // Reset state immediately for better perceived responsiveness
         setMessages([]);
         setLoadingMessages(true); // Indicate loading for the new chat
+        setIsPartnerTyping(false); // Reset typing indicator for new chat
         isInitialMessagesLoadForScroll.current = true; // Reset flag for the new chat's initial scroll
         const newChatId = getChatId(user.uid, partner.uid);
         setChatId(newChatId); // Set the new chat ID
 
         // Ensure the chat document exists in Firestore.
-        // This helps if users haven't chatted before.
         if (db) {
             const chatDocRef = doc(db, 'chats', newChatId);
             try {
                 const chatDocSnap = await getDoc(chatDocRef);
                 if (!chatDocSnap.exists()) {
                      console.log(`Chat document ${newChatId} does not exist. Creating...`);
-                    // Create the chat document with participants array (optional, but good practice)
                     await setDoc(chatDocRef, {
                         participants: [user.uid, partner.uid],
-                        createdAt: serverTimestamp() // Use actual serverTimestamp
+                        createdAt: serverTimestamp(), // Use actual serverTimestamp
+                        typing: {} // Initialize typing map
                     });
                     console.log(`Chat document ${newChatId} created.`);
+                } else {
+                     // Ensure typing field exists if doc already exists
+                     const chatData = chatDocSnap.data();
+                     if (!chatData.typing) {
+                         console.log(`Chat document ${newChatId} missing 'typing' field. Adding...`);
+                         await updateDoc(chatDocRef, { typing: {} });
+                     }
                 }
             } catch (error) {
                 console.error(`Error ensuring chat document ${newChatId} exists:`, error);
@@ -478,9 +529,9 @@ export function ChatWindow() {
         // Clear search term when a user is selected? Optional UX choice.
         // setSearchTerm('');
       } else {
-          console.log(`User ${partner.displayName || partner.email} is already selected or current user is missing.`);
+          // console.log(`User ${partner.displayName || partner.email} is already selected or current user is missing.`);
       }
-  }, [selectedChatPartner?.uid, user?.uid, toast]); // Dependencies
+  }, [selectedChatPartner?.uid, user?.uid, chatId, toast]); // Added chatId dependency
 
 
    // Filter users based on search term (case-insensitive)
@@ -658,6 +709,16 @@ export function ChatWindow() {
                                     <ChatMessage key={msg.id} message={msg} />
                                 ))}
                             </div>
+                            {/* Typing Indicator */}
+                            {isPartnerTyping && (
+                                <div className="flex items-center gap-2 text-sm text-muted-foreground animate-pulse px-2 pb-2">
+                                    <Avatar className="h-7 w-7 flex-shrink-0">
+                                        <AvatarImage src={selectedChatPartner.photoURL || undefined} alt={selectedChatPartner.displayName || 'Typing avatar'} data-ai-hint="typing indicator avatar"/>
+                                        <AvatarFallback>{getInitials(selectedChatPartner.displayName || selectedChatPartner.email)}</AvatarFallback>
+                                    </Avatar>
+                                    <span>is typing...</span>
+                                </div>
+                            )}
                              {/* Dummy element for scrollIntoView (alternative if scrollTop fails) */}
                              {/* <div ref={messagesEndRef} /> */}
                         </div>
@@ -679,4 +740,3 @@ export function ChatWindow() {
     </div>
   );
 }
-
