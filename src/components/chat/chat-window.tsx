@@ -1,5 +1,4 @@
 
-
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -12,7 +11,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
-import { LogOut, Users, MessageSquare, Search, CircleDot } from 'lucide-react';
+import { LogOut, Users, MessageSquare, Search, CircleDot, Video as VideoIcon } from 'lucide-react'; // Added VideoIcon
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
@@ -22,6 +21,7 @@ import { updateUserProfileDocument } from '@/lib/user-profile.service';
 import { isFirebaseError } from '@/lib/firebase-errors';
 import { formatDistanceToNowStrict } from 'date-fns';
 import { updateTypingStatus } from '@/lib/chat.service';
+import { VideoCallModal } from '@/components/chat/video-call-modal'; // Import VideoCallModal
 
 // Helper function to create a unique chat ID between two users
 const getChatId = (uid1: string, uid2: string): string => {
@@ -70,8 +70,10 @@ export function ChatWindow() {
   const [searchTerm, setSearchTerm] = useState('');
   const [isPartnerTyping, setIsPartnerTyping] = useState(false);
   const [replyingToMessage, setReplyingToMessage] = useState<Message | null>(null); // State for replying
-  const { toast } = useToast();
+  const [isVideoButtonDisabled, setIsVideoButtonDisabled] = useState(true); // Disable video button initially
+  const [isVideoModalOpen, setIsVideoModalOpen] = useState(false); // State for video call modal
 
+  const { toast } = useToast();
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const { user, signOut } = useAuth();
@@ -104,24 +106,26 @@ export function ChatWindow() {
 
     const updateUserPresence = async (reason: string) => {
         if (!user?.uid) {
-          // console.log(`Presence update skipped (${reason}): No user.`);
-          return;
+            return;
         }
-         if (!db) {
-           console.warn(`Presence update skipped for ${user.uid} (${reason}): DB service not ready.`);
-           return;
-         }
+        // Get Firestore instance within the async function context
+        const currentDb = getFirestore(app); // Use initialized app
+        if (!currentDb) {
+             console.warn(`Presence update skipped for ${user.uid} (${reason}): DB service not ready.`);
+             return;
+        }
 
         try {
-           await updateUserProfileDocument(user.uid, { lastSeen: 'SERVER_TIMESTAMP' });
+            // Call server action for update
+             await updateUserProfileDocument(user.uid, { lastSeen: 'SERVER_TIMESTAMP' });
         } catch (error: any) {
-           console.error(`🔴 Error updating user presence for ${user.uid} (${reason}):`, error.message, error);
-           toast({
-               title: "Presence Error",
-               description: `Could not update online status. Error: ${error.message}`,
-               variant: "destructive",
-               duration: 5000,
-           });
+             console.error(`🔴 Error updating user presence for ${user.uid} (${reason}):`, error.message, error);
+             toast({
+                 title: "Presence Error",
+                 description: `Could not update online status: ${error.message}`,
+                 variant: "destructive",
+                 duration: 5000,
+             });
         }
       };
 
@@ -133,6 +137,9 @@ export function ChatWindow() {
         if (!isFocused) {
             isFocused = true;
             updateUserPresence('focus');
+             if (typeof document !== 'undefined' && document.title.startsWith('(*)')) {
+                document.title = document.title.replace(/^\(\*\)\s*/, '');
+            }
         }
     };
 
@@ -147,6 +154,7 @@ export function ChatWindow() {
         window.addEventListener('focus', handleFocus);
         window.addEventListener('blur', handleBlur);
     }
+     handleFocus(); // Initial focus check
 
     return () => {
       clearTimeout(initialTimeoutId);
@@ -168,8 +176,9 @@ export function ChatWindow() {
       userListenerUnsubscribe.current();
       userListenerUnsubscribe.current = null;
     }
-
-    if (!user || !db) {
+     // Get Firestore instance here
+    const currentDb = getFirestore(app); // Use initialized app
+    if (!user || !currentDb) {
       setUsers([]);
       setLoadingUsers(!user); // Loading is true only if user is expected but not yet available
       return;
@@ -177,7 +186,7 @@ export function ChatWindow() {
 
     setLoadingUsers(true);
     console.log(`Setting up Firestore listener for 'users' collection, excluding self: ${user.uid}`);
-    const usersQuery = query(collection(db, 'users'));
+    const usersQuery = query(collection(currentDb, 'users'));
 
     userListenerUnsubscribe.current = onSnapshot(usersQuery, (snapshot) => {
       const fetchedUsers: UserProfile[] = snapshot.docs
@@ -195,16 +204,21 @@ export function ChatWindow() {
             status: data.status ?? null,
             lastSeen: data.lastSeen instanceof Timestamp ? data.lastSeen : undefined,
             createdAt: data.createdAt instanceof Timestamp ? data.createdAt : undefined,
+            isAdmin: data.isAdmin ?? false,
+            passwordChangeRequested: data.passwordChangeRequested ?? false,
+            passwordChangeApproved: data.passwordChangeApproved ?? false,
           };
         })
-        .filter((u): u is UserProfile => u !== null && u.uid !== user.uid);
+        .filter((u): u is UserProfile => u !== null && u.uid !== user.uid); // Exclude self
 
+      // Sort: Online users first, then alphabetically
       fetchedUsers.sort((a, b) => {
           const onlineA = isOnline(a.lastSeen);
           const onlineB = isOnline(b.lastSeen);
           if (onlineA && !onlineB) return -1;
           if (!onlineA && onlineB) return 1;
 
+          // If both online or both offline, sort by name
           const nameA = (a.displayName || a.email || '').toLowerCase();
           const nameB = (b.displayName || b.email || '').toLowerCase();
           if (nameA < nameB) return -1;
@@ -215,11 +229,13 @@ export function ChatWindow() {
       setUsers(fetchedUsers);
       setLoadingUsers(false);
 
+      // Update selected partner's info if they are still in the list
       if (selectedChatPartner) {
           const updatedPartner = fetchedUsers.find(u => u.uid === selectedChatPartner.uid);
           if (updatedPartner) {
              setSelectedChatPartner(updatedPartner);
           } else {
+              // If partner disappeared (e.g., deleted account), deselect them
               console.warn(`Selected chat partner ${selectedChatPartner.uid} not found in latest snapshot.`);
               setSelectedChatPartner(null);
               setChatId(null);
@@ -244,7 +260,7 @@ export function ChatWindow() {
         userListenerUnsubscribe.current = null;
       }
     };
-  }, [user, toast]);
+  }, [user, toast, selectedChatPartner?.uid]); // Re-run if user changes or selected partner UID changes to refresh partner data
 
 
   // Fetch messages and listen to chat document for typing status
@@ -257,13 +273,15 @@ export function ChatWindow() {
           chatDocListenerUnsubscribe.current();
           chatDocListenerUnsubscribe.current = null;
       }
-
-    if (!user || !selectedChatPartner || !db) {
+      // Get Firestore instance
+     const currentDb = getFirestore(app);
+    if (!user || !selectedChatPartner || !currentDb) {
         setMessages([]);
         setLoadingMessages(false);
         setChatId(null);
         setIsPartnerTyping(false);
         setReplyingToMessage(null); // Clear reply when chat changes
+        setIsVideoButtonDisabled(true); // Disable video button
         isInitialMessagesLoadForScroll.current = true;
         return;
     }
@@ -272,26 +290,34 @@ export function ChatWindow() {
     isInitialMessagesLoadForScroll.current = true;
     const currentChatId = getChatId(user.uid, selectedChatPartner.uid);
     setChatId(currentChatId);
+    setIsVideoButtonDisabled(false); // Enable video button
 
     const messagesQuery = query(
-      collection(db, 'chats', currentChatId, 'messages'),
+      collection(currentDb, 'chats', currentChatId, 'messages'),
       orderBy('timestamp', 'asc'),
-      limit(100)
+      limit(100) // Consider pagination for very long chats
     );
 
     messageListenerUnsubscribe.current = onSnapshot(messagesQuery, (querySnapshot) => {
        const newMessagesBatch: Message[] = [];
        let newMessagesAdded = false;
+       let hasNonPendingChanges = false; // Track if changes are not just from local cache
 
        querySnapshot.docChanges().forEach((change) => {
+          if (!change.doc.metadata.hasPendingWrites) {
+            hasNonPendingChanges = true;
+          }
+
           if (change.type === "added") {
               const data = change.doc.data();
+              // Basic validation
               if (!(data.timestamp instanceof Timestamp) || !data.uid) {
                  console.warn("Skipping invalid message:", change.doc.id, data);
                  return;
               }
-              if (typeof data.text !== 'string' && typeof data.imageUrl !== 'string') {
-                   console.warn("Skipping message with no text or image:", change.doc.id, data);
+              // Ensure some content exists
+              if (!data.text && !data.imageUrl && !data.audioUrl) {
+                   console.warn("Skipping empty message:", change.doc.id, data);
                    return;
               }
 
@@ -299,6 +325,7 @@ export function ChatWindow() {
                   id: change.doc.id,
                   text: data.text ?? '',
                   imageUrl: data.imageUrl ?? null,
+                  audioUrl: data.audioUrl ?? null, // Include audio URL
                   timestamp: data.timestamp,
                   uid: data.uid,
                   displayName: data.displayName ?? null,
@@ -311,14 +338,20 @@ export function ChatWindow() {
                newMessagesBatch.push(message);
                newMessagesAdded = true;
 
+                // Notification Logic
                  const isDifferentUser = message.uid !== user?.uid;
                  const isTabHidden = typeof document !== 'undefined' && document.hidden;
-                 const isChatSelected = !!selectedChatPartner;
+                 const isChatSelected = selectedChatPartner?.uid === message.uid || selectedChatPartner?.uid === user?.uid; // Check if the message belongs to the selected chat
 
-                 if (isDifferentUser && isTabHidden && isChatSelected) {
+                 // Only notify if the message is from the other user, the tab is hidden, and the correct chat is selected
+                 if (isDifferentUser && isTabHidden && isChatSelected && hasNonPendingChanges) { // Only notify for non-local changes
+                     const notificationText = message.text ? (message.text.substring(0, 50) + (message.text.length > 50 ? '...' : ''))
+                                            : message.imageUrl ? 'Sent an image'
+                                            : message.audioUrl ? 'Sent a voice note'
+                                            : 'Sent a message';
                      toast({
                          title: `New message from ${message.displayName || 'User'}`,
-                         description: message.text.substring(0, 50) + (message.text.length > 50 ? '...' : ''),
+                         description: notificationText,
                          duration: 5000,
                      });
                       if (typeof document !== 'undefined' && !document.title.startsWith('(*)')) {
@@ -326,31 +359,36 @@ export function ChatWindow() {
                       }
                  }
           }
+          // Handle 'modified' or 'removed' changes if needed (e.g., message edits/deletions)
        });
 
        if (newMessagesAdded) {
            setMessages(prevMessages => {
                const existingIds = new Set(prevMessages.map(m => m.id));
                const trulyNewMessages = newMessagesBatch.filter(m => !existingIds.has(m.id));
-               if (trulyNewMessages.length === 0) return prevMessages;
+               if (trulyNewMessages.length === 0) return prevMessages; // No actual new messages
                const combined = [...prevMessages, ...trulyNewMessages];
+               // Ensure sorting stability
                return combined.sort((a, b) => a.timestamp.toMillis() - b.timestamp.toMillis());
            });
        }
 
        setLoadingMessages(false);
 
+        // Improved scrolling logic
         setTimeout(() => {
-            const shouldScroll = (isInitialMessagesLoadForScroll.current || newMessagesAdded)
-                                  && typeof document !== 'undefined' && !document.hidden
-                                  && !!selectedChatPartner;
-            if (shouldScroll) {
-                 scrollToBottom();
+            if (viewportRef.current) {
+                const { scrollTop, scrollHeight, clientHeight } = viewportRef.current;
+                // Scroll down if near the bottom or if it was the initial load
+                 const isNearBottom = scrollHeight - scrollTop - clientHeight < 100;
+                if (isNearBottom || isInitialMessagesLoadForScroll.current) {
+                     scrollToBottom();
+                }
             }
             if (isInitialMessagesLoadForScroll.current && newMessagesAdded) {
                  isInitialMessagesLoadForScroll.current = false;
             }
-        }, 100);
+        }, 100); // Delay slightly for DOM updates
 
     }, (error: FirestoreError) => {
         console.error(`🔴 Error fetching messages for chat ${currentChatId}:`, error.code, error.message, error);
@@ -364,13 +402,16 @@ export function ChatWindow() {
         });
     });
 
-    const chatDocRef = doc(db, 'chats', currentChatId);
+    // Listener for typing status in the chat document
+    const chatDocRef = doc(currentDb, 'chats', currentChatId);
     chatDocListenerUnsubscribe.current = onSnapshot(chatDocRef, (docSnap) => {
         if (docSnap.exists()) {
             const chatData = docSnap.data() as Chat;
+            // Check if the *selected partner* is typing
             const partnerTyping = chatData.typing?.[selectedChatPartner.uid] ?? false;
             setIsPartnerTyping(partnerTyping);
         } else {
+            // Chat document might not exist yet if no messages/typing updates occurred
             console.warn(`Chat document ${currentChatId} does not exist yet for typing listener.`);
             setIsPartnerTyping(false);
         }
@@ -378,10 +419,12 @@ export function ChatWindow() {
         console.error(`🔴 Error listening to chat document ${currentChatId}:`, error.code, error.message);
         setIsPartnerTyping(false);
         chatDocListenerUnsubscribe.current = null;
+        // Optionally notify user about typing status fetch error
     });
 
 
      return () => {
+        // Cleanup listeners
         if (messageListenerUnsubscribe.current) {
           messageListenerUnsubscribe.current();
           messageListenerUnsubscribe.current = null;
@@ -390,11 +433,16 @@ export function ChatWindow() {
             chatDocListenerUnsubscribe.current();
             chatDocListenerUnsubscribe.current = null;
         }
+        // Reset typing status when changing chats or unmounting
+         if (user?.uid && currentChatId) {
+             updateTypingStatus(currentChatId, user.uid, false);
+         }
       };
 
-  }, [user, selectedChatPartner, toast, scrollToBottom]);
+  }, [user, selectedChatPartner, toast, scrollToBottom]); // Dependencies
 
 
+  // Focus handling for notification title update
   useEffect(() => {
     const handleFocus = () => {
         if (typeof document !== 'undefined' && document.title.startsWith('(*)')) {
@@ -405,62 +453,77 @@ export function ChatWindow() {
     if (typeof window !== 'undefined') {
         window.addEventListener('focus', handleFocus);
     }
-    handleFocus();
+    handleFocus(); // Check on initial load too
 
     return () => {
         if (typeof window !== 'undefined') {
             window.removeEventListener('focus', handleFocus);
         }
     };
-  }, []);
+  }, []); // Runs only once on mount
 
 
   const handleSelectUser = useCallback(async (partner: UserProfile) => {
-     if (selectedChatPartner?.uid !== partner.uid && user?.uid) {
-        if (chatId && user.uid) {
-            try {
-                await updateTypingStatus(chatId, user.uid, false);
-            } catch (error) {
-                 console.error("Error setting typing to false on chat switch:", error);
-            }
-        }
+     if (selectedChatPartner?.uid === partner.uid) return; // Do nothing if already selected
 
-        setSelectedChatPartner(partner);
-        setMessages([]);
-        setLoadingMessages(true);
-        setIsPartnerTyping(false);
-        setReplyingToMessage(null); // Clear reply state when switching chats
-        isInitialMessagesLoadForScroll.current = true;
-        const newChatId = getChatId(user.uid, partner.uid);
-        setChatId(newChatId);
+     // Get Firestore instance
+     const currentDb = getFirestore(app);
+     if (!currentDb || !user?.uid) {
+        console.error("Cannot select user: DB or current user UID missing.");
+        return;
+     }
 
-        if (db) {
-            const chatDocRef = doc(db, 'chats', newChatId);
-            try {
-                const chatDocSnap = await getDoc(chatDocRef);
-                if (!chatDocSnap.exists()) {
-                    await setDoc(chatDocRef, {
-                        participants: [user.uid, partner.uid],
-                        createdAt: serverTimestamp(),
-                        typing: {}
-                    });
-                } else {
-                     const chatData = chatDocSnap.data();
-                     if (!chatData.typing) {
-                         await updateDoc(chatDocRef, { typing: {} });
-                     }
-                }
-            } catch (error) {
-                console.error(`Error ensuring chat document ${newChatId} exists:`, error);
-                toast({
-                    title: "Chat Error",
-                    description: "Could not initialize chat session.",
-                    variant: "destructive"
-                });
-            }
+     // Reset typing status in the previous chat before switching
+     if (chatId) {
+        try {
+            await updateTypingStatus(chatId, user.uid, false);
+        } catch (error) {
+            console.error("Error setting typing to false on chat switch:", error);
         }
-      }
-  }, [selectedChatPartner?.uid, user?.uid, chatId, toast]);
+     }
+
+     // Update state for the new chat
+     setSelectedChatPartner(partner);
+     setMessages([]); // Clear previous messages
+     setLoadingMessages(true);
+     setIsPartnerTyping(false);
+     setReplyingToMessage(null); // Clear reply state
+     setIsVideoButtonDisabled(true); // Disable video button until chat ID is confirmed
+     isInitialMessagesLoadForScroll.current = true; // Reset scroll behavior
+     const newChatId = getChatId(user.uid, partner.uid);
+     setChatId(newChatId); // Set the new chat ID - triggers the messages useEffect
+
+     // Ensure chat document exists (or create it) - moved inside useEffect? No, needed for immediate listener setup
+     const chatDocRef = doc(currentDb, 'chats', newChatId);
+     try {
+        const chatDocSnap = await getDoc(chatDocRef);
+        if (!chatDocSnap.exists()) {
+            // Create the chat document if it doesn't exist
+            await setDoc(chatDocRef, {
+                participants: [user.uid, partner.uid],
+                createdAt: serverTimestamp(),
+                typing: {} // Initialize empty typing map
+            });
+             console.log(`Firestore: Created chat document ${newChatId}`);
+        } else {
+             // Ensure 'typing' field exists if the document already exists
+             const chatData = chatDocSnap.data();
+             if (!chatData.typing) {
+                 await updateDoc(chatDocRef, { typing: {} });
+                 console.log(`Firestore: Added 'typing' field to existing chat document ${newChatId}`);
+             }
+        }
+        setIsVideoButtonDisabled(false); // Enable video button after ensuring chat doc exists
+     } catch (error) {
+        console.error(`Error ensuring chat document ${newChatId} exists:`, error);
+        toast({
+            title: "Chat Error",
+            description: "Could not initialize chat session.",
+            variant: "destructive"
+        });
+        setIsVideoButtonDisabled(true); // Keep disabled on error
+     }
+  }, [selectedChatPartner?.uid, user?.uid, chatId, toast]); // Dependencies for useCallback
 
 
    const filteredUsers = users.filter(u =>
@@ -470,6 +533,7 @@ export function ChatWindow() {
 
 
   return (
+    <>
     <div className="flex h-[calc(100vh-theme(spacing.14))] bg-secondary">
        <aside className="w-64 flex flex-col border-r bg-background shadow-md">
          <header className="flex items-center justify-between p-4 border-b min-h-[65px]">
@@ -575,7 +639,7 @@ export function ChatWindow() {
                             <span className="absolute bottom-0 right-0 block h-2.5 w-2.5 rounded-full bg-green-500 ring-2 ring-card border border-background" aria-label="Online"/>
                         )}
                     </div>
-                    <div className="flex flex-col">
+                    <div className="flex flex-col flex-grow"> {/* Added flex-grow */}
                         <span className="font-semibold text-card-foreground">{selectedChatPartner.displayName || selectedChatPartner.email}</span>
                         <span className="text-xs text-muted-foreground">
                            {isOnline(selectedChatPartner.lastSeen)
@@ -584,6 +648,17 @@ export function ChatWindow() {
                            }
                         </span>
                     </div>
+                    {/* Video Call Button */}
+                     <Button
+                         variant="ghost"
+                         size="icon"
+                         onClick={() => setIsVideoModalOpen(true)}
+                         disabled={isVideoButtonDisabled}
+                         aria-label="Start video call"
+                         className="text-muted-foreground hover:text-primary"
+                     >
+                         <VideoIcon className="h-5 w-5" />
+                     </Button>
                  </header>
 
                 <div className="flex-1 overflow-hidden">
@@ -643,6 +718,16 @@ export function ChatWindow() {
             )}
        </main>
     </div>
+     {/* Video Call Modal */}
+     {isVideoModalOpen && user && selectedChatPartner && chatId && (
+        <VideoCallModal
+            chatId={chatId}
+            currentUser={user}
+            partnerUser={selectedChatPartner}
+            isOpen={isVideoModalOpen}
+            onClose={() => setIsVideoModalOpen(false)}
+        />
+     )}
+     </>
   );
 }
-

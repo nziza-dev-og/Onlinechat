@@ -8,7 +8,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import Image from 'next/image';
 import { Reply, Mic, Play, Pause } from 'lucide-react'; // Ensure Pause is imported
 import { Button } from '@/components/ui/button'; // Import Button for reply action
-import * as React from 'react'; // Import React for audio handling
+import * as React from 'react'; // Import React for audio handling and state
+import { FullScreenImageViewer } from './full-screen-image-viewer'; // Import the modal
 
 interface ChatMessageProps {
   message: Message;
@@ -63,11 +64,19 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
   const [isPlaying, setIsPlaying] = React.useState(false);
   const [audioDuration, setAudioDuration] = React.useState<number | null>(null);
   const [currentTime, setCurrentTime] = React.useState(0);
+  const [isImageViewerOpen, setIsImageViewerOpen] = React.useState(false); // State for image viewer
 
 
   const handleReplyClick = (e: React.MouseEvent) => {
       e.stopPropagation(); // Prevent triggering other click events if needed
       onReply(message);
+  };
+
+  const handleImageClick = (e: React.MouseEvent) => {
+      e.stopPropagation(); // Prevent triggering reply etc.
+      if (message.imageUrl) {
+          setIsImageViewerOpen(true);
+      }
   };
 
   // --- Audio Playback Handling ---
@@ -150,7 +159,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
         audioElement.removeEventListener('timeupdate', handleTimeUpdate);
         audioElement.removeEventListener('error', handleError);
         // Pause audio if unmounting while playing
-        if (!audioElement.paused) {
+        if (audioElement && !audioElement.paused) {
             audioElement.pause();
         }
         // Reset state on cleanup related to this specific message/audioUrl
@@ -170,6 +179,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
   }
 
   return (
+    <>
     <div className={cn(
         "group flex items-end gap-2 my-2 w-full relative", // Added group and relative for reply button positioning
         isSender ? "justify-end" : "justify-start"
@@ -236,19 +246,25 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
              </div>
          )}
 
-        {message.imageUrl && !message.audioUrl && ( // Don't show image if audio is present
-          <div className="relative aspect-video w-48 max-w-full my-2 rounded-md overflow-hidden border">
-            <Image
-              src={message.imageUrl}
-              alt="Chat image"
-              fill
-              style={{ objectFit: 'cover' }}
-              className="bg-muted"
-              data-ai-hint="chat message image"
-              sizes="(max-width: 768px) 70vw, 30vw"
-            />
-          </div>
-        )}
+        {/* Display Image - Wrapped in Button */}
+         {message.imageUrl && !message.audioUrl && (
+          <Button
+              variant="ghost"
+              className="relative aspect-video w-48 max-w-full my-2 p-0 h-auto rounded-md overflow-hidden border block cursor-pointer" // Make it a block, remove default padding
+              onClick={handleImageClick}
+          >
+             <Image
+                 src={message.imageUrl}
+                 alt="Chat image"
+                 fill
+                 style={{ objectFit: 'cover' }}
+                 className="bg-muted"
+                 data-ai-hint="chat message image"
+                 sizes="(max-width: 768px) 70vw, 30vw"
+             />
+          </Button>
+         )}
+
 
         {message.text && (
             <p className="text-sm whitespace-pre-wrap">{message.text}</p>
@@ -293,5 +309,14 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
        </Button>
 
     </div>
+    {/* Full Screen Image Viewer Modal */}
+     {isImageViewerOpen && message.imageUrl && (
+         <FullScreenImageViewer
+             imageUrl={message.imageUrl}
+             altText={message.text || 'Chat image'}
+             onClose={() => setIsImageViewerOpen(false)}
+         />
+     )}
+    </>
   );
 }
