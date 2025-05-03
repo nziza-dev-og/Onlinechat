@@ -139,7 +139,12 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
            setIsRTDBListenerAttached(false); // Update state
            console.log("RTDB messages listener detached.");
        }
+       // Also clear the database ref itself
+       if (callSignalingRef.current) {
+           callSignalingRef.current = null;
+       }
    }, []);
+
 
   // Combined cleanup function
   const cleanup = useCallback((isEndingCallExplicitly = false, currentStatusOnCleanupStart: CallStatus) => {
@@ -168,6 +173,8 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
     // Reset component state
     setIsCaller(false);
     setShowMissedCall(false); // Ensure this resets
+    setIsMicMuted(false); // Reset mute/camera state
+    setIsCameraOff(false);
     updateStatus('idle'); // Final state reset *after* cleanup actions
 
   }, [stopLocalStream, closePeerConnection, detachListener, chatId, updateStatus]);
@@ -186,7 +193,7 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
         updateStatus('ended'); // Set final 'ended' state
 
         // Show appropriate toast and missed call message
-        if (couldHaveBeenMissed) {
+        if (couldHaveBeenMissed && !wasConnected) { // Only show missed if never connected
             setShowMissedCall(true);
             toast({ title: "Call Ended/Missed", description: `Call with ${partnerUser.displayName || 'User'} was not connected.` });
             // Set a timeout to hide the "missed call" message after a few seconds
@@ -219,6 +226,11 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
       }
       if (!chatId) {
           console.error("Cannot send signaling message: Chat ID missing.");
+          return;
+      }
+      // Do not send messages if the call is already ended or in an error state
+      if (!isMountedRef.current || ['ended', 'error', 'idle'].includes(callStatusRef.current)) {
+          console.warn(`Signaling message send skipped because call status is ${callStatusRef.current}`);
           return;
       }
       try {
@@ -317,6 +329,7 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
                         break;
                     case 'disconnected':
                         console.warn("WebRTC: ICE Disconnected. Might try to reconnect...");
+                        // You might want to implement reconnection logic here or simply end the call after a timeout
                         break;
                     case 'failed':
                         console.error("WebRTC: ICE Connection Failed.");
@@ -328,6 +341,7 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
                         break;
                     case 'closed':
                         console.log("WebRTC: ICE Connection Closed.");
+                         // If the connection closes unexpectedly, treat it as the call ending
                          if (currentCallStatus !== 'idle' && currentCallStatus !== 'ended') {
                              updateStatus('ended'); // Ensure state is set before cleanup
                              handleEndCall();
@@ -405,7 +419,8 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
             Object.keys(messages).forEach(async key => {
                 const message = messages[key] as SignalingMessage;
                  if (!message || message.senderId === currentUser?.uid || !message.type || !message.payload) {
-                     return;
+                     // console.log("Ignoring own message or invalid message structure", message);
+                     return; // Ignore own messages or invalid ones
                  }
                  if (['ended', 'error', 'idle'].includes(callStatusRef.current)) {
                      console.log(`RTDB: Ignoring message type ${message.type} because call status is ${callStatusRef.current}.`);
@@ -415,34 +430,37 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
                 let pc = peerConnectionRef.current;
 
                 // Initialize PeerConnection if receiving an offer and not already initialized
-                if (!pc && message.type === 'offer' && ['ready', 'checking_perms'].includes(callStatusRef.current)) {
-                   console.log("%cRTDB: Received offer, initializing PeerConnection as receiver...", 'color: green');
-                   updateStatus('receiving'); // Indicate incoming call attempt
-                   pc = await initializePeerConnection(false); // Initialize as receiver
-                   if (!pc) { // Handle initialization failure
-                       console.error("Failed to initialize PeerConnection as receiver.");
-                        if (isMountedRef.current) updateStatus('error');
-                       handleEndCall();
-                       return;
-                   }
+                 if (!pc && message.type === 'offer' && ['ready'].includes(callStatusRef.current)) {
+                    console.log("%cRTDB: Received offer, initializing PeerConnection as receiver...", 'color: green');
+                    updateStatus('receiving'); // Indicate incoming call attempt
+                    pc = await initializePeerConnection(false); // Initialize as receiver
+                    if (!pc) { // Handle initialization failure
+                        console.error("Failed to initialize PeerConnection as receiver.");
+                         if (isMountedRef.current) updateStatus('error');
+                        handleEndCall();
+                        return;
+                    }
                 } else if (!pc) { // If PC doesn't exist and it's not an offer, ignore
-                    console.warn(`RTDB: Ignoring signaling message type ${message.type} because PeerConnection is not ready or call status is ${callStatusRef.current}.`);
-                    return;
-                }
+                     console.warn(`RTDB: Ignoring signaling message type ${message.type} because PeerConnection is not ready or call status is ${callStatusRef.current}.`);
+                     return;
+                 }
+
 
                 console.log(`%cRTDB: Received message type: ${message.type} from ${message.senderId}`, 'color: purple');
                 try {
                     switch (message.type) {
                         case 'offer':
-                             if (pc.signalingState !== 'stable') {
-                                 console.warn(`WebRTC: Received offer in non-stable state: ${pc.signalingState}. Glare handling needed?`);
-                                 if (isCaller) {
-                                     console.log("WebRTC Glare: Ignoring received offer as initiator.");
-                                     return;
-                                 }
+                             // Perfect Negotiation: Check signaling state and role
+                             const offerCollision = message.type === "offer" &&
+                                                (isCaller || pc.signalingState !== "stable");
+
+                             if (offerCollision) {
+                                console.warn(`WebRTC: Offer collision detected. Ignoring incoming offer.`);
+                                return; // Ignore incoming offer if we are caller or not stable
                              }
+
                              console.log("%cWebRTC: Processing received offer...", 'color: green');
-                              if (isMountedRef.current) updateStatus('receiving'); // Ensure state reflects incoming call
+                             if (isMountedRef.current) updateStatus('receiving'); // Ensure state reflects incoming call
                              await pc.setRemoteDescription(new RTCSessionDescription(message.payload));
                              console.log("%cWebRTC: Remote description (offer) set.", 'color: green');
                              // Create and send answer
@@ -465,9 +483,18 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
 
                         case 'candidate':
                              if (message.payload && pc.remoteDescription) { // Only add if remote description is set
-                                 // console.log("%cWebRTC: Adding received ICE candidate...", 'color: cyan');
-                                 await pc.addIceCandidate(new RTCIceCandidate(message.payload));
-                                 // console.log("%cWebRTC: ICE candidate added.", 'color: cyan');
+                                 try {
+                                     // console.log("%cWebRTC: Adding received ICE candidate...", 'color: cyan');
+                                     await pc.addIceCandidate(new RTCIceCandidate(message.payload));
+                                     // console.log("%cWebRTC: ICE candidate added.", 'color: cyan');
+                                 } catch (e) {
+                                     // Ignore benign errors during candidate addition
+                                     if (!String(e).includes("OperationError: Failed to set ICE candidate")) {
+                                        console.error("WebRTC: Error adding received ICE candidate:", e);
+                                     } else {
+                                        // console.warn("WebRTC: Ignored benign error adding ICE candidate:", e);
+                                     }
+                                 }
                              } else if (!message.payload) {
                                  console.log("RTDB: Received end-of-candidates signal (null candidate).");
                              } else {
@@ -499,8 +526,10 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
   // Main effect for handling modal open/close and permissions
   useEffect(() => {
         if (!isOpen) {
+            // Cleanup when modal is closed externally
             const statusBeforeClose = callStatusRef.current;
             const shouldRemoveRtdb = statusBeforeClose !== 'idle' && statusBeforeClose !== 'ended';
+             // Run cleanup, potentially removing RTDB data if call was active
             cleanup(shouldRemoveRtdb, statusBeforeClose);
             return; // Stop execution if modal is closed
         }
@@ -550,15 +579,15 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
                  }, 3000); // Close after 3 seconds
             });
 
-        // Cleanup function for this effect
+        // Cleanup function for this effect when isOpen becomes false or component unmounts
         return () => {
             console.log("Video call modal effect cleanup triggered (unmount/close).");
             const statusBeforeCleanup = callStatusRef.current;
             const shouldRemoveRtdbOnClose = statusBeforeCleanup !== 'idle' && statusBeforeCleanup !== 'ended';
             cleanup(shouldRemoveRtdbOnClose, statusBeforeCleanup);
         };
-  }, [isOpen, cleanup, detachListener, setupSignalingListener, handleEndCall, toast, updateStatus]); // Dependencies
-
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]); // Only re-run when isOpen changes
 
   // Function to initiate the call
   const handleStartCall = async () => {
@@ -714,7 +743,7 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
                  autoPlay
                  playsInline
                  muted // Local video should always be muted to prevent echo
-                 className="w-full h-full object-cover"
+                 className="w-full h-full object-cover scale-x-[-1]" // Flip horizontally for mirror effect
                  onLoadedMetadata={(e) => e.currentTarget.play().catch(err => console.warn("Local play prevented:", err))}
                />
             ) : (
