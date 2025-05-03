@@ -1,4 +1,5 @@
 
+
 import type { User as FirebaseUser } from 'firebase/auth';
 import type { Timestamp } from 'firebase/firestore';
 
@@ -20,6 +21,7 @@ export interface Message {
   fileUrl?: string | null; // Optional URL for generic files
   fileName?: string | null; // Optional original filename
   fileType?: string | null; // Optional MIME type for generic files
+  fileSize?: number | null; // Optional file size in bytes
   // Fields for reply functionality
   replyToMessageId?: string | null;
   replyToMessageText?: string | null; // Can be text, 'Image', 'Voice note', 'Video', or 'File'
@@ -157,3 +159,4 @@ export interface SignalingCandidate {
 
 export type SignalingMessage = SignalingOffer | SignalingAnswer | SignalingCandidate;
 // --- End WebRTC Signaling Types ---
+

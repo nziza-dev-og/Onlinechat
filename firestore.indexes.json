@@ -1,0 +1,114 @@
+
+{
+  "indexes": [
+    {
+      "collectionGroup": "posts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "timestamp",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "posts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "timestamp",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+     {
+      "collectionGroup": "posts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+            "fieldPath": "timestamp",
+            "order": "ASCENDING"
+        },
+        {
+            "fieldPath": "likeCount", // Add other fields used in complex queries if needed
+            "order": "DESCENDING"
+        }
+      ]
+     },
+     {
+      "collectionGroup": "messages",
+      "queryScope": "COLLECTION_GROUP", // Index across all 'messages' subcollections
+      "fields": [
+        {
+          "fieldPath": "timestamp",
+          "order": "ASCENDING"
+        }
+      ]
+     },
+      {
+       "collectionGroup": "messages",
+       "queryScope": "COLLECTION_GROUP",
+       "fields": [
+        {
+          "fieldPath": "timestamp",
+          "order": "DESCENDING"
+        }
+      ]
+     },
+     {
+      "collectionGroup": "comments",
+      "queryScope": "COLLECTION_GROUP", // Index across all 'comments' subcollections
+      "fields": [
+        {
+          "fieldPath": "timestamp",
+          "order": "ASCENDING"
+        }
+      ]
+     },
+     {
+        "collectionGroup": "users",
+        "queryScope": "COLLECTION",
+        "fields": [
+            { "fieldPath": "lastSeen", "order": "ASCENDING" }
+        ]
+     },
+     {
+        "collectionGroup": "users",
+        "queryScope": "COLLECTION",
+        "fields": [
+            { "fieldPath": "lastSeen", "order": "DESCENDING" }
+        ]
+     },
+     {
+        "collectionGroup": "users",
+        "queryScope": "COLLECTION",
+        "fields": [
+            { "fieldPath": "passwordChangeRequested", "order": "ASCENDING" }
+        ]
+     },
+     {
+        "collectionGroup": "notifications",
+        "queryScope": "COLLECTION",
+        "fields": [
+            { "fieldPath": "isGlobal", "order": "ASCENDING" },
+            { "fieldPath": "timestamp", "order": "DESCENDING" }
+        ]
+     },
+     {
+        "collectionGroup": "notifications",
+        "queryScope": "COLLECTION",
+        "fields": [
+            { "fieldPath": "targetUserId", "order": "ASCENDING" },
+            { "fieldPath": "timestamp", "order": "DESCENDING" }
+        ]
+     },
+     {
+        "collectionGroup": "adminMessages",
+        "queryScope": "COLLECTION",
+        "fields": [
+            { "fieldPath": "timestamp", "order": "DESCENDING" }
+        ]
+     }
+  ],
+  "fieldOverrides": []
+}

@@ -1,4 +1,5 @@
 
+
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -488,6 +489,7 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
     let mediaType: 'file' | 'audio' | 'video' | 'image' | null = null;
     let fileName: string | null = null; // For generic files or extracting from URL
     let fileType: string | null = null; // For generic files or inferring from URL
+    let fileSize: number | null = null; // For file size
 
 
     if (!user || !chatId || !hasContent || isSending) {
@@ -513,7 +515,8 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
             mediaType = 'file';
             fileName = attachedFile.name;
             fileType = attachedFile.type || 'application/octet-stream';
-            console.log(`File attached: ${fileName} (${fileType}, ${attachedFile.size} bytes), starting upload...`);
+            fileSize = attachedFile.size; // Store file size
+            console.log(`File attached: ${fileName} (${fileType}, ${fileSize} bytes), starting upload...`);
             setUploadProgress(0);
             setUploadStatusText(`Uploading ${fileName}...`);
             const timestamp = Date.now();
@@ -545,13 +548,14 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
       else if (audioBlob) {
          console.log("Audio blob detected, starting upload...");
          mediaType = 'audio';
+         fileSize = audioBlob.size; // Store audio blob size
          setUploadProgress(0); // Indicate start of upload
          setUploadStatusText('Uploading voice note...');
          const timestamp = Date.now();
          // Ensure MIME type is available, default to webm if needed
           const fileExtension = (audioBlob.type.split('/')[1] || 'webm').split(';')[0] || 'webm'; // Robust extension extraction
          const audioPath = `chats/${chatId}/audio/${uid}_${timestamp}.${fileExtension}`; // Unique path with extension
-         console.log(`Uploading audio to path: ${audioPath} (Type: ${audioBlob.type}, Size: ${audioBlob.size})`);
+         console.log(`Uploading audio to path: ${audioPath} (Type: ${audioBlob.type}, Size: ${fileSize} bytes)`);
 
          // Use a callback for progress updates
          const updateProgress = (progress: number) => setUploadProgress(progress);
@@ -578,6 +582,7 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
       else if (trimmedFileUrl) {
           mediaType = 'file';
           mediaUrl = trimmedFileUrl;
+          fileSize = null; // Size unknown for URL files
           // Try to extract filename from URL
           try {
               const url = new URL(trimmedFileUrl);
@@ -593,10 +598,14 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
       else if (trimmedVideoUrl) { // 4. Check for Video URL
           mediaType = 'video';
           mediaUrl = trimmedVideoUrl;
+          fileName = null; // No filename for simple video URLs
+          fileSize = null;
           console.log("Video URL provided:", mediaUrl);
       } else if (trimmedImageUrl) { // 5. Check for Image URL
           mediaType = 'image';
           mediaUrl = trimmedImageUrl;
+          fileName = null; // No filename for simple image URLs
+          fileSize = null;
           console.log("Image URL provided:", mediaUrl);
       }
 
@@ -609,9 +618,10 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
         imageUrl: mediaType === 'image' ? mediaUrl : null,
         audioUrl: mediaType === 'audio' ? mediaUrl : null,
         videoUrl: mediaType === 'video' ? mediaUrl : null,
-        fileUrl: mediaType === 'file' ? mediaUrl : null, // Add fileUrl
-        fileName: mediaType === 'file' ? fileName : null, // Add fileName (handles both attached and URL)
-        fileType: mediaType === 'file' ? fileType : null, // Add fileType (null for URL)
+        fileUrl: mediaType === 'file' ? mediaUrl : null,
+        fileName: mediaType === 'file' ? fileName : null,
+        fileType: mediaType === 'file' ? fileType : null,
+        fileSize: fileSize, // Save the file size
         timestamp: serverTimestamp(),
         uid,
         displayName: displayName ?? null, // Use null if undefined

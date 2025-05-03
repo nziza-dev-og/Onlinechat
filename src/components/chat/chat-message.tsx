@@ -1,4 +1,5 @@
 
+
 import type { Message } from '@/types';
 import { useAuth } from '@/hooks/use-auth';
 import { cn } from '@/lib/utils';
@@ -53,6 +54,17 @@ const formatTimestamp = (timestamp: any, formatString: string): string => {
         return 'Invalid date';
     }
 };
+
+// Helper to format file size
+const formatFileSize = (bytes: number | null | undefined): string => {
+    if (bytes === null || bytes === undefined || bytes < 0) return '';
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+};
+
 
 const formatShortTimestamp = (timestamp: any): string => formatTimestamp(timestamp, 'p'); // Format like 1:23 PM
 const formatFullTimestamp = (timestamp: any): string => formatTimestamp(timestamp, 'PPpp'); // Format like 'Jun 15th, 2024 at 1:23:45 PM'
@@ -295,7 +307,10 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
                         <p className="text-sm font-medium text-foreground truncate" title={message.fileName || 'Attached file'}>
                             {message.fileName || 'Attached file'}
                         </p>
-                         {message.fileType && <p className="text-xs text-muted-foreground">{message.fileType}</p>}
+                         {/* Display file size and type if available */}
+                        <p className="text-xs text-muted-foreground truncate">
+                            {formatFileSize(message.fileSize)} {message.fileType ? `(${message.fileType.split('/')[1]})` : ''}
+                        </p>
                     </div>
                      <Button
                          variant="ghost"
