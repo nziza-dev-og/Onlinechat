@@ -379,10 +379,11 @@ export default function ProfilePage() {
 
 
   return (
-    <div className="flex justify-center items-start min-h-screen bg-secondary p-4 sm:p-6 md:p-10 pt-10">
+    <div className="flex flex-col items-center justify-start min-h-screen bg-secondary p-4 sm:p-6 md:p-10 pt-10 space-y-6">
+      {/* Profile Edit Card */}
       <Card className="w-full max-w-2xl shadow-xl rounded-lg overflow-hidden">
-         {/* Profile Edit Form */}
-         <form onSubmit={profileForm.handleSubmit(onProfileSubmit)}>
+         {/* Using a div instead of form here to avoid nesting */}
+         <div>
             <CardHeader className="items-center text-center bg-card p-6 border-b">
                  {/* Avatar */}
                  <div className="relative mb-4">
@@ -457,59 +458,7 @@ export default function ProfilePage() {
                      <span className="text-sm text-muted-foreground font-mono select-all">{profileData.uid}</span>
                  </div>
 
-                  {/* Password Change Section */}
-                   <div className="p-4 border rounded-md bg-background space-y-3">
-                       <h3 className="text-lg font-semibold flex items-center gap-2"><KeyRound className="h-5 w-5 text-primary"/> Change Password</h3>
-                       {profileData.passwordChangeRequested && (
-                            <p className="text-sm text-primary flex items-center gap-1"><Loader2 className="h-4 w-4 animate-spin"/> Your request is pending admin approval.</p>
-                        )}
-                       {showPasswordForm && profileData.passwordChangeApproved && (
-                            <form onSubmit={passwordForm.handleSubmit(onPasswordSubmit)} className="space-y-4 pt-2">
-                                <p className="text-sm text-green-600">Your password change request has been approved. Set your new password below.</p>
-                                 <div className="space-y-2">
-                                     <Label htmlFor="newPassword">New Password</Label>
-                                     <Input
-                                        id="newPassword"
-                                        type="password"
-                                        placeholder="Enter new password (min. 6 chars)"
-                                        {...passwordForm.register('newPassword')}
-                                        disabled={isUpdatingPassword}
-                                     />
-                                     {passwordForm.formState.errors.newPassword && (
-                                        <p className="text-sm text-destructive">{passwordForm.formState.errors.newPassword.message}</p>
-                                     )}
-                                 </div>
-                                 <div className="space-y-2">
-                                     <Label htmlFor="confirmPassword">Confirm New Password</Label>
-                                     <Input
-                                        id="confirmPassword"
-                                        type="password"
-                                        placeholder="Confirm new password"
-                                        {...passwordForm.register('confirmPassword')}
-                                        disabled={isUpdatingPassword}
-                                     />
-                                     {passwordForm.formState.errors.confirmPassword && (
-                                        <p className="text-sm text-destructive">{passwordForm.formState.errors.confirmPassword.message}</p>
-                                     )}
-                                 </div>
-                                <Button type="submit" disabled={isUpdatingPassword || !passwordForm.formState.isValid}>
-                                     {isUpdatingPassword ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Lock className="mr-2 h-4 w-4" />}
-                                     Update Password
-                                </Button>
-                            </form>
-                       )}
-                       {!profileData.passwordChangeRequested && !showPasswordForm && (
-                            <Button
-                                type="button"
-                                variant="outline"
-                                onClick={handleRequestPasswordChange}
-                                disabled={isRequestingPasswordChange}
-                            >
-                                {isRequestingPasswordChange ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
-                                Request Password Change
-                            </Button>
-                       )}
-                   </div>
+                  {/* Moved Password Change Section OUTSIDE the main profile form's CardContent */}
 
             </CardContent>
 
@@ -519,7 +468,8 @@ export default function ProfilePage() {
                         <Button type="button" variant="outline" onClick={handleCancelEdit} disabled={isSaving}>
                              Cancel
                         </Button>
-                        <Button type="submit" disabled={isSaving || !profileForm.formState.isDirty}>
+                        {/* Trigger the form submission handler */}
+                        <Button type="button" onClick={profileForm.handleSubmit(onProfileSubmit)} disabled={isSaving || !profileForm.formState.isDirty}>
                              {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                              Save Changes
                         </Button>
@@ -530,8 +480,67 @@ export default function ProfilePage() {
                     </Button>
                 )}
             </CardFooter>
-         </form>
+         </div> {/* End of div replacing form */}
       </Card>
+
+       {/* Password Change Card (Separate Card and Form) */}
+       <Card className="w-full max-w-2xl shadow-xl rounded-lg overflow-hidden">
+          <CardHeader className="bg-card p-6 border-b">
+             <h3 className="text-lg font-semibold flex items-center gap-2"><KeyRound className="h-5 w-5 text-primary"/> Change Password</h3>
+          </CardHeader>
+           <CardContent className="p-6 space-y-3">
+               {profileData.passwordChangeRequested && (
+                   <p className="text-sm text-primary flex items-center gap-1"><Loader2 className="h-4 w-4 animate-spin"/> Your request is pending admin approval.</p>
+               )}
+               {showPasswordForm && profileData.passwordChangeApproved && (
+                   <form onSubmit={passwordForm.handleSubmit(onPasswordSubmit)} className="space-y-4 pt-2">
+                       <p className="text-sm text-green-600">Your password change request has been approved. Set your new password below.</p>
+                       <div className="space-y-2">
+                           <Label htmlFor="newPassword">New Password</Label>
+                           <Input
+                               id="newPassword"
+                               type="password"
+                               placeholder="Enter new password (min. 6 chars)"
+                               {...passwordForm.register('newPassword')}
+                               disabled={isUpdatingPassword}
+                           />
+                           {passwordForm.formState.errors.newPassword && (
+                               <p className="text-sm text-destructive">{passwordForm.formState.errors.newPassword.message}</p>
+                           )}
+                       </div>
+                       <div className="space-y-2">
+                           <Label htmlFor="confirmPassword">Confirm New Password</Label>
+                           <Input
+                               id="confirmPassword"
+                               type="password"
+                               placeholder="Confirm new password"
+                               {...passwordForm.register('confirmPassword')}
+                               disabled={isUpdatingPassword}
+                           />
+                           {passwordForm.formState.errors.confirmPassword && (
+                               <p className="text-sm text-destructive">{passwordForm.formState.errors.confirmPassword.message}</p>
+                           )}
+                       </div>
+                       <Button type="submit" disabled={isUpdatingPassword || !passwordForm.formState.isValid}>
+                           {isUpdatingPassword ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Lock className="mr-2 h-4 w-4" />}
+                           Update Password
+                       </Button>
+                   </form>
+               )}
+               {!profileData.passwordChangeRequested && !showPasswordForm && (
+                   <Button
+                       type="button"
+                       variant="outline"
+                       onClick={handleRequestPasswordChange}
+                       disabled={isRequestingPasswordChange}
+                   >
+                       {isRequestingPasswordChange ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+                       Request Password Change
+                   </Button>
+               )}
+           </CardContent>
+       </Card>
+
     </div>
   );
 }
