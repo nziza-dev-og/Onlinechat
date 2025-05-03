@@ -1,3 +1,4 @@
+
 "use client";
 
 import * as React from 'react';
@@ -7,7 +8,7 @@ import type { UserProfile } from '@/types';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Loader2, ShieldAlert, CheckCircle, XCircle, UserCheck, UserX, BarChart2, Bell, Settings, ShieldCheck, Send } from 'lucide-react'; // Added Send
+import { Loader2, ShieldAlert, CheckCircle, XCircle, UserCheck, UserX, BarChart2, Bell, Settings, ShieldCheck, Send, Ban } from 'lucide-react'; // Added Ban icon
 import { useToast } from '@/hooks/use-toast';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -20,6 +21,7 @@ import { Textarea } from '@/components/ui/textarea'; // Import Textarea
 import { Label } from '@/components/ui/label'; // Import Label
 import { Switch } from "@/components/ui/switch"; // Import Switch for settings
 import { Input } from "@/components/ui/input"; // Import Input for settings/security
+import { blockIpAddress, logSuspiciousActivity } from '@/lib/security.service'; // Import security services
 
 // Helper to get initials
 const getInitials = (name: string | null | undefined): string => {
@@ -51,6 +53,10 @@ export default function AdminPage() {
   const [allowFileUploads, setAllowFileUploads] = React.useState(true);
   const [isSavingSettings, setIsSavingSettings] = React.useState(false);
 
+  // Security States
+  const [ipToBlock, setIpToBlock] = React.useState('');
+  const [isBlockingIp, setIsBlockingIp] = React.useState(false);
+  const [blockReason, setBlockReason] = React.useState(''); // Optional reason
 
   const { toast } = useToast();
 
@@ -145,7 +151,7 @@ export default function AdminPage() {
         }
     };
 
-    checkAdminAndFetchData(dbInstance);
+    checkAdminAndFetchData(firestoreInstance);
 
   }, [user, authLoading, dbInstance, toast]); // Rerun if user, auth state, or db instance changes
 
@@ -204,7 +210,7 @@ export default function AdminPage() {
       try {
           console.log("Saving settings:", { allowEmoji, allowFileUploads });
           // TODO: Call updatePlatformConfig service
-          // await updatePlatformConfig({ allowEmoji, allowFileUploads });
+          // await updatePlatformConfig({ allowEmoji, allowFileUploads }, user.uid);
           await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate network delay
           toast({ title: 'Settings Saved (Placeholder)' });
       } catch (error: any) {
@@ -212,6 +218,42 @@ export default function AdminPage() {
       } finally {
           setIsSavingSettings(false);
       }
+   };
+
+   // Handle blocking IP address
+   const handleBlockIp = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!user || !ipToBlock.trim() || isBlockingIp) return;
+
+        setIsBlockingIp(true);
+        const effectiveReason = blockReason.trim() || 'Blocked by administrator'; // Default reason
+        try {
+            await blockIpAddress(ipToBlock.trim(), effectiveReason, user.uid);
+            toast({
+                title: 'IP Address Blocked',
+                description: `IP address ${ipToBlock.trim()} has been blocked.`,
+            });
+            setIpToBlock(''); // Clear input
+            setBlockReason(''); // Clear reason input
+        } catch (error: any) {
+             toast({
+                title: 'IP Block Failed',
+                description: error.message || 'Could not block the IP address.',
+                variant: 'destructive',
+             });
+              // Log the failed attempt
+             try {
+                 await logSuspiciousActivity('ip_block_failure', {
+                     adminUid: user.uid,
+                     targetIp: ipToBlock.trim(),
+                     error: error.message,
+                 });
+             } catch (logError) {
+                 console.error("Failed to log IP block failure:", logError);
+             }
+        } finally {
+            setIsBlockingIp(false);
+        }
    };
 
 
@@ -456,16 +498,47 @@ export default function AdminPage() {
                       <CardDescription>Monitor activity and manage platform security.</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4 pt-6">
-                        {/* Placeholder for IP Blocking */}
-                        <div className="border p-4 rounded-md space-y-3">
-                           <h4 className="font-medium">IP Address Blocking</h4>
-                           <div className="flex items-center gap-2">
-                                <Input type="text" placeholder="Enter IP address to block" className="flex-1" disabled />
-                                <Button variant="destructive" disabled>Block IP</Button>
-                           </div>
-                           <p className="text-xs text-muted-foreground italic">IP blocking functionality coming soon.</p>
-                        </div>
-                       <p className="text-muted-foreground italic text-center text-sm">More security monitoring and control features (audit logs, 2FA enforcement) coming soon...</p>
+                        {/* IP Blocking */}
+                        <form onSubmit={handleBlockIp} className="border p-4 rounded-md space-y-4">
+                           <h4 className="font-medium text-lg">IP Address Blocking</h4>
+                            <div className="space-y-2">
+                                <Label htmlFor="ip-block">IP Address</Label>
+                                <Input
+                                    id="ip-block"
+                                    type="text"
+                                    placeholder="e.g., 192.168.1.100"
+                                    value={ipToBlock}
+                                    onChange={(e) => setIpToBlock(e.target.value)}
+                                    required
+                                    pattern="\b(?:\d{1,3}\.){3}\d{1,3}\b" // Basic IP validation pattern
+                                    disabled={isBlockingIp}
+                                    className="font-mono"
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                 <Label htmlFor="block-reason">Reason (Optional)</Label>
+                                 <Input
+                                     id="block-reason"
+                                     type="text"
+                                     placeholder="Reason for blocking..."
+                                     value={blockReason}
+                                     onChange={(e) => setBlockReason(e.target.value)}
+                                     maxLength={100}
+                                     disabled={isBlockingIp}
+                                 />
+                                 <p className="text-xs text-muted-foreground">Keep it brief (max 100 chars).</p>
+                            </div>
+                           <Button
+                                variant="destructive"
+                                type="submit"
+                                disabled={!ipToBlock.trim() || isBlockingIp}
+                            >
+                               {isBlockingIp ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Ban className="mr-2 h-4 w-4" />}
+                               Block IP Address
+                           </Button>
+                        </form>
+
+                       <p className="text-muted-foreground italic text-center text-sm pt-4">More security monitoring and control features (audit logs, 2FA enforcement) coming soon...</p>
                       {/* Placeholder for security tools */}
                   </CardContent>
               </Card>
@@ -476,3 +549,6 @@ export default function AdminPage() {
     </div>
   );
 }
+
+
+    

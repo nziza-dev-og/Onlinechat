@@ -1,3 +1,4 @@
+
 'use server';
 
 import { db } from '@/lib/firebase';
@@ -44,10 +45,26 @@ export const logSuspiciousActivity = async (activityType: string, details: Recor
 };
 
 /**
+ * Validates an IPv4 address format.
+ *
+ * @param ip - The string to validate.
+ * @returns boolean - True if the format is valid, false otherwise.
+ */
+const isValidIPv4 = (ip: string): boolean => {
+  if (typeof ip !== 'string') return false;
+  const blocks = ip.split('.');
+  if (blocks.length !== 4) return false;
+  return blocks.every(block => {
+    const num = parseInt(block, 10);
+    return !isNaN(num) && num >= 0 && num <= 255 && String(num) === block; // Check for leading zeros etc.
+  });
+};
+
+/**
  * Blocks an IP address by adding it to a dedicated Firestore collection.
  * Requires admin privileges.
  *
- * @param ipAddress - The IP address to block.
+ * @param ipAddress - The IPv4 address to block.
  * @param reason - The reason for blocking.
  * @param adminUserId - The UID of the admin performing the action.
  * @returns Promise<void>
@@ -64,39 +81,59 @@ export const blockIpAddress = async (ipAddress: string, reason: string, adminUse
    }
    if (!dbInstance) throw new Error("Database service not available.");
    if (!adminUserId) throw new Error("Admin User ID is required to block IPs.");
-   if (!ipAddress || typeof ipAddress !== 'string' || !ipAddress.match(/^(\d{1,3}\.){3}\d{1,3}$/)) { // Basic IP format validation
-       throw new Error("Invalid IP Address format provided.");
+
+   const trimmedIp = ipAddress.trim();
+   if (!isValidIPv4(trimmedIp)) {
+       throw new Error("Invalid IPv4 Address format provided.");
    }
-    if (!reason || typeof reason !== 'string' || reason.trim().length === 0) {
-         throw new Error("A reason is required for blocking an IP address.");
+   const trimmedReason = reason.trim();
+    if (trimmedReason.length === 0) {
+         // Consider if reason should be mandatory or have a default
+         console.warn(`Blocking IP ${trimmedIp} without an explicit reason.`);
+         // throw new Error("A reason is required for blocking an IP address.");
+    }
+    if (trimmedReason.length > 100) {
+         throw new Error("Block reason cannot exceed 100 characters.");
     }
 
 
    const adminRef = doc(dbInstance, 'users', adminUserId);
-   const blockedIpRef = doc(dbInstance, BLOCKED_IPS_COLLECTION, ipAddress.replace(/\./g, '-')); // Use IP as doc ID (replace dots)
+   // Use IP address directly as doc ID after validation
+   const blockedIpRef = doc(dbInstance, BLOCKED_IPS_COLLECTION, trimmedIp);
 
    try {
-      // Basic Admin Check
+      // Basic Admin Check using getDoc
       const adminSnap = await getDoc(adminRef);
       if (!adminSnap.exists() || !adminSnap.data()?.isAdmin) {
-          console.warn(`Unauthorized attempt to block IP ${ipAddress} by user ${adminUserId}.`);
+          console.warn(`Unauthorized attempt to block IP ${trimmedIp} by user ${adminUserId}.`);
            // Log the attempt
-           await logSuspiciousActivity('unauthorized_ip_block_attempt', { attemptorUid: adminUserId, targetIp: ipAddress });
+           await logSuspiciousActivity('unauthorized_ip_block_attempt', { attemptorUid: adminUserId, targetIp: trimmedIp });
           throw new Error("Unauthorized: Only administrators can block IP addresses.");
       }
 
+      // Check if IP is already blocked
+      const blockedIpSnap = await getDoc(blockedIpRef);
+      if (blockedIpSnap.exists()) {
+         console.log(`Firestore: IP Address ${trimmedIp} is already blocked.`);
+         throw new Error(`IP address ${trimmedIp} is already blocked.`);
+      }
+
       await setDoc(blockedIpRef, {
-          ip: ipAddress,
-          reason: reason.trim(),
+          ip: trimmedIp,
+          reason: trimmedReason || 'Blocked by administrator', // Default reason if empty
           blockedAt: serverTimestamp(),
           blockedBy: adminUserId
       });
-      console.log(`Firestore: IP Address ${ipAddress} blocked by admin ${adminUserId}. Reason: ${reason.trim()}`);
+      console.log(`Firestore: IP Address ${trimmedIp} blocked by admin ${adminUserId}. Reason: ${trimmedReason}`);
        // Log the successful block
-       await logSuspiciousActivity('ip_blocked', { targetIp: ipAddress, reason: reason.trim(), adminUid: adminUserId });
+       await logSuspiciousActivity('ip_blocked', { targetIp: trimmedIp, reason: trimmedReason, adminUid: adminUserId });
 
    } catch (error: any) {
-      const detailedErrorMessage = `Failed to block IP address ${ipAddress}. Error: ${error.message || 'Unknown error'}`;
+      // Avoid duplicate error logging if it's the "already blocked" error
+       if (error.message.includes("already blocked")) {
+           throw error; // Re-throw the specific error
+       }
+      const detailedErrorMessage = `Failed to block IP address ${trimmedIp}. Error: ${error.message || 'Unknown error'}`;
       console.error("🔴 IP Blocking Error:", detailedErrorMessage, error);
       throw new Error(detailedErrorMessage); // Re-throw the specific error
    }
@@ -104,3 +141,5 @@ export const blockIpAddress = async (ipAddress: string, reason: string, adminUse
 
 // Add more security-related functions here (e.g., check IP block, manage 2FA triggers)
 // export const isIpBlocked = async (ipAddress: string): Promise<boolean> => { ... }
+
+    
