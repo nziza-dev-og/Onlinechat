@@ -1,4 +1,3 @@
-
 'use server';
 
 import { db } from '@/lib/firebase';
@@ -19,6 +18,7 @@ export const getOnlineUsersCount = async (): Promise<number> => {
 
   try {
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    // Firestore requires Date objects to be converted to Timestamp objects
     const fiveMinutesAgoTimestamp = Timestamp.fromDate(fiveMinutesAgo);
 
     const usersRef = collection(db, 'users');
