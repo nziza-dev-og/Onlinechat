@@ -4,11 +4,11 @@
 import * as React from 'react';
 import { useAuth } from '@/hooks/use-auth';
 import { getPasswordChangeRequests, reviewPasswordChangeRequest } from '@/lib/user-profile.service';
-import type { UserProfile, AdminMessage, User, PostSerializable } from '@/types'; // Added User, PostSerializable imports
+import type { UserProfile, AdminMessage, User, PostSerializable, MusicPlaylistItem } from '@/types'; // Added MusicPlaylistItem
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Loader2, ShieldAlert, CheckCircle, XCircle, UserCheck, UserX, BarChart2, Bell, Settings, ShieldCheck, Send, Ban, MessageSquare, Users as UsersIcon, User as UserIcon, Clapperboard, Trash2, Film } from 'lucide-react'; // Renamed Users icon import, Added Clapperboard, Trash2, Film
+import { Loader2, ShieldAlert, CheckCircle, XCircle, UserCheck, UserX, BarChart2, Bell, Settings, ShieldCheck, Send, Ban, MessageSquare, Users as UsersIcon, User as UserIcon, Clapperboard, Trash2, Film, Music, PlusCircle } from 'lucide-react'; // Added Music, PlusCircle
 import { useToast } from '@/hooks/use-toast';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -20,7 +20,7 @@ import { sendGlobalNotification, sendTargetedNotification, sendAdminReply } from
 import { Textarea } from '@/components/ui/textarea'; // Import Textarea
 import { Label } from '@/components/ui/label'; // Import Label
 import { Switch } from "@/components/ui/switch"; // Import Switch for settings/security
-import { Input } from "@/components/ui/input"; // Import Input for settings/security
+import { Input } from "@/components/ui/input"; // Import Input for settings/security, music playlist
 import { blockIpAddress, logSuspiciousActivity } from '@/lib/security.service'; // Import security services
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"; // Import RadioGroup
 import {
@@ -43,6 +43,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"; // Import AlertDialog
+import { getPlatformConfig, addMusicTrack, removeMusicTrack } from '@/lib/config.service'; // Import config services
 
 // Helper to get initials
 const getInitials = (name: string | null | undefined): string => {
@@ -91,17 +92,13 @@ const StoryPreview = ({ story, onDelete }: { story: PostSerializable; onDelete: 
      const handleDelete = async () => {
         setIsDeleting(true);
         try {
-            // Assuming admins have universal delete rights, pass a dummy user ID or handle appropriately in deletePost
-            // Here we use the story's author UID to check ownership, but admin rights should bypass this in a real app
-            // For now, we pass the author UID. **A proper admin authorization check should be in deletePost.**
-            await deletePost(story.id, story.uid); // Pass story author UID for now
+            await deletePost(story.id, story.uid); // Pass story author UID for now - Needs admin override check in deletePost
             toast({ title: "Story Deleted", description: "The story has been removed." });
-            onDelete(story.id); // Notify parent to remove from state
+            onDelete(story.id);
         } catch (error: any) {
              toast({ title: "Delete Failed", description: error.message || "Could not delete story.", variant: "destructive" });
-             setIsDeleting(false); // Reset on error
+             setIsDeleting(false);
         }
-        // Don't reset isDeleting on success, as component will likely unmount
      };
 
 
@@ -120,7 +117,6 @@ const StoryPreview = ({ story, onDelete }: { story: PostSerializable; onDelete: 
                      {story.text && <p className="text-xs text-muted-foreground italic truncate">{story.text}</p>}
                 </div>
             </div>
-            {/* Delete Button with Confirmation */}
              <AlertDialog>
                  <AlertDialogTrigger asChild>
                     <Button variant="ghost" size="icon" className="text-destructive hover:bg-destructive/10 flex-shrink-0 h-8 w-8" disabled={isDeleting}>
@@ -189,6 +185,14 @@ export default function AdminPage() {
   const [stories, setStories] = React.useState<PostSerializable[]>([]);
   const [loadingStories, setLoadingStories] = React.useState(true);
 
+  // Music Playlist State
+  const [musicPlaylist, setMusicPlaylist] = React.useState<MusicPlaylistItem[]>([]);
+  const [loadingPlaylist, setLoadingPlaylist] = React.useState(true);
+  const [newTrackTitle, setNewTrackTitle] = React.useState('');
+  const [newTrackUrl, setNewTrackUrl] = React.useState('');
+  const [isAddingTrack, setIsAddingTrack] = React.useState(false);
+  const [deletingTrackId, setDeletingTrackId] = React.useState<string | null>(null);
+
   const { toast } = useToast();
   const userListListenerUnsubscribeRef = React.useRef<Unsubscribe | null>(null); // Ref for user list listener
   const adminMessagesListenerUnsubscribeRef = React.useRef<Unsubscribe | null>(null); // Ref for admin messages listener
@@ -207,7 +211,8 @@ export default function AdminPage() {
             setLoadingAnalytics(false);
             setLoadingAdminMessages(false);
             setLoadingUserList(false);
-            setLoadingStories(false); // Set story loading false
+            setLoadingStories(false);
+            setLoadingPlaylist(false); // Set playlist loading false
         }
     }, []);
 
@@ -221,12 +226,14 @@ export default function AdminPage() {
       setLoadingAnalytics(true);
       setLoadingAdminMessages(true);
       setLoadingUserList(true);
-      setLoadingStories(true); // Set story loading true
+      setLoadingStories(true);
+      setLoadingPlaylist(true); // Set playlist loading true
       setRequests([]);
       setOnlineUsers(null);
       setAdminMessages([]);
       setUserList([]);
-      setStories([]); // Reset stories
+      setStories([]);
+      setMusicPlaylist([]); // Reset playlist
       return;
     }
     if (!user) {
@@ -236,13 +243,15 @@ export default function AdminPage() {
       setLoadingAnalytics(false);
       setLoadingAdminMessages(false);
       setLoadingUserList(false);
-      setLoadingStories(false); // Set story loading false
+      setLoadingStories(false);
+      setLoadingPlaylist(false); // Set playlist loading false
       setRequests([]);
       setError("Please log in to access the admin page.");
       setOnlineUsers(null);
       setAdminMessages([]);
       setUserList([]);
-       setStories([]); // Reset stories
+       setStories([]);
+       setMusicPlaylist([]); // Reset playlist
       return;
     }
 
@@ -264,12 +273,14 @@ export default function AdminPage() {
         setLoadingAnalytics(true);
         setLoadingAdminMessages(true);
         setLoadingUserList(true);
-        setLoadingStories(true); // Set story loading true
+        setLoadingStories(true);
+        setLoadingPlaylist(true); // Set playlist loading true
         setError(null);
         setOnlineUsers(null);
         setAdminMessages([]);
         setUserList([]);
-        setStories([]); // Reset stories
+        setStories([]);
+        setMusicPlaylist([]); // Reset playlist
 
         try {
              const profile = await getDoc(doc(firestoreInstance, 'users', user.uid));
@@ -281,8 +292,10 @@ export default function AdminPage() {
                 // --- Fetch Data Concurrently ---
                 const requestsPromise = getPasswordChangeRequests(user.uid).catch(err => { console.error("Req Fetch Err:", err); throw err; });
                 const analyticsPromise = getOnlineUsersCount().catch(err => { console.error("Analytics Err:", err); throw err; });
-                // Fetch stories (posts with type 'story')
                 const storiesPromise = fetchPosts(100).then(posts => posts.filter(p => p.type === 'story')).catch(err => { console.error("Stories Fetch Err:", err); throw err; });
+                 // Fetch Platform Config (including music)
+                 const configPromise = getPlatformConfig().catch(err => { console.error("Config Fetch Err:", err); throw err; });
+
 
                  // --- Setup Admin Messages Listener ---
                  console.log("AdminPage: Setting up admin messages listener.");
@@ -290,22 +303,13 @@ export default function AdminPage() {
                  adminMessagesListenerUnsubscribeRef.current = onSnapshot(messagesQuery, (snapshot) => {
                       const fetchedMessages: AdminMessage[] = snapshot.docs.map(doc => {
                          const data = doc.data();
-                         // More robust timestamp check for messages
                          let timestampISO: string | null = null;
-                         if (data.timestamp instanceof Timestamp) {
-                             timestampISO = data.timestamp.toDate().toISOString();
-                         } else if (data.timestamp && typeof data.timestamp.toDate === 'function') {
-                             try { timestampISO = data.timestamp.toDate().toISOString(); } catch { /* ignore */ }
-                         } else if (typeof data.timestamp === 'string') {
-                             try { const parsedDate = parseISO(data.timestamp); timestampISO = parsedDate.toISOString(); } catch { /* ignore */ }
-                         } else if (typeof data.timestamp?.seconds === 'number') { // Handle plain objects from Firestore
-                             try { timestampISO = new Timestamp(data.timestamp.seconds, data.timestamp.nanoseconds).toDate().toISOString(); } catch { /* ignore */ }
-                         }
+                         if (data.timestamp instanceof Timestamp) timestampISO = data.timestamp.toDate().toISOString();
+                         else if (data.timestamp && typeof data.timestamp.toDate === 'function') try { timestampISO = data.timestamp.toDate().toISOString(); } catch { /* ignore */ }
+                         else if (typeof data.timestamp === 'string') try { const parsedDate = parseISO(data.timestamp); timestampISO = parsedDate.toISOString(); } catch { /* ignore */ }
+                         else if (typeof data.timestamp?.seconds === 'number') try { timestampISO = new Timestamp(data.timestamp.seconds, data.timestamp.nanoseconds).toDate().toISOString(); } catch { /* ignore */ }
 
-                          if (!timestampISO || !data.senderUid) {
-                             console.warn("Skipping invalid admin message document (missing timestamp or senderUid):", doc.id, data);
-                             return null;
-                          }
+                          if (!timestampISO || !data.senderUid) { console.warn("Skipping invalid admin message document:", doc.id, data); return null; }
                          return {
                              id: doc.id,
                              senderUid: data.senderUid,
@@ -314,28 +318,24 @@ export default function AdminPage() {
                              message: data.message ?? '',
                              timestamp: timestampISO,
                              isRead: data.isRead ?? false,
-                             // Include reply fields if available
                              reply: data.reply ?? null,
-                             repliedAt: data.repliedAt ? formatTimestamp(data.repliedAt) : null, // Format if exists
+                             repliedAt: data.repliedAt ? formatTimestamp(data.repliedAt) : null,
                              repliedBy: data.repliedBy ?? null,
                          };
-                      }).filter((msg): msg is AdminMessage => msg !== null); // Filter out invalid docs
+                      }).filter((msg): msg is AdminMessage => msg !== null);
                       setAdminMessages(fetchedMessages);
                       setLoadingAdminMessages(false);
                       console.log(`Admin: Admin messages updated (${fetchedMessages.length} messages)`);
                  }, (error) => {
                      console.error("Error fetching admin messages:", error);
                      toast({ title: "Messages Error", description: "Could not load admin messages.", variant: "destructive" });
-                     setAdminMessages([]);
-                     setLoadingAdminMessages(false);
-                     adminMessagesListenerUnsubscribeRef.current = null; // Clear ref on error
+                     setAdminMessages([]); setLoadingAdminMessages(false); adminMessagesListenerUnsubscribeRef.current = null;
                  });
 
 
                  // --- Setup User List Listener (for notifications) ---
                  console.log("AdminPage: Setting up user list listener.");
-                 const usersQuery = query(collection(firestoreInstance, 'users'), where('uid', '!=', user.uid)); // Exclude self
-                 // Store the unsubscribe function in the ref
+                 const usersQuery = query(collection(firestoreInstance, 'users'), where('uid', '!=', user.uid));
                  userListListenerUnsubscribeRef.current = onSnapshot(usersQuery, (snapshot) => {
                      const fetchedUsers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as UserProfile))
                          .sort((a, b) => (a.displayName || a.email || '').localeCompare(b.displayName || b.email || ''));
@@ -344,95 +344,64 @@ export default function AdminPage() {
                      console.log(`Admin: User list updated (${fetchedUsers.length} users)`);
                  }, (error) => {
                      console.error("Error fetching user list for notifications:", error);
-                     toast({ title: "User List Error", description: "Could not load users for targeted notifications.", variant: "destructive" });
-                     setUserList([]);
-                     setLoadingUserList(false);
-                      // Clear the ref on error
-                     userListListenerUnsubscribeRef.current = null;
+                     toast({ title: "User List Error", description: "Could not load users.", variant: "destructive" });
+                     setUserList([]); setLoadingUserList(false); userListListenerUnsubscribeRef.current = null;
                  });
 
                 // Await results for non-listener fetches
                  try {
-                      const [fetchedRequests, onlineCount, fetchedStories] = await Promise.all([requestsPromise, analyticsPromise, storiesPromise]);
+                      const [fetchedRequests, onlineCount, fetchedStories, platformConfig] = await Promise.all([requestsPromise, analyticsPromise, storiesPromise, configPromise]);
                       setRequests(fetchedRequests);
                       setOnlineUsers(onlineCount);
-                      setStories(fetchedStories); // Set stories state
+                      setStories(fetchedStories);
+                      // Set config states
+                      setAllowEmoji(platformConfig.allowEmoji ?? true);
+                      setAllowFileUploads(platformConfig.allowFileUploads ?? true);
+                      // Ensure "No Music" is always first, then add fetched playlist
+                      setMusicPlaylist([{ id: 'none', title: "No Music", url: "none" }, ...(platformConfig.musicPlaylist || [])]);
+
                  } catch (batchError: any) {
                      console.error("Error fetching initial admin data batch:", batchError);
-                      // Handle specific errors if needed, or show a general error
                      toast({ title: "Data Fetch Error", description: "Could not load some admin data.", variant: "destructive" });
-                      // Set sensible defaults on error
                      if (!requests.length) setRequests([]);
                      if (onlineUsers === null) setOnlineUsers(0);
-                     if (!stories.length) setStories([]); // Default for stories
+                     if (!stories.length) setStories([]);
+                     if (!musicPlaylist.length) setMusicPlaylist([{ id: 'none', title: "No Music", url: "none" }]); // Default playlist on error
                  } finally {
                     setLoadingRequests(false);
                     setLoadingAnalytics(false);
-                    setLoadingStories(false); // Set story loading false
-                    // Message and User list loading are handled by their listeners
+                    setLoadingStories(false);
+                    setLoadingPlaylist(false); // Set playlist loading false
                  }
-
-                // TODO: Fetch initial settings values from config service
-                // const config = await getPlatformConfig();
-                // setAllowEmoji(config.allowEmoji ?? true);
-                // setAllowFileUploads(config.allowFileUploads ?? true);
 
              } else {
                  console.log("AdminPage: User is not admin.");
                 setError("You do not have permission to access this page.");
-                setRequests([]);
-                setOnlineUsers(null);
-                setAdminMessages([]);
-                setUserList([]);
-                setStories([]); // Reset stories
-                setLoadingRequests(false);
-                setLoadingAnalytics(false);
-                setLoadingAdminMessages(false);
-                setLoadingUserList(false);
-                setLoadingStories(false); // Set story loading false
+                setRequests([]); setOnlineUsers(null); setAdminMessages([]); setUserList([]); setStories([]); setMusicPlaylist([]);
+                setLoadingRequests(false); setLoadingAnalytics(false); setLoadingAdminMessages(false); setLoadingUserList(false); setLoadingStories(false); setLoadingPlaylist(false);
              }
         } catch (err: any) {
             console.error("Error checking admin status or fetching data:", err);
             setError(err.message || "Failed to load admin data.");
             setIsAdmin(false);
-            setRequests([]);
-            setOnlineUsers(null);
-            setAdminMessages([]);
-            setUserList([]);
-            setStories([]); // Reset stories
-            setLoadingRequests(false);
-            setLoadingAnalytics(false);
-            setLoadingAdminMessages(false);
-            setLoadingUserList(false);
-            setLoadingStories(false); // Set story loading false
+            setRequests([]); setOnlineUsers(null); setAdminMessages([]); setUserList([]); setStories([]); setMusicPlaylist([]);
+            setLoadingRequests(false); setLoadingAnalytics(false); setLoadingAdminMessages(false); setLoadingUserList(false); setLoadingStories(false); setLoadingPlaylist(false);
         } finally {
-             // Ensure these are false, though listeners might set them earlier
              setLoadingUserList(false);
              setLoadingAdminMessages(false);
-             setLoadingStories(false); // Ensure story loading is false
+             setLoadingStories(false);
+             setLoadingPlaylist(false); // Ensure playlist loading is false
         }
     };
 
-    // Pass the correct dbInstance state variable here
-    if (dbInstance) {
-      checkAdminAndFetchData(dbInstance);
-    }
+    if (dbInstance) { checkAdminAndFetchData(dbInstance); }
 
-     // Ensure cleanup runs when dependencies change or component unmounts
      return () => {
-         if (userListListenerUnsubscribeRef.current) {
-            console.log("AdminPage: Cleaning up user list listener in useEffect return.");
-            userListListenerUnsubscribeRef.current();
-            userListListenerUnsubscribeRef.current = null;
-         }
-          if (adminMessagesListenerUnsubscribeRef.current) {
-            console.log("AdminPage: Cleaning up admin messages listener in useEffect return.");
-            adminMessagesListenerUnsubscribeRef.current();
-            adminMessagesListenerUnsubscribeRef.current = null;
-          }
+         if (userListListenerUnsubscribeRef.current) { userListListenerUnsubscribeRef.current(); userListListenerUnsubscribeRef.current = null; }
+          if (adminMessagesListenerUnsubscribeRef.current) { adminMessagesListenerUnsubscribeRef.current(); adminMessagesListenerUnsubscribeRef.current = null; }
      };
 
-  }, [user, authLoading, dbInstance, toast]); // Rerun if user, auth state, or db instance changes
+  }, [user, authLoading, dbInstance, toast]);
 
 
    // Function to handle approving/denying requests
@@ -471,20 +440,13 @@ export default function AdminPage() {
                 resultId = await sendGlobalNotification(notificationMessage.trim(), user.uid);
                 toast({ title: 'Global Announcement Sent', description: 'Your announcement has been broadcast.' });
             } else {
-                // Ensure targetUserId is not undefined before sending
-                if (!targetUserId) {
-                     throw new Error("Target user ID is missing for targeted notification.");
-                }
+                if (!targetUserId) throw new Error("Target user ID is missing.");
                 resultId = await sendTargetedNotification(notificationMessage.trim(), targetUserId, user.uid);
-                // Try to find the user's name for the toast message
                 const targetUserName = userList.find(u => u.uid === targetUserId)?.displayName || `user ${targetUserId}`;
                 toast({ title: 'Targeted Notification Sent', description: `Notification sent to ${targetUserName}.` });
             }
              console.log(`Notification sent, Doc ID: ${resultId}`);
-             setNotificationMessage(''); // Clear input
-             setTargetUserId(undefined); // Reset target user selection
-             // Optionally reset type to global?
-             setNotificationType('global');
+             setNotificationMessage(''); setTargetUserId(undefined); setNotificationType('global');
         } catch (error: any) {
              console.error("Error sending notification:", error);
             toast({ title: 'Send Failed', description: error.message || 'Could not send the notification.', variant: 'destructive' });
@@ -493,13 +455,12 @@ export default function AdminPage() {
         }
    };
 
-   // Handle saving settings (placeholder)
+   // Handle saving settings (placeholder) - TODO: Implement real saving
    const handleSaveSettings = async () => {
       setIsSavingSettings(true);
       try {
           console.log("Saving settings:", { allowEmoji, allowFileUploads });
-          // TODO: Call updatePlatformConfig service
-          // await updatePlatformConfig({ allowEmoji, allowFileUploads }, user.uid);
+          // await updatePlatformCoreConfig({ allowEmoji, allowFileUploads }, user.uid); // Call real service
           await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate network delay
           toast({ title: 'Settings Saved (Placeholder)' });
       } catch (error: any) {
@@ -515,20 +476,14 @@ export default function AdminPage() {
         if (!user || !ipToBlock.trim() || isBlockingIp) return;
 
         setIsBlockingIp(true);
-        const effectiveReason = blockReason.trim() || 'Blocked by administrator'; // Default reason
+        const effectiveReason = blockReason.trim() || 'Blocked by administrator';
         try {
             await blockIpAddress(ipToBlock.trim(), effectiveReason, user.uid);
             toast({ title: 'IP Address Blocked', description: `IP address ${ipToBlock.trim()} has been blocked.` });
-            setIpToBlock(''); // Clear input
-            setBlockReason(''); // Clear reason input
+            setIpToBlock(''); setBlockReason('');
         } catch (error: any) {
              toast({ title: 'IP Block Failed', description: error.message || 'Could not block the IP address.', variant: 'destructive' });
-              // Log the failed attempt
-             try {
-                 await logSuspiciousActivity('ip_block_failure', { adminUid: user.uid, targetIp: ipToBlock.trim(), error: error.message });
-             } catch (logError) {
-                 console.error("Failed to log IP block failure:", logError);
-             }
+             try { await logSuspiciousActivity('ip_block_failure', { adminUid: user.uid, targetIp: ipToBlock.trim(), error: error.message }); } catch (logError) { console.error("Failed to log IP block failure:", logError); }
         } finally {
             setIsBlockingIp(false);
         }
@@ -540,15 +495,11 @@ export default function AdminPage() {
        if (!replyingToAdminMessage || !replyText.trim() || isSendingReply || !user) return;
 
        setIsSendingReply(true);
-       console.log(`Admin: Replying to message ${replyingToAdminMessage.id} from ${replyingToAdminMessage.senderUid} with text: ${replyText}`);
+       console.log(`Admin: Replying to message ${replyingToAdminMessage.id} from ${replyingToAdminMessage.senderUid}`);
        try {
-           // Call the actual reply service
            await sendAdminReply(replyingToAdminMessage.id, replyText.trim(), user.uid);
            toast({ title: 'Reply Sent Successfully' });
-           setReplyText('');
-           setReplyingToAdminMessage(null); // Clear reply state
-
-           // Listener will update the message state in UI
+           setReplyText(''); setReplyingToAdminMessage(null);
        } catch (error: any) {
            console.error("Error sending admin reply:", error);
            toast({ title: 'Reply Failed', description: error.message || 'Could not send the reply.', variant: 'destructive' });
@@ -562,10 +513,51 @@ export default function AdminPage() {
         setStories(prevStories => prevStories.filter(story => story.id !== deletedStoryId));
    };
 
+   // --- Music Playlist Handlers ---
+   const handleAddMusicTrack = async (e: React.FormEvent) => {
+       e.preventDefault();
+       if (!user || !newTrackTitle.trim() || !newTrackUrl.trim() || isAddingTrack) return;
+
+       setIsAddingTrack(true);
+       const trackData = { title: newTrackTitle.trim(), url: newTrackUrl.trim() };
+       try {
+           const newTrackId = await addMusicTrack(trackData, user.uid);
+           toast({ title: 'Music Track Added', description: `"${trackData.title}" added to playlist.` });
+           // Optimistically add to local state
+           setMusicPlaylist(prev => [...prev, { id: newTrackId, ...trackData }]);
+           setNewTrackTitle(''); setNewTrackUrl('');
+       } catch (error: any) {
+           toast({ title: 'Add Track Failed', description: error.message || 'Could not add music track.', variant: 'destructive' });
+       } finally {
+           setIsAddingTrack(false);
+       }
+   };
+
+   const handleRemoveMusicTrack = async (trackId: string) => {
+       if (!user || deletingTrackId) return;
+       if (trackId === 'none') { // Prevent deleting the "No Music" option
+           toast({ title: "Cannot Delete", description: "The 'No Music' option cannot be removed.", variant: "destructive" });
+           return;
+       }
+
+       setDeletingTrackId(trackId);
+       try {
+           await removeMusicTrack(trackId, user.uid);
+           toast({ title: 'Music Track Removed' });
+           // Optimistically remove from local state
+           setMusicPlaylist(prev => prev.filter(track => track.id !== trackId));
+       } catch (error: any) {
+           toast({ title: 'Remove Track Failed', description: error.message || 'Could not remove music track.', variant: 'destructive' });
+       } finally {
+           setDeletingTrackId(null);
+       }
+   };
+   // --- End Music Playlist Handlers ---
+
 
   // --- Render Logic ---
 
-  if (authLoading || isAdmin === null || dbInstance === null) { // Check dbInstance as well
+  if (authLoading || isAdmin === null || dbInstance === null) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-theme(spacing.14))] bg-secondary p-4">
         <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
@@ -592,8 +584,7 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="flex flex-col items-center min-h-screen bg-muted/30 py-8 px-4 sm:px-6 lg:px-8"> {/* Responsive padding */}
-       {/* Use w-full and max-w-7xl for better responsiveness */}
+    <div className="flex flex-col items-center min-h-screen bg-muted/30 py-8 px-4 sm:px-6 lg:px-8">
       <div className="w-full max-w-7xl">
         <div className="mb-8 text-center">
           <h1 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl">Admin Dashboard</h1>
@@ -601,20 +592,21 @@ export default function AdminPage() {
         </div>
 
         <Tabs defaultValue="requests" className="w-full">
-           {/* Adjusted grid columns for responsiveness */}
-          <TabsList className="grid w-full grid-cols-3 sm:grid-cols-7 gap-1 mb-4 sm:mb-6"> {/* Added one more column for Stories */}
+           {/* Adjusted grid columns for more tabs */}
+          <TabsList className="grid w-full grid-cols-4 sm:grid-cols-8 gap-1 mb-4 sm:mb-6">
             <TabsTrigger value="requests"><ShieldCheck className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Requests</TabsTrigger>
             <TabsTrigger value="analytics"><BarChart2 className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Analytics</TabsTrigger>
             <TabsTrigger value="messages"><MessageSquare className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Messages</TabsTrigger>
-            <TabsTrigger value="stories"><Film className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Stories</TabsTrigger> {/* Added Stories Trigger */}
+            <TabsTrigger value="stories"><Film className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Stories</TabsTrigger>
             <TabsTrigger value="notifications"><Bell className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Notifications</TabsTrigger>
+            <TabsTrigger value="music"><Music className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Music</TabsTrigger> {/* Added Music Trigger */}
             <TabsTrigger value="settings"><Settings className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Settings</TabsTrigger>
             <TabsTrigger value="security"><ShieldAlert className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Security</TabsTrigger>
           </TabsList>
 
           {/* Password Change Requests Tab */}
           <TabsContent value="requests">
-            <Card className="shadow-lg mt-4 w-full"> {/* Ensure card takes full width */}
+            <Card className="shadow-lg mt-4 w-full">
               <CardHeader>
                 <CardTitle>Password Change Requests</CardTitle>
                 <CardDescription>Review and approve or deny requests from users.</CardDescription>
@@ -626,68 +618,30 @@ export default function AdminPage() {
                       <div key={i} className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 p-3 border rounded-md bg-background">
                          <div className="flex items-center gap-3 flex-1 min-w-0">
                             <Skeleton className="h-9 w-9 rounded-full flex-shrink-0" />
-                            <div className="space-y-1.5 min-w-0">
-                                 <Skeleton className="h-4 w-32" />
-                                 <Skeleton className="h-3 w-48" />
-                            </div>
+                            <div className="space-y-1.5 min-w-0"> <Skeleton className="h-4 w-32" /> <Skeleton className="h-3 w-48" /> </div>
                          </div>
-                         <div className="flex gap-2 w-full sm:w-auto pt-2 sm:pt-0">
-                            <Skeleton className="h-9 w-20 flex-1 sm:flex-none" />
-                            <Skeleton className="h-9 w-20 flex-1 sm:flex-none" />
-                         </div>
+                         <div className="flex gap-2 w-full sm:w-auto pt-2 sm:pt-0"> <Skeleton className="h-9 w-20 flex-1 sm:flex-none" /> <Skeleton className="h-9 w-20 flex-1 sm:flex-none" /> </div>
                       </div>
                     ))}
                   </div>
                 )}
-
-                {!loadingRequests && error && (
-                  <div className="text-center text-destructive p-4 bg-destructive/10 border border-destructive rounded-md">
-                    <p>Error loading requests: {error}</p>
-                  </div>
-                )}
-
-                {!loadingRequests && !error && requests.length === 0 && (
-                  <div className="text-center text-muted-foreground p-6 border border-dashed rounded-md">
-                     <UserCheck className="h-10 w-10 mx-auto mb-3" />
-                    <p>No pending password change requests found.</p>
-                  </div>
-                )}
-
+                {!loadingRequests && error && <p className="text-destructive">Error loading requests: {error}</p>}
+                {!loadingRequests && !error && requests.length === 0 && <p className="text-muted-foreground text-center p-4">No pending requests.</p>}
                 {!loadingRequests && !error && requests.map((reqUser) => (
-                   // Updated flex layout for better responsiveness
                   <div key={reqUser.uid} className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 p-4 border rounded-lg bg-card shadow-sm hover:shadow-md transition-shadow duration-200">
                      <div className="flex items-center gap-3 flex-1 min-w-0">
                         <Avatar className="h-10 w-10 border flex-shrink-0">
                             <AvatarImage src={reqUser.photoURL || undefined} alt={reqUser.displayName || 'User'} data-ai-hint="user avatar"/>
                             <AvatarFallback>{getInitials(reqUser.displayName)}</AvatarFallback>
                         </Avatar>
-                        <div className="min-w-0">
-                             <p className="text-sm font-medium text-foreground truncate">{reqUser.displayName || 'Unnamed User'}</p>
-                             <p className="text-xs text-muted-foreground truncate">{reqUser.email}</p>
-                              {/* Optionally display Request Timestamp */}
-                              {/* <p className="text-xs text-muted-foreground">Requested: {formatTimestamp(reqUser.passwordRequestTimestamp)}</p> */}
-                        </div>
+                        <div className="min-w-0"> <p className="text-sm font-medium text-foreground truncate">{reqUser.displayName || 'Unnamed User'}</p> <p className="text-xs text-muted-foreground truncate">{reqUser.email}</p> </div>
                      </div>
                      <div className="flex gap-2 flex-shrink-0 w-full sm:w-auto pt-2 sm:pt-0">
-                         <Button
-                            variant="outline"
-                            size="sm"
-                            className="flex-1 sm:flex-none"
-                            onClick={() => handleReview(reqUser.uid, false)}
-                            disabled={processingUserId === reqUser.uid}
-                         >
-                             {processingUserId === reqUser.uid ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <XCircle className="mr-2 h-4 w-4"/>}
-                            Deny
+                         <Button variant="outline" size="sm" className="flex-1 sm:flex-none" onClick={() => handleReview(reqUser.uid, false)} disabled={processingUserId === reqUser.uid}>
+                             {processingUserId === reqUser.uid ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <XCircle className="mr-2 h-4 w-4"/>} Deny
                          </Button>
-                         <Button
-                             variant="default"
-                             size="sm"
-                             className="flex-1 sm:flex-none"
-                             onClick={() => handleReview(reqUser.uid, true)}
-                             disabled={processingUserId === reqUser.uid}
-                        >
-                            {processingUserId === reqUser.uid ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <CheckCircle className="mr-2 h-4 w-4"/>}
-                            Approve
+                         <Button variant="default" size="sm" className="flex-1 sm:flex-none" onClick={() => handleReview(reqUser.uid, true)} disabled={processingUserId === reqUser.uid}>
+                            {processingUserId === reqUser.uid ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <CheckCircle className="mr-2 h-4 w-4"/>} Approve
                         </Button>
                      </div>
                   </div>
@@ -699,22 +653,17 @@ export default function AdminPage() {
           {/* Analytics Tab */}
            <TabsContent value="analytics">
               <Card className="shadow-lg mt-4 w-full">
-                  <CardHeader>
-                      <CardTitle>Platform Analytics</CardTitle>
-                      <CardDescription>Overview of user activity and platform usage.</CardDescription>
-                  </CardHeader>
+                  <CardHeader> <CardTitle>Platform Analytics</CardTitle> <CardDescription>Overview of user activity.</CardDescription> </CardHeader>
                   <CardContent className="space-y-4">
                        {loadingAnalytics && <Skeleton className="h-8 w-32 mb-4" />}
                        {!loadingAnalytics && onlineUsers !== null && (
                           <div className="p-4 border rounded-md bg-primary/10">
                               <h3 className="text-lg font-semibold text-primary-foreground">Real-time</h3>
                               <p className="text-muted-foreground">Online Users: <span className="font-bold text-foreground">{onlineUsers}</span></p>
-                              {/* Add more real-time stats here */}
                           </div>
                        )}
                         {!loadingAnalytics && onlineUsers === null && <p className="text-muted-foreground italic">Could not load online users data.</p>}
-                      <p className="text-muted-foreground italic text-center mt-4">More detailed usage statistics and reports coming soon...</p>
-                      {/* Placeholder for charts and detailed stats */}
+                      <p className="text-muted-foreground italic text-center mt-4">More analytics coming soon...</p>
                   </CardContent>
               </Card>
            </TabsContent>
@@ -722,82 +671,40 @@ export default function AdminPage() {
           {/* Messages Tab */}
            <TabsContent value="messages">
               <Card className="shadow-lg mt-4 w-full">
-                   <CardHeader>
-                       <CardTitle>Admin Messages</CardTitle>
-                       <CardDescription>Messages sent directly to administrators.</CardDescription>
-                   </CardHeader>
+                   <CardHeader> <CardTitle>Admin Messages</CardTitle> <CardDescription>Messages sent to administrators.</CardDescription> </CardHeader>
                     <CardContent className="space-y-4">
                          {loadingAdminMessages && (
                              <div className="space-y-3">
                                  {[...Array(2)].map((_, i) => (
-                                     <div key={i} className="p-3 border rounded-md bg-background">
-                                         <div className="flex items-center justify-between mb-1">
-                                             <Skeleton className="h-4 w-1/3" />
-                                             <Skeleton className="h-3 w-1/4" />
-                                         </div>
-                                         <Skeleton className="h-4 w-full" />
-                                          <Skeleton className="h-8 w-20 mt-3" />
-                                     </div>
+                                     <div key={i} className="p-3 border rounded-md bg-background"> <Skeleton className="h-4 w-1/3 mb-1" /> <Skeleton className="h-4 w-full" /> <Skeleton className="h-8 w-20 mt-3" /> </div>
                                  ))}
                              </div>
                          )}
-
-                         {!loadingAdminMessages && adminMessages.length === 0 && (
-                             <div className="text-center text-muted-foreground p-6 border border-dashed rounded-md">
-                                 <MessageSquare className="h-10 w-10 mx-auto mb-3" />
-                                 <p>No messages found for administrators.</p>
-                             </div>
-                         )}
-
+                         {!loadingAdminMessages && adminMessages.length === 0 && <p className="text-muted-foreground text-center p-4">No admin messages found.</p>}
                           {!loadingAdminMessages && adminMessages.map((msg) => (
                              <div key={msg.id} className="p-4 border rounded-lg bg-card shadow-sm">
                                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-2 text-xs text-muted-foreground gap-1 sm:gap-3">
-                                     <span className="truncate">From: {msg.senderName || 'Unknown User'} ({msg.senderEmail || 'No email'})</span>
+                                     <span className="truncate">From: {msg.senderName || 'Unknown'} ({msg.senderEmail || 'No email'})</span>
                                      <span className="flex-shrink-0">{formatTimestamp(msg.timestamp)}</span>
                                  </div>
                                  <p className="text-sm text-foreground mb-3 whitespace-pre-wrap break-words">{msg.message}</p>
-                                  {/* Display Reply if it exists */}
                                   {msg.reply && (
                                       <div className="mt-3 pt-3 border-t border-dashed">
-                                           <p className="text-xs text-muted-foreground mb-1">
-                                               Replied by: You ({formatTimestamp(msg.repliedAt)})
-                                           </p>
+                                           <p className="text-xs text-muted-foreground mb-1">Replied by: You ({formatTimestamp(msg.repliedAt)})</p>
                                            <p className="text-sm text-foreground italic bg-primary/10 p-2 rounded">{msg.reply}</p>
                                       </div>
                                   )}
-                                 {/* Reply Section (Conditional - Show if not already replied) */}
                                  {!msg.reply && replyingToAdminMessage?.id === msg.id ? (
                                      <form onSubmit={handleSendReply} className="mt-3 space-y-2">
                                          <Label htmlFor={`reply-${msg.id}`}>Your Reply</Label>
-                                         <Textarea
-                                             id={`reply-${msg.id}`}
-                                             value={replyText}
-                                             onChange={(e) => setReplyText(e.target.value)}
-                                             placeholder="Type your reply..."
-                                             required
-                                             minLength={5}
-                                             maxLength={500}
-                                             disabled={isSendingReply}
-                                             className="min-h-[80px]"
-                                         />
+                                         <Textarea id={`reply-${msg.id}`} value={replyText} onChange={(e) => setReplyText(e.target.value)} placeholder="Type your reply..." required minLength={5} maxLength={500} disabled={isSendingReply} className="min-h-[80px]" />
                                          <div className="flex justify-end gap-2">
                                              <Button type="button" variant="ghost" size="sm" onClick={() => { setReplyingToAdminMessage(null); setReplyText(''); }} disabled={isSendingReply}>Cancel</Button>
-                                             <Button type="submit" size="sm" disabled={!replyText.trim() || isSendingReply}>
-                                                 {isSendingReply ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Send className="mr-2 h-4 w-4"/>} Send Reply
-                                             </Button>
+                                             <Button type="submit" size="sm" disabled={!replyText.trim() || isSendingReply}> {isSendingReply ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Send className="mr-2 h-4 w-4"/>} Send Reply </Button>
                                          </div>
                                      </form>
                                  ) : (
-                                     !msg.reply && // Only show reply button if not already replied
-                                     <Button
-                                         variant="outline"
-                                         size="sm"
-                                         onClick={() => setReplyingToAdminMessage(msg)}
-                                         disabled={!!replyingToAdminMessage || isSendingReply} // Disable if already replying to another msg
-                                         className="mt-2"
-                                     >
-                                         Reply
-                                     </Button>
+                                     !msg.reply && <Button variant="outline" size="sm" onClick={() => setReplyingToAdminMessage(msg)} disabled={!!replyingToAdminMessage || isSendingReply} className="mt-2"> Reply </Button>
                                  )}
                              </div>
                          ))}
@@ -805,237 +712,163 @@ export default function AdminPage() {
               </Card>
            </TabsContent>
 
-           {/* Stories Tab - New */}
+           {/* Stories Tab */}
            <TabsContent value="stories">
                <Card className="shadow-lg mt-4 w-full">
-                   <CardHeader>
-                       <CardTitle>Manage Stories</CardTitle>
-                       <CardDescription>View and delete active user stories.</CardDescription>
-                   </CardHeader>
+                   <CardHeader> <CardTitle>Manage Stories</CardTitle> <CardDescription>View and delete active user stories.</CardDescription> </CardHeader>
                    <CardContent className="space-y-4">
-                         {loadingStories && (
-                             <div className="space-y-3">
-                                 {[...Array(4)].map((_, i) => (
-                                     <div key={i} className="flex items-center justify-between p-3 border rounded-md bg-background">
-                                         <div className="flex items-center gap-3 flex-1 min-w-0">
-                                            <Skeleton className="h-9 w-9 rounded-full flex-shrink-0" />
-                                            <div className="space-y-1.5 min-w-0">
-                                                <Skeleton className="h-4 w-24" />
-                                                <Skeleton className="h-3 w-40" />
-                                            </div>
-                                         </div>
-                                         <Skeleton className="h-8 w-8" />
-                                     </div>
-                                 ))}
-                             </div>
-                         )}
-                         {!loadingStories && stories.length === 0 && (
-                            <div className="text-center text-muted-foreground p-6 border border-dashed rounded-md">
-                                <Film className="h-10 w-10 mx-auto mb-3" />
-                                <p>No active stories found.</p>
-                             </div>
-                         )}
-                         {!loadingStories && stories.map((story) => (
-                            <StoryPreview key={story.id} story={story} onDelete={handleStoryDeleted} />
-                         ))}
+                         {loadingStories && ( <div className="space-y-3"> {[...Array(4)].map((_, i) => ( <Skeleton key={i} className="h-16 w-full" /> ))} </div> )}
+                         {!loadingStories && stories.length === 0 && <p className="text-muted-foreground text-center p-4">No active stories found.</p>}
+                         {!loadingStories && stories.map((story) => ( <StoryPreview key={story.id} story={story} onDelete={handleStoryDeleted} /> ))}
                    </CardContent>
                </Card>
            </TabsContent>
 
-
            {/* Notifications Tab */}
            <TabsContent value="notifications">
               <Card className="shadow-lg mt-4 w-full">
-                  <CardHeader>
-                      <CardTitle>Notifications & Announcements</CardTitle>
-                      <CardDescription>Send platform-wide or targeted notifications.</CardDescription>
-                  </CardHeader>
+                  <CardHeader> <CardTitle>Notifications & Announcements</CardTitle> <CardDescription>Send platform-wide or targeted notifications.</CardDescription> </CardHeader>
                   <CardContent>
                         <form onSubmit={handleSendNotification} className="space-y-6">
-                             {/* Notification Type */}
                             <div className="space-y-3">
                                 <Label>Notification Type</Label>
-                                 <RadioGroup
-                                     value={notificationType}
-                                     onValueChange={(value) => {
-                                         setNotificationType(value as 'global' | 'targeted');
-                                         if (value === 'global') setTargetUserId(undefined); // Clear target if global
-                                     }}
-                                     className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-4" // Responsive layout
-                                     disabled={isSendingNotification}
-                                 >
-                                     <div className="flex items-center space-x-2">
-                                         <RadioGroupItem value="global" id="notif-global" />
-                                         <Label htmlFor="notif-global">Global Announcement</Label>
-                                     </div>
-                                     <div className="flex items-center space-x-2">
-                                         <RadioGroupItem value="targeted" id="notif-targeted" />
-                                         <Label htmlFor="notif-targeted">Target Specific User</Label>
-                                     </div>
+                                 <RadioGroup value={notificationType} onValueChange={(value) => { setNotificationType(value as 'global' | 'targeted'); if (value === 'global') setTargetUserId(undefined); }} className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-4" disabled={isSendingNotification}>
+                                     <div className="flex items-center space-x-2"> <RadioGroupItem value="global" id="notif-global" /> <Label htmlFor="notif-global">Global Announcement</Label> </div>
+                                     <div className="flex items-center space-x-2"> <RadioGroupItem value="targeted" id="notif-targeted" /> <Label htmlFor="notif-targeted">Target Specific User</Label> </div>
                                  </RadioGroup>
                             </div>
-
-                             {/* Target User Selection (Conditional) */}
                              {notificationType === 'targeted' && (
                                 <div className="space-y-2">
                                     <Label htmlFor="target-user">Target User</Label>
-                                     <Select
-                                         value={targetUserId}
-                                         onValueChange={setTargetUserId}
-                                         disabled={loadingUserList || isSendingNotification}
-                                     >
-                                         <SelectTrigger id="target-user" className="w-full">
-                                             <SelectValue placeholder={loadingUserList ? "Loading users..." : "Select a user..."} />
-                                         </SelectTrigger>
+                                     <Select value={targetUserId} onValueChange={setTargetUserId} disabled={loadingUserList || isSendingNotification}>
+                                         <SelectTrigger id="target-user" className="w-full"> <SelectValue placeholder={loadingUserList ? "Loading users..." : "Select a user..."} /> </SelectTrigger>
                                          <SelectContent>
                                              {loadingUserList && <SelectItem value="loading" disabled>Loading...</SelectItem>}
                                              {!loadingUserList && userList.length === 0 && <SelectItem value="no-users" disabled>No users available</SelectItem>}
-                                             {!loadingUserList && userList.map(u => (
-                                                <SelectItem key={u.uid} value={u.uid}>
-                                                     <div className="flex items-center gap-2">
-                                                         <Avatar className="h-5 w-5 text-xs border">
-                                                             <AvatarImage src={u.photoURL || undefined} />
-                                                             <AvatarFallback>{getInitials(u.displayName)}</AvatarFallback>
-                                                         </Avatar>
-                                                         <span className="truncate">{u.displayName || u.email}</span>
-                                                     </div>
-                                                </SelectItem>
-                                             ))}
+                                             {!loadingUserList && userList.map(u => ( <SelectItem key={u.uid} value={u.uid}> <div className="flex items-center gap-2"> <Avatar className="h-5 w-5 text-xs border"> <AvatarImage src={u.photoURL || undefined} /> <AvatarFallback>{getInitials(u.displayName)}</AvatarFallback> </Avatar> <span className="truncate">{u.displayName || u.email}</span> </div> </SelectItem> ))}
                                          </SelectContent>
                                      </Select>
                                       {loadingUserList && <p className="text-xs text-muted-foreground flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin"/> Fetching user list...</p>}
                                 </div>
                              )}
-
-                            {/* Message Input */}
                              <div className="space-y-2">
                                  <Label htmlFor="notification-message">Message Content</Label>
-                                 <Textarea
-                                     id="notification-message"
-                                     placeholder={notificationType === 'global' ? "Enter your global announcement..." : "Enter your message for the user..."}
-                                     value={notificationMessage}
-                                     onChange={(e) => setNotificationMessage(e.target.value)}
-                                     required
-                                     minLength={5}
-                                     maxLength={500} // Example limits
-                                     disabled={isSendingNotification}
-                                     className="min-h-[100px]"
-                                 />
-                                  <p className="text-xs text-muted-foreground text-right">
-                                     {notificationMessage.length} / 500
-                                  </p>
+                                 <Textarea id="notification-message" placeholder={notificationType === 'global' ? "Enter announcement..." : "Enter message..."} value={notificationMessage} onChange={(e) => setNotificationMessage(e.target.value)} required minLength={5} maxLength={500} disabled={isSendingNotification} className="min-h-[100px]" />
+                                  <p className="text-xs text-muted-foreground text-right">{notificationMessage.length} / 500</p>
                              </div>
-
-                             {/* Submit Button */}
                              <Button type="submit" disabled={!notificationMessage.trim() || isSendingNotification || (notificationType === 'targeted' && !targetUserId)}>
-                                 {isSendingNotification ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Send className="mr-2 h-4 w-4"/>}
-                                 Send Notification
+                                 {isSendingNotification ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Send className="mr-2 h-4 w-4"/>} Send Notification
                              </Button>
                         </form>
                   </CardContent>
               </Card>
            </TabsContent>
 
+           {/* Music Playlist Tab - New */}
+           <TabsContent value="music">
+               <Card className="shadow-lg mt-4 w-full">
+                   <CardHeader>
+                       <CardTitle>Manage Story Music</CardTitle>
+                       <CardDescription>Add or remove background music options for stories.</CardDescription>
+                   </CardHeader>
+                   <CardContent className="space-y-6">
+                       {/* Add New Track Form */}
+                       <form onSubmit={handleAddMusicTrack} className="border p-4 rounded-md space-y-4 bg-muted/30">
+                           <h4 className="font-medium text-lg">Add New Track</h4>
+                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                               <div className="space-y-2">
+                                   <Label htmlFor="newTrackTitle">Track Title</Label>
+                                   <Input id="newTrackTitle" value={newTrackTitle} onChange={(e) => setNewTrackTitle(e.target.value)} placeholder="Song Title" required disabled={isAddingTrack} />
+                               </div>
+                               <div className="space-y-2">
+                                   <Label htmlFor="newTrackUrl">Track URL</Label>
+                                   <Input id="newTrackUrl" type="url" value={newTrackUrl} onChange={(e) => setNewTrackUrl(e.target.value)} placeholder="https://example.com/song.mp3" required disabled={isAddingTrack} />
+                               </div>
+                           </div>
+                           <Button type="submit" disabled={!newTrackTitle.trim() || !newTrackUrl.trim() || isAddingTrack}>
+                               {isAddingTrack ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlusCircle className="mr-2 h-4 w-4" />} Add Track
+                           </Button>
+                       </form>
+
+                       {/* Current Playlist */}
+                       <div>
+                           <h4 className="font-medium text-lg mb-3">Current Playlist</h4>
+                           {loadingPlaylist && (
+                               <div className="space-y-2"> <Skeleton className="h-10 w-full" /> <Skeleton className="h-10 w-full" /> </div>
+                           )}
+                           {!loadingPlaylist && musicPlaylist.length <= 1 && ( // Only "No Music"
+                               <p className="text-muted-foreground text-center p-4 italic">No music tracks added yet.</p>
+                           )}
+                           {!loadingPlaylist && musicPlaylist.filter(t => t.id !== 'none').map((track) => ( // Exclude "No Music" option
+                               <div key={track.id} className="flex items-center justify-between p-3 border rounded-md mb-2 bg-card">
+                                   <div className="min-w-0">
+                                       <p className="text-sm font-medium truncate">{track.title}</p>
+                                       <p className="text-xs text-muted-foreground truncate">{track.url}</p>
+                                   </div>
+                                   <AlertDialog>
+                                       <AlertDialogTrigger asChild>
+                                           <Button variant="ghost" size="icon" className="text-destructive hover:bg-destructive/10 flex-shrink-0 h-8 w-8" disabled={deletingTrackId === track.id}>
+                                                {deletingTrackId === track.id ? <Loader2 className="h-4 w-4 animate-spin"/> : <Trash2 className="h-4 w-4"/>}
+                                                <span className="sr-only">Remove Track</span>
+                                           </Button>
+                                       </AlertDialogTrigger>
+                                       <AlertDialogContent>
+                                            <AlertDialogHeader> <AlertDialogTitle>Confirm Removal</AlertDialogTitle> <AlertDialogDescription> Are you sure you want to remove "{track.title}" from the playlist? </AlertDialogDescription> </AlertDialogHeader>
+                                            <AlertDialogFooter>
+                                                <AlertDialogCancel disabled={deletingTrackId === track.id}>Cancel</AlertDialogCancel>
+                                                <AlertDialogAction onClick={() => handleRemoveMusicTrack(track.id)} disabled={deletingTrackId === track.id} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                                                     {deletingTrackId === track.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : null} Remove Track
+                                                </AlertDialogAction>
+                                            </AlertDialogFooter>
+                                       </AlertDialogContent>
+                                   </AlertDialog>
+                               </div>
+                           ))}
+                       </div>
+                   </CardContent>
+               </Card>
+           </TabsContent>
+
            {/* Settings Tab */}
            <TabsContent value="settings">
               <Card className="shadow-lg mt-4 w-full">
-                  <CardHeader>
-                      <CardTitle>Platform Settings</CardTitle>
-                      <CardDescription>Configure chat features and platform behavior.</CardDescription>
-                  </CardHeader>
-                   <CardContent className="space-y-6 pt-6"> {/* Add pt-6 */}
+                  <CardHeader> <CardTitle>Platform Settings</CardTitle> <CardDescription>Configure chat features and platform behavior.</CardDescription> </CardHeader>
+                   <CardContent className="space-y-6 pt-6">
                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-2 sm:space-y-0 sm:space-x-2 border p-4 rounded-md">
-                           <Label htmlFor="allow-emoji" className="flex flex-col space-y-1 flex-1">
-                               <span>Emoji Support</span>
-                               <span className="font-normal leading-snug text-muted-foreground">
-                                    Allow users to use emojis in chat messages.
-                               </span>
-                           </Label>
-                           <Switch
-                               id="allow-emoji"
-                               checked={allowEmoji}
-                               onCheckedChange={setAllowEmoji}
-                               disabled={isSavingSettings}
-                               className="flex-shrink-0"
-                           />
+                           <Label htmlFor="allow-emoji" className="flex flex-col space-y-1 flex-1"> <span>Emoji Support</span> <span className="font-normal leading-snug text-muted-foreground"> Allow users to use emojis. </span> </Label>
+                           <Switch id="allow-emoji" checked={allowEmoji} onCheckedChange={setAllowEmoji} disabled={isSavingSettings} className="flex-shrink-0" />
                        </div>
                         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-2 sm:space-y-0 sm:space-x-2 border p-4 rounded-md">
-                           <Label htmlFor="allow-file-uploads" className="flex flex-col space-y-1 flex-1">
-                               <span>File Uploads</span>
-                                <span className="font-normal leading-snug text-muted-foreground">
-                                    Enable or disable file uploading capabilities in chat.
-                                </span>
-                           </Label>
-                           <Switch
-                               id="allow-file-uploads"
-                               checked={allowFileUploads}
-                               onCheckedChange={setAllowFileUploads}
-                               disabled={isSavingSettings}
-                               className="flex-shrink-0"
-                           />
+                           <Label htmlFor="allow-file-uploads" className="flex flex-col space-y-1 flex-1"> <span>File Uploads</span> <span className="font-normal leading-snug text-muted-foreground"> Enable file uploading. </span> </Label>
+                           <Switch id="allow-file-uploads" checked={allowFileUploads} onCheckedChange={setAllowFileUploads} disabled={isSavingSettings} className="flex-shrink-0" />
                        </div>
-                        <p className="text-muted-foreground italic text-center text-sm">More configuration options (branding, integrations) coming soon...</p>
-                       {/* Placeholder for more settings */}
+                        <p className="text-muted-foreground italic text-center text-sm">More settings coming soon...</p>
                    </CardContent>
-                  <CardFooter>
-                       <Button onClick={handleSaveSettings} disabled={isSavingSettings}>
-                           {isSavingSettings ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : null}
-                           Save Settings
-                       </Button>
-                  </CardFooter>
+                  <CardFooter> <Button onClick={handleSaveSettings} disabled={isSavingSettings}> {isSavingSettings ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : null} Save Settings </Button> </CardFooter>
               </Card>
            </TabsContent>
 
            {/* Security Tab */}
            <TabsContent value="security">
               <Card className="shadow-lg mt-4 w-full">
-                  <CardHeader>
-                      <CardTitle>Security & Access Control</CardTitle>
-                      <CardDescription>Monitor activity and manage platform security.</CardDescription>
-                  </CardHeader>
+                  <CardHeader> <CardTitle>Security & Access Control</CardTitle> <CardDescription>Manage platform security.</CardDescription> </CardHeader>
                   <CardContent className="space-y-4 pt-6">
-                        {/* IP Blocking */}
-                        <form onSubmit={handleBlockIp} className="border p-4 rounded-md space-y-4"> {/* Corrected onSubmit */}
+                        <form onSubmit={handleBlockIp} className="border p-4 rounded-md space-y-4">
                            <h4 className="font-medium text-lg">IP Address Blocking</h4>
                             <div className="space-y-2">
                                 <Label htmlFor="ip-block">IP Address</Label>
-                                <Input
-                                    id="ip-block"
-                                    type="text"
-                                    placeholder="e.g., 192.168.1.100"
-                                    value={ipToBlock}
-                                    onChange={(e) => setIpToBlock(e.target.value)}
-                                    required
-                                    pattern="\\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\b" // More accurate IPv4 pattern
-                                    disabled={isBlockingIp}
-                                    className="font-mono"
-                                />
+                                <Input id="ip-block" type="text" placeholder="e.g., 192.168.1.100" value={ipToBlock} onChange={(e) => setIpToBlock(e.target.value)} required pattern="\\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\b" disabled={isBlockingIp} className="font-mono" />
                             </div>
                             <div className="space-y-2">
                                  <Label htmlFor="block-reason">Reason (Optional)</Label>
-                                 <Input
-                                     id="block-reason"
-                                     type="text"
-                                     placeholder="Reason for blocking..."
-                                     value={blockReason}
-                                     onChange={(e) => setBlockReason(e.target.value)}
-                                     maxLength={100}
-                                     disabled={isBlockingIp}
-                                 />
-                                 <p className="text-xs text-muted-foreground">Keep it brief (max 100 chars).</p>
+                                 <Input id="block-reason" type="text" placeholder="Reason..." value={blockReason} onChange={(e) => setBlockReason(e.target.value)} maxLength={100} disabled={isBlockingIp} />
+                                 <p className="text-xs text-muted-foreground">Max 100 chars.</p>
                             </div>
-                           <Button
-                                variant="destructive"
-                                type="submit"
-                                disabled={!ipToBlock.trim() || isBlockingIp}
-                            >
-                               {isBlockingIp ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Ban className="mr-2 h-4 w-4" />}
-                               Block IP Address
+                           <Button variant="destructive" type="submit" disabled={!ipToBlock.trim() || isBlockingIp}>
+                               {isBlockingIp ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Ban className="mr-2 h-4 w-4" />} Block IP
                            </Button>
                         </form>
-
-                       <p className="text-muted-foreground italic text-center text-sm pt-4">More security monitoring and control features (audit logs, 2FA enforcement) coming soon...</p>
-                      {/* Placeholder for security tools */}
+                       <p className="text-muted-foreground italic text-center text-sm pt-4">More security features coming soon...</p>
                   </CardContent>
               </Card>
            </TabsContent>
@@ -1046,5 +879,4 @@ export default function AdminPage() {
   );
 }
 
-
-
+    
