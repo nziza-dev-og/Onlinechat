@@ -19,13 +19,14 @@ const MUSIC_PLAYLIST_COLLECTION = 'musicPlaylist'; // Separate subcollection for
 export const getPlatformConfig = async (): Promise<PlatformConfig> => {
   let dbInstance;
   try {
-      dbInstance = getFirestore(app);
+      // Use db directly if it's guaranteed to be initialized, otherwise getFirestore(app)
+      if (!db) throw new Error("Firestore (db) not initialized.");
+      dbInstance = db;
   } catch (initError: any) {
       const dbErrorMsg = `DB init error in getPlatformConfig: ${initError.message}`;
       console.error("🔴 Config Fetch Error:", dbErrorMsg, initError);
       throw new Error(dbErrorMsg);
   }
-  if (!dbInstance) throw new Error("Database service not available.");
 
   const configRef = doc(dbInstance, SETTINGS_COLLECTION, CONFIG_DOC_ID);
   const playlistRef = collection(dbInstance, SETTINGS_COLLECTION, CONFIG_DOC_ID, MUSIC_PLAYLIST_COLLECTION);
@@ -77,13 +78,14 @@ export const getPlatformConfig = async (): Promise<PlatformConfig> => {
 export const updatePlatformCoreConfig = async (newConfig: Partial<Omit<PlatformConfig, 'musicPlaylist'>>, adminUserId: string): Promise<void> => {
    let dbInstance;
    try {
-       dbInstance = getFirestore(app);
+       // Use db directly if it's guaranteed to be initialized
+       if (!db) throw new Error("Firestore (db) not initialized.");
+       dbInstance = db;
    } catch (initError: any) {
        const dbErrorMsg = `DB init error in updatePlatformCoreConfig: ${initError.message}`;
        console.error("🔴 Config Update Error:", dbErrorMsg, initError);
        throw new Error(dbErrorMsg);
    }
-   if (!dbInstance) throw new Error("Database service not available.");
    if (!adminUserId) throw new Error("Admin User ID is required to update config.");
 
    const configRef = doc(dbInstance, SETTINGS_COLLECTION, CONFIG_DOC_ID);
@@ -131,13 +133,14 @@ export const updatePlatformCoreConfig = async (newConfig: Partial<Omit<PlatformC
 export const addMusicTrack = async (track: Omit<MusicPlaylistItem, 'id'>, adminUserId: string): Promise<string> => {
     let dbInstance;
     try {
-        dbInstance = getFirestore(app);
+        // Use db directly if it's guaranteed to be initialized
+        if (!db) throw new Error("Firestore (db) not initialized.");
+        dbInstance = db;
     } catch (initError: any) {
         const dbErrorMsg = `DB init error in addMusicTrack: ${initError.message}`;
         console.error("🔴 Music Add Error:", dbErrorMsg, initError);
         throw new Error(dbErrorMsg);
     }
-    if (!dbInstance) throw new Error("Database service not available.");
     if (!adminUserId) throw new Error("Admin User ID is required.");
     if (!track || !track.title?.trim() || !track.url?.trim()) {
         throw new Error("Invalid track data: Title and URL are required.");
@@ -186,13 +189,14 @@ export const addMusicTrack = async (track: Omit<MusicPlaylistItem, 'id'>, adminU
 export const removeMusicTrack = async (trackId: string, adminUserId: string): Promise<void> => {
     let dbInstance;
     try {
-        dbInstance = getFirestore(app);
+        // Use db directly if it's guaranteed to be initialized
+        if (!db) throw new Error("Firestore (db) not initialized.");
+        dbInstance = db;
     } catch (initError: any) {
         const dbErrorMsg = `DB init error in removeMusicTrack: ${initError.message}`;
         console.error("🔴 Music Remove Error:", dbErrorMsg, initError);
         throw new Error(dbErrorMsg);
     }
-    if (!dbInstance) throw new Error("Database service not available.");
     if (!adminUserId) throw new Error("Admin User ID is required.");
     if (!trackId) throw new Error("Track ID is required.");
 
@@ -225,4 +229,3 @@ export const removeMusicTrack = async (trackId: string, adminUserId: string): Pr
         throw new Error(detailedErrorMessage);
     }
 };
-```
