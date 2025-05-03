@@ -1,3 +1,4 @@
+
 "use client";
 
 import * as React from 'react';
@@ -8,7 +9,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { getInitials } from '@/lib/utils'; // Assuming getInitials is moved to utils
 import { Dialog, DialogContent, DialogTrigger, DialogTitle } from "@/components/ui/dialog"; // Import DialogTitle
-import { X } from 'lucide-react';
+import { X, Volume2, VolumeX } from 'lucide-react'; // Added Volume icons
 import { Button } from '../ui/button';
 import { AnimatePresence, motion } from 'framer-motion';
 import { cn } from '@/lib/utils'; // Import cn for sr-only class
@@ -31,12 +32,18 @@ export function StoryViewer({ stories }: StoryViewerProps) {
   const [openStory, setOpenStory] = React.useState<PostSerializable | null>(null);
   const progressRef = React.useRef<HTMLDivElement>(null);
   const storyTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  const audioRef = React.useRef<HTMLAudioElement>(null); // Ref for audio element
+  const [isMuted, setIsMuted] = React.useState(false); // State for music mute
 
   const activeStory = openStory ? stories.find(s => s.id === openStory.id) : null;
 
-  // Handle story progression
+  // Handle story progression and music
   React.useEffect(() => {
-    if (!activeStory) return;
+    if (!activeStory) {
+       // Stop music when viewer closes
+       audioRef.current?.pause();
+       return;
+    }
 
     // Reset progress animation
     if (progressRef.current) {
@@ -46,6 +53,24 @@ export function StoryViewer({ stories }: StoryViewerProps) {
       progressRef.current.style.transition = 'width 5s linear'; // Duration of story display
       progressRef.current.style.width = '100%';
     }
+
+    // Handle music playback
+    if (activeStory.musicUrl && audioRef.current) {
+        if (audioRef.current.src !== activeStory.musicUrl) {
+            audioRef.current.src = activeStory.musicUrl;
+            audioRef.current.load(); // Load new source
+        }
+        if (!isMuted) {
+            audioRef.current.play().catch(e => console.warn("Audio play failed:", e));
+        } else {
+            audioRef.current.pause();
+        }
+        audioRef.current.muted = isMuted;
+    } else if (audioRef.current) {
+        // If no music URL for this story, pause any currently playing music
+        audioRef.current.pause();
+    }
+
 
     // Set timeout to go to next story or close
     storyTimeoutRef.current = setTimeout(() => {
@@ -63,8 +88,9 @@ export function StoryViewer({ stories }: StoryViewerProps) {
        if (progressRef.current) {
           progressRef.current.style.transition = 'none';
        }
+       // Don't pause audio here, let the next effect handle it or the close handler
     };
-  }, [activeStory, stories]);
+  }, [activeStory, stories, isMuted]); // Add isMuted dependency
 
   const handleOpenStory = (story: PostSerializable) => {
     const index = stories.findIndex(s => s.id === story.id);
@@ -75,6 +101,7 @@ export function StoryViewer({ stories }: StoryViewerProps) {
   const handleCloseStory = () => {
     setOpenStory(null);
     if (storyTimeoutRef.current) clearTimeout(storyTimeoutRef.current);
+    audioRef.current?.pause(); // Ensure audio stops on close
   };
 
   const handleNextStory = (e?: React.MouseEvent) => {
@@ -93,7 +120,28 @@ export function StoryViewer({ stories }: StoryViewerProps) {
      if (currentIndex > 0) {
         setOpenStory(stories[currentIndex - 1]);
      }
+     // Optional: Allow looping back to the last story?
+     // else if (stories.length > 1) {
+     //    setOpenStory(stories[stories.length - 1]);
+     // }
   };
+
+   const toggleMute = (e: React.MouseEvent) => {
+     e.stopPropagation(); // Prevent interfering with story navigation
+     setIsMuted(prev => {
+         const newMutedState = !prev;
+         if (audioRef.current) {
+             audioRef.current.muted = newMutedState;
+             if (!newMutedState && activeStory?.musicUrl) {
+                 // If unmuting and there's music, try to play
+                 audioRef.current.play().catch(e => console.warn("Audio play failed:", e));
+             } else {
+                  audioRef.current.pause();
+             }
+         }
+         return newMutedState;
+     });
+   };
 
 
   return (
@@ -169,13 +217,26 @@ export function StoryViewer({ stories }: StoryViewerProps) {
                             <span className="text-xs opacity-80">{formatStoryTimestamp(activeStory.timestamp)}</span>
                          </div>
                       </div>
-                      <Button
-                         variant="ghost" size="icon" onClick={handleCloseStory}
-                         className="h-8 w-8 rounded-full bg-black/30 text-white hover:bg-black/50 hover:text-white"
-                         aria-label="Close story viewer"
-                      >
-                         <X className="h-5 w-5" />
-                      </Button>
+                       <div className="flex items-center gap-1">
+                           {/* Mute/Unmute Button */}
+                           {activeStory.musicUrl && (
+                              <Button
+                                variant="ghost" size="icon" onClick={toggleMute}
+                                className="h-8 w-8 rounded-full bg-black/30 text-white hover:bg-black/50 hover:text-white"
+                                aria-label={isMuted ? "Unmute story music" : "Mute story music"}
+                              >
+                                {isMuted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
+                              </Button>
+                           )}
+                           {/* Close Button */}
+                           <Button
+                             variant="ghost" size="icon" onClick={handleCloseStory}
+                             className="h-8 w-8 rounded-full bg-black/30 text-white hover:bg-black/50 hover:text-white"
+                             aria-label="Close story viewer"
+                           >
+                             <X className="h-5 w-5" />
+                           </Button>
+                       </div>
                    </div>
 
                    {/* Media Content */}
@@ -195,7 +256,7 @@ export function StoryViewer({ stories }: StoryViewerProps) {
                             src={activeStory.videoUrl}
                             autoPlay
                             playsInline
-                            muted // Mute story videos by default? Consider user preference.
+                            muted={isMuted} // Mute video if music is also muted
                             className="w-full h-full object-contain"
                             onEnded={handleNextStory} // Go to next story when video ends
                             data-ai-hint="story full view video"
@@ -214,6 +275,9 @@ export function StoryViewer({ stories }: StoryViewerProps) {
                           {activeStory.text}
                        </div>
                     )}
+
+                    {/* Hidden Audio Element for Background Music */}
+                    <audio ref={audioRef} loop preload="auto" className="hidden"></audio>
                 </div>
              )}
           </DialogContent>
@@ -222,3 +286,4 @@ export function StoryViewer({ stories }: StoryViewerProps) {
     </div>
   );
 }
+

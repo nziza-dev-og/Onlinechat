@@ -54,6 +54,7 @@ export interface Post {
     text?: string | null; // Optional text content
     imageUrl?: string | null; // Optional image URL
     videoUrl?: string | null; // Optional video URL
+    musicUrl?: string | null; // Optional background music URL (for stories)
     type?: 'post' | 'story'; // Added type field
     timestamp: Timestamp | Date; // Can be Timestamp or Date (e.g., for optimistic updates)
     likeCount?: number; // Number of likes
@@ -70,6 +71,7 @@ export interface PostSerializable {
     text?: string | null;
     imageUrl?: string | null;
     videoUrl?: string | null;
+    musicUrl?: string | null; // Optional background music URL (for stories)
     type?: 'post' | 'story'; // Make sure this is included
     timestamp: string; // Use ISO string for serialization
     likeCount?: number;
@@ -161,4 +163,5 @@ export interface SignalingCandidate {
 
 export type SignalingMessage = SignalingOffer | SignalingAnswer | SignalingCandidate;
 // --- End WebRTC Signaling Types ---
+
 

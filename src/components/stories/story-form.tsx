@@ -1,4 +1,5 @@
 
+
 "use client";
 
 import * as React from 'react';
@@ -10,20 +11,21 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, Send, Image as ImageIcon, Video } from 'lucide-react';
-import { Separator } from '@/components/ui/separator'; // Import Separator
+import { Loader2, Send, Image as ImageIcon, Video, Music } from 'lucide-react'; // Added Music icon
+import { Separator } from '@/components/ui/separator';
 import { useAuth } from '@/hooks/use-auth';
 import { useToast } from '@/hooks/use-toast';
 import { addPost, type PostInput } from '@/lib/posts.service'; // Reuse addPost service
 import type { Post } from '@/types';
 
-// Validation schema specifically for stories (might be simpler, e.g., requiring an image/video)
+// Validation schema specifically for stories
 const storySchema = z.object({
   text: z.string().max(200, { message: "Story text cannot exceed 200 characters." }).optional().nullable(), // Shorter limit for stories?
   imageUrl: z.string().url({ message: "Please enter a valid image URL." }).max(1024).optional().or(z.literal('')).nullable(),
   videoUrl: z.string().url({ message: "Please enter a valid video URL." }).max(1024).optional().or(z.literal('')).nullable(),
+  musicUrl: z.string().url({ message: "Please enter a valid music URL." }).max(1024).optional().or(z.literal('')).nullable(), // Added musicUrl validation
 }).refine(data => !!data.imageUrl?.trim() || !!data.videoUrl?.trim(), {
-    // Stories often require visual content
+    // Stories must have visual content
     message: "Story must include an image URL or a video URL.",
     path: ["imageUrl"], // Associate error with imageUrl field
 });
@@ -45,6 +47,7 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
       text: '',
       imageUrl: '',
       videoUrl: '',
+      musicUrl: '', // Initialize musicUrl
     },
   });
 
@@ -55,7 +58,7 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
     }
 
     setIsSubmitting(true);
-    // Prepare data for the addPost service, specifying the type as 'story'
+    // Prepare data for the addPost service, including musicUrl
     const storyInput: PostInput = {
         uid: user.uid,
         displayName: user.displayName,
@@ -63,6 +66,7 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
         text: data.text?.trim() || null,
         imageUrl: data.imageUrl?.trim() || null,
         videoUrl: data.videoUrl?.trim() || null,
+        musicUrl: data.musicUrl?.trim() || null, // Include musicUrl
         type: 'story', // Explicitly set type to 'story'
     };
 
@@ -150,6 +154,27 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
                <p className="text-sm text-destructive">{form.formState.errors.videoUrl.message}</p>
              )}
            </div>
+
+           <Separator />
+
+           {/* Background Music URL Input (Optional) */}
+           <div className="grid w-full gap-1.5">
+             <Label htmlFor="musicUrlStory" className="flex items-center gap-1.5">
+                <Music className="h-4 w-4 text-muted-foreground"/> Background Music URL (Optional)
+             </Label>
+             <Input
+               id="musicUrlStory"
+               type="url"
+               placeholder="https://example.com/music.mp3"
+               {...form.register('musicUrl')}
+               disabled={isSubmitting}
+             />
+             {form.formState.errors.musicUrl && (
+               <p className="text-sm text-destructive">{form.formState.errors.musicUrl.message}</p>
+             )}
+             <p className="text-xs text-muted-foreground">Add a URL to an audio file (e.g., mp3).</p>
+           </div>
+
 
            <Separator />
 

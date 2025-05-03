@@ -1,4 +1,5 @@
 
+
 'use server';
 
 import { db, auth } from '@/lib/firebase';
@@ -33,15 +34,16 @@ export interface PostInput {
   text?: string | null;
   imageUrl?: string | null;
   videoUrl?: string | null;
+  musicUrl?: string | null; // Added optional musicUrl
   type?: 'post' | 'story'; // Added type field, optional, defaults to 'post'
 }
 
 /**
  * Adds a new post document to the 'posts' collection in Firestore.
  * Initializes likeCount and commentCount to 0 and likedBy to an empty array.
- * Saves the post type, defaulting to 'post'.
+ * Saves the post type, defaulting to 'post'. Includes musicUrl for stories.
  *
- * @param postData - An object containing the post details (uid, text, imageUrl, videoUrl, type).
+ * @param postData - An object containing the post details (uid, text, imageUrl, videoUrl, musicUrl, type).
  * @returns Promise<string> - The ID of the newly created post document.
  * @throws Error if post data is invalid, db is not initialized, or add operation fails.
  */
@@ -50,10 +52,16 @@ export const addPost = async (postData: PostInput): Promise<string> => {
     console.error("🔴 addPost Error: Invalid post data provided (UID is missing).", postData);
     throw new Error("Invalid post data: Author UID is required.");
   }
-  if (!postData.text && !postData.imageUrl && !postData.videoUrl) {
-    console.error("🔴 addPost Error: Post must contain text, an image URL, or a video URL.", postData);
-    throw new Error("Post must have content (text, image, or video).");
-  }
+   // Content validation: require text OR image OR video (music is optional)
+   if (!postData.text?.trim() && !postData.imageUrl?.trim() && !postData.videoUrl?.trim()) {
+     console.error("🔴 addPost Error: Post/Story must contain text, an image URL, or a video URL.", postData);
+     throw new Error("Post or Story must have content (text, image, or video).");
+   }
+   // Story specific validation (if type is story, require image or video)
+   if (postData.type === 'story' && !postData.imageUrl?.trim() && !postData.videoUrl?.trim()) {
+     console.error("🔴 addPost Error: Story must contain an image URL or a video URL.", postData);
+     throw new Error("Story must have an image or video.");
+   }
    if (!db) {
       console.error("🔴 addPost Error: Firestore (db) not available.");
       throw new Error("Database service not available.");
@@ -63,6 +71,10 @@ export const addPost = async (postData: PostInput): Promise<string> => {
     const postsCollectionRef = collection(db, 'posts');
     const dataToSave = {
       ...postData,
+      text: postData.text?.trim() || null,
+      imageUrl: postData.imageUrl?.trim() || null,
+      videoUrl: postData.videoUrl?.trim() || null,
+      musicUrl: postData.type === 'story' ? (postData.musicUrl?.trim() || null) : null, // Only save musicUrl for stories
       type: postData.type || 'post', // Default to 'post' if type is not provided
       timestamp: firestoreServerTimestamp(), // Firestore handles this on the server
       likeCount: 0, // Initialize like count
@@ -125,6 +137,7 @@ export const fetchPosts = async (count: number = 50): Promise<PostSerializable[]
         text: data.text ?? null,
         imageUrl: data.imageUrl ?? null,
         videoUrl: data.videoUrl ?? null,
+        musicUrl: data.musicUrl ?? null, // Include musicUrl
         type: data.type || 'post', // Include type, default to 'post'
         // Convert Timestamp to ISO string for serialization
         timestamp: data.timestamp.toDate().toISOString(),
