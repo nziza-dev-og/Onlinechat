@@ -1,9 +1,10 @@
 
+
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { db } from '@/lib/firebase';
-import { collection, query, orderBy, onSnapshot, limit, where, addDoc, serverTimestamp, doc, getDoc, setDoc, Timestamp, type Unsubscribe, type FirestoreError } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, limit, where, addDoc, serverTimestamp, doc, getDoc, setDoc, Timestamp, updateDoc, type Unsubscribe, type FirestoreError } from 'firebase/firestore'; // Import updateDoc here
 import type { Message, UserProfile, Chat } from '@/types'; // Import Chat type
 import { ChatMessage } from './chat-message';
 import { ChatInput } from './chat-input';
@@ -114,13 +115,12 @@ export function ChatWindow() {
            // Log the detailed error from the service function
            console.error(`🔴 Error updating user presence for ${user.uid} (${reason}):`, error.message, error);
            // Optional: Show a less technical toast to the user
-           // Avoid showing toast for presence errors unless critical, can be noisy
-           // toast({
-           //     title: "Presence Error",
-           //     description: `Could not update online status. Please check console for details.`,
-           //     variant: "destructive",
-           //     duration: 5000,
-           // });
+           toast({
+               title: "Presence Error",
+               description: `Could not update online status. Error: ${error.message}`,
+               variant: "destructive",
+               duration: 5000,
+           });
         }
       };
 
@@ -740,3 +740,4 @@ export function ChatWindow() {
     </div>
   );
 }
+
