@@ -15,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { getFirestore, doc, getDoc, type Firestore } from 'firebase/firestore';
 import { app } from '@/lib/firebase'; // Import the initialized app
+import { getOnlineUsersCount } from '@/lib/admin.service'; // Import analytics service
 
 // Helper to get initials
 const getInitials = (name: string | null | undefined): string => {
@@ -36,40 +37,50 @@ export default function AdminPage() {
   const [isAdmin, setIsAdmin] = React.useState<boolean | null>(null);
   const [processingUserId, setProcessingUserId] = React.useState<string | null>(null);
   const [onlineUsers, setOnlineUsers] = React.useState<number | null>(null); // For Analytics
+  const [loadingAnalytics, setLoadingAnalytics] = React.useState(true); // Loading state for analytics
+  const [dbInstance, setDbInstance] = React.useState<Firestore | null>(null); // Hold Firestore instance
+
   const { toast } = useToast();
 
-  // Fetch admin status and requests on mount and when user changes
+   // Initialize Firestore instance on mount
+   React.useEffect(() => {
+        try {
+            const currentDb = getFirestore(app);
+            setDbInstance(currentDb);
+            console.log("Firestore instance obtained successfully in AdminPage.");
+        } catch (error) {
+            console.error("🔴 Failed to get Firestore instance in AdminPage:", error);
+            setError("Database connection failed. Admin features may be limited.");
+            setIsAdmin(false); // Assume not admin if DB fails
+            setLoadingRequests(false);
+            setLoadingAnalytics(false);
+        }
+    }, []);
+
+
+  // Fetch admin status and data on mount and when user/db changes
   React.useEffect(() => {
-    if (authLoading) {
+    if (authLoading || dbInstance === null) { // Wait for auth and db
       setIsAdmin(null);
       setLoadingRequests(true);
+      setLoadingAnalytics(true);
       setRequests([]);
-      setError(null);
-      setOnlineUsers(null); // Reset analytics
+      setOnlineUsers(null);
       return;
     }
     if (!user) {
       setIsAdmin(false);
       setLoadingRequests(false);
+      setLoadingAnalytics(false);
       setRequests([]);
       setError("Please log in to access the admin page.");
       setOnlineUsers(null);
       return;
     }
 
-    // Need db instance here
-    const db = getFirestore(app); // Use initialized app
-    if (!db) {
-       console.error("Failed to get Firestore instance in AdminPage");
-       setError("Database unavailable.");
-       setIsAdmin(false);
-       setLoadingRequests(false);
-       setOnlineUsers(null);
-       return;
-    }
-
     const checkAdminAndFetchData = async (firestoreInstance: Firestore) => {
         setLoadingRequests(true);
+        setLoadingAnalytics(true);
         setError(null);
         setOnlineUsers(null);
         try {
@@ -81,16 +92,31 @@ export default function AdminPage() {
                 // Fetch password requests
                 const fetchedRequests = await getPasswordChangeRequests(user.uid);
                 setRequests(fetchedRequests);
+                setLoadingRequests(false); // Requests loaded
 
-                // Fetch analytics data (dummy for now)
-                // Replace with actual API call: e.g., const onlineCount = await getOnlineUsersCount();
-                await new Promise(resolve => setTimeout(resolve, 500)); // Simulate network delay
-                setOnlineUsers(Math.floor(Math.random() * 50) + 1); // Dummy online user count
+                // Fetch analytics data
+                try {
+                    const onlineCount = await getOnlineUsersCount();
+                    setOnlineUsers(onlineCount);
+                } catch (analyticsError: any) {
+                     console.error("Error fetching analytics:", analyticsError);
+                     toast({
+                         title: "Analytics Error",
+                         description: analyticsError.message || "Could not load online user count.",
+                         variant: "destructive",
+                     });
+                     setOnlineUsers(0); // Default to 0 on error
+                } finally {
+                     setLoadingAnalytics(false); // Analytics loaded (or failed)
+                }
+
 
              } else {
                 setError("You do not have permission to access this page.");
                 setRequests([]);
                 setOnlineUsers(null);
+                setLoadingRequests(false);
+                setLoadingAnalytics(false);
              }
         } catch (err: any) {
             console.error("Error checking admin status or fetching data:", err);
@@ -98,19 +124,19 @@ export default function AdminPage() {
             setIsAdmin(false);
             setRequests([]);
             setOnlineUsers(null);
-        } finally {
             setLoadingRequests(false);
+            setLoadingAnalytics(false);
         }
     };
 
-    checkAdminAndFetchData(db);
+    checkAdminAndFetchData(dbInstance);
 
-  }, [user, authLoading, toast]); // Rerun if user or auth state changes
+  }, [user, authLoading, dbInstance, toast]); // Rerun if user, auth state, or db instance changes
 
 
    // Function to handle approving/denying requests
   const handleReview = async (targetUserId: string, approve: boolean) => {
-    if (!user || !isAdmin || processingUserId) return;
+    if (!user || !isAdmin || processingUserId || !dbInstance) return; // Check dbInstance
 
     setProcessingUserId(targetUserId);
     try {
@@ -135,11 +161,14 @@ export default function AdminPage() {
 
   // --- Render Logic ---
 
-  if (authLoading || isAdmin === null) {
+  if (authLoading || isAdmin === null || dbInstance === null) { // Check dbInstance as well
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-theme(spacing.14))] bg-secondary p-4">
         <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
-        <p className="text-muted-foreground">Loading admin dashboard...</p>
+        <p className="text-muted-foreground">
+            {authLoading ? "Loading user..." : (dbInstance === null ? "Connecting to database..." : "Loading dashboard...")}
+        </p>
+         {dbInstance === null && error && <p className="text-destructive text-sm mt-2">{error}</p>}
       </div>
     );
   }
@@ -168,11 +197,11 @@ export default function AdminPage() {
 
         <Tabs defaultValue="requests" className="w-full">
           <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 md:grid-cols-5"> {/* Adjust columns for different screen sizes */}
-            <TabsTrigger value="requests"><ShieldAlert className="mr-2 h-4 w-4 inline-block"/> Requests</TabsTrigger>
+            <TabsTrigger value="requests"><ShieldCheck className="mr-2 h-4 w-4 inline-block"/> Requests</TabsTrigger> {/* Updated Icon */}
             <TabsTrigger value="analytics"><BarChart2 className="mr-2 h-4 w-4 inline-block"/> Analytics</TabsTrigger>
             <TabsTrigger value="notifications"><Bell className="mr-2 h-4 w-4 inline-block"/> Notifications</TabsTrigger>
             <TabsTrigger value="settings"><Settings className="mr-2 h-4 w-4 inline-block"/> Settings</TabsTrigger>
-            <TabsTrigger value="security"><ShieldCheck className="mr-2 h-4 w-4 inline-block"/> Security</TabsTrigger>
+            <TabsTrigger value="security"><ShieldAlert className="mr-2 h-4 w-4 inline-block"/> Security</TabsTrigger> {/* Updated Icon */}
           </TabsList>
 
           {/* Password Change Requests Tab */}
@@ -264,16 +293,16 @@ export default function AdminPage() {
                       <CardDescription>Overview of user activity and platform usage.</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                      {onlineUsers === null && !error && <Skeleton className="h-8 w-32 mb-4" />}
-                      {onlineUsers !== null && (
+                       {loadingAnalytics && <Skeleton className="h-8 w-32 mb-4" />}
+                       {!loadingAnalytics && onlineUsers !== null && (
                           <div className="p-4 border rounded-md bg-primary/10">
                               <h3 className="text-lg font-semibold text-primary-foreground">Real-time</h3>
                               <p className="text-muted-foreground">Online Users: <span className="font-bold text-foreground">{onlineUsers}</span></p>
                               {/* Add more real-time stats here */}
                           </div>
-                      )}
-                       {error && <p className="text-destructive">Could not load analytics data.</p>}
-                      <p className="text-muted-foreground italic text-center">More detailed usage statistics and reports coming soon...</p>
+                       )}
+                        {!loadingAnalytics && onlineUsers === null && <p className="text-muted-foreground italic">Could not load online users data.</p>}
+                      <p className="text-muted-foreground italic text-center mt-4">More detailed usage statistics and reports coming soon...</p>
                       {/* Placeholder for charts and detailed stats */}
                   </CardContent>
               </Card>
@@ -326,64 +355,3 @@ export default function AdminPage() {
     </div>
   );
 }
-```
-  </change>
-  <change>
-    <file>src/components/ui/tabs.tsx</file>
-    <description>Ensure Tabs components are available (no changes needed, file already exists).</description>
-    <content><![CDATA[
-"use client"
-
-import * as React from "react"
-import * as TabsPrimitive from "@radix-ui/react-tabs"
-
-import { cn } from "@/lib/utils"
-
-const Tabs = TabsPrimitive.Root
-
-const TabsList = React.forwardRef<
-  React.ElementRef<typeof TabsPrimitive.List>,
-  React.ComponentPropsWithoutRef<typeof TabsPrimitive.List>
->(({ className, ...props }, ref) => (
-  <TabsPrimitive.List
-    ref={ref}
-    className={cn(
-      "inline-flex h-10 items-center justify-center rounded-md bg-muted p-1 text-muted-foreground",
-      className
-    )}
-    {...props}
-  />
-))
-TabsList.displayName = TabsPrimitive.List.displayName
-
-const TabsTrigger = React.forwardRef<
-  React.ElementRef<typeof TabsPrimitive.Trigger>,
-  React.ComponentPropsWithoutRef<typeof TabsPrimitive.Trigger>
->(({ className, ...props }, ref) => (
-  <TabsPrimitive.Trigger
-    ref={ref}
-    className={cn(
-      "inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm",
-      className
-    )}
-    {...props}
-  />
-))
-TabsTrigger.displayName = TabsPrimitive.Trigger.displayName
-
-const TabsContent = React.forwardRef<
-  React.ElementRef<typeof TabsPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof TabsPrimitive.Content>
->(({ className, ...props }, ref) => (
-  <TabsPrimitive.Content
-    ref={ref}
-    className={cn(
-      "mt-2 ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-      className
-    )}
-    {...props}
-  />
-))
-TabsContent.displayName = TabsPrimitive.Content.displayName
-
-export { Tabs, TabsList, TabsTrigger, TabsContent }

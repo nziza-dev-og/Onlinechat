@@ -1,8 +1,9 @@
+
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { db, app } from '@/lib/firebase'; // Import app
-import { collection, query, orderBy, onSnapshot, limit, where, addDoc, serverTimestamp, doc, getDoc, setDoc, Timestamp, updateDoc, type Unsubscribe, type FirestoreError, getFirestore } from 'firebase/firestore'; // Import getFirestore
+import { app } from '@/lib/firebase'; // Import app only
+import { collection, query, orderBy, onSnapshot, limit, where, addDoc, serverTimestamp, doc, getDoc, setDoc, Timestamp, updateDoc, type Unsubscribe, type FirestoreError, getFirestore, type Firestore } from 'firebase/firestore'; // Keep full imports here
 import type { Message, UserProfile, Chat } from '@/types';
 import { ChatMessage } from './chat-message';
 import { ChatInput } from './chat-input';
@@ -71,6 +72,7 @@ export function ChatWindow() {
   const [replyingToMessage, setReplyingToMessage] = useState<Message | null>(null); // State for replying
   const [isVideoButtonDisabled, setIsVideoButtonDisabled] = useState(true); // Disable video button initially
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false); // State for video call modal
+  const [dbInstance, setDbInstance] = useState<Firestore | null>(null); // Hold Firestore instance
 
   const { toast } = useToast();
   const scrollAreaRef = useRef<HTMLDivElement>(null);
@@ -80,6 +82,25 @@ export function ChatWindow() {
   const messageListenerUnsubscribe = useRef<Unsubscribe | null>(null);
   const userListenerUnsubscribe = useRef<Unsubscribe | null>(null);
   const chatDocListenerUnsubscribe = useRef<Unsubscribe | null>(null);
+
+
+  // Initialize Firestore instance on mount
+  useEffect(() => {
+    try {
+        const currentDb = getFirestore(app);
+        setDbInstance(currentDb);
+        console.log("Firestore instance obtained successfully.");
+    } catch (error) {
+        console.error("🔴 Failed to get Firestore instance in ChatWindow:", error);
+        toast({
+            title: "Database Error",
+            description: "Could not connect to the database. Chat features may be limited.",
+            variant: "destructive",
+            duration: 10000, // Make it persistent
+        });
+    }
+  }, [toast]);
+
 
    const scrollToBottom = useCallback(() => {
     if (viewportRef.current) {
@@ -108,12 +129,11 @@ export function ChatWindow() {
           // console.log("Presence update skipped: No authenticated user.");
           return;
        }
-        // Check if db is available before calling the service
-        const currentDb = getFirestore(app); // Get instance here
-        if (!currentDb) {
-          console.warn(`Presence update skipped for ${user.uid}: DB service not ready.`);
-          return;
-        }
+       // Ensure dbInstance is available
+       if (!dbInstance) {
+           console.warn(`Presence update skipped for ${user.uid}: DB instance not ready.`);
+           return;
+       }
 
         try {
              // Pass user data as primitives to the server action
@@ -137,7 +157,7 @@ export function ChatWindow() {
 
 
     const initialTimeoutId = setTimeout(() => updateUserPresence('initial'), 1500);
-    intervalId = setInterval(() => updateUserPresence('interval'), 4 * 60 * 1000);
+    intervalId = setInterval(() => updateUserPresence('interval'), 4 * 60 * 1000); // 4 minutes
 
     const handleFocus = () => {
         if (!isFocused) {
@@ -149,10 +169,14 @@ export function ChatWindow() {
         }
     };
 
-    const handleBlur = () => {
+    const handleBlur = async () => {
         isFocused = false;
-         if (user?.uid && chatId) {
-             updateTypingStatus(chatId, user.uid, false);
+         if (user?.uid && chatId && dbInstance) { // Ensure dbInstance is available here too
+             try {
+                await updateTypingStatus(chatId, user.uid, false);
+             } catch (typingError) {
+                 console.error("Error clearing typing status on blur:", typingError);
+             }
          }
     };
 
@@ -164,16 +188,17 @@ export function ChatWindow() {
 
     return () => {
       clearTimeout(initialTimeoutId);
-      if (intervalId) clearInterval(Id);
+      if (intervalId) clearInterval(intervalId);
       if (typeof window !== 'undefined') {
         window.removeEventListener('focus', handleFocus);
         window.removeEventListener('blur', handleBlur);
       }
-       if (user?.uid && chatId) {
-           updateTypingStatus(chatId, user.uid, false);
-       }
+       // Cleanup typing status on unmount
+        if (user?.uid && chatId && dbInstance) {
+             updateTypingStatus(chatId, user.uid, false).catch(err => console.error("Cleanup error for typing status:", err));
+        }
     };
-  }, [user, chatId, toast]);
+   }, [user?.uid, chatId, toast, dbInstance]); // Add dbInstance to dependency array
 
 
   // Fetch users from Firestore 'users' collection
@@ -182,17 +207,16 @@ export function ChatWindow() {
       userListenerUnsubscribe.current();
       userListenerUnsubscribe.current = null;
     }
-     // Get Firestore instance here
-    const currentDb = getFirestore(app); // Use initialized app
-    if (!user || !currentDb) {
+    // Use the state variable dbInstance
+    if (!user || !dbInstance) {
       setUsers([]);
-      setLoadingUsers(!user); // Loading is true only if user is expected but not yet available
+      setLoadingUsers(!user); // Loading is true only if user is expected but not yet available or dbInstance is null
       return;
     }
 
     setLoadingUsers(true);
     console.log(`Setting up Firestore listener for 'users' collection, excluding self: ${user.uid}`);
-    const usersQuery = query(collection(currentDb, 'users'));
+    const usersQuery = query(collection(dbInstance, 'users'));
 
     userListenerUnsubscribe.current = onSnapshot(usersQuery, (snapshot) => {
       const fetchedUsers: UserProfile[] = snapshot.docs
@@ -205,20 +229,14 @@ export function ChatWindow() {
             return null;
           }
 
-          // Ensure lastSeen and createdAt are handled correctly if they exist.
-           let lastSeen: Timestamp | undefined = undefined;
-           if (data.lastSeen instanceof Timestamp) {
-               lastSeen = data.lastSeen;
-           } else if (data.lastSeen && typeof data.lastSeen.toDate === 'function') { // Handle potential Firestore-like Timestamp object from cache/local
-               try { lastSeen = Timestamp.fromMillis(data.lastSeen.toMillis()); } catch { /* ignore invalid date */ }
-           }
-
-           let createdAt: Timestamp | undefined = undefined;
-           if (data.createdAt instanceof Timestamp) {
-               createdAt = data.createdAt;
-           } else if (data.createdAt && typeof data.createdAt.toDate === 'function') {
-               try { createdAt = Timestamp.fromMillis(data.createdAt.toMillis()); } catch { /* ignore invalid date */ }
-           }
+           // Convert Timestamps safely
+           const convertTimestamp = (ts: any): Timestamp | undefined => {
+               if (ts instanceof Timestamp) return ts;
+               if (ts && typeof ts.toDate === 'function') {
+                   try { return Timestamp.fromDate(ts.toDate()); } catch { /* ignore */ }
+               }
+               return undefined;
+           };
 
           return {
             uid: uid,
@@ -226,8 +244,8 @@ export function ChatWindow() {
             email: data.email ?? null,
             photoURL: data.photoURL ?? null,
             status: data.status ?? null,
-            lastSeen: lastSeen,
-            createdAt: createdAt,
+            lastSeen: convertTimestamp(data.lastSeen), // Use converted timestamp
+            createdAt: convertTimestamp(data.createdAt), // Use converted timestamp
             isAdmin: data.isAdmin ?? false,
             passwordChangeRequested: data.passwordChangeRequested ?? false,
             passwordChangeApproved: data.passwordChangeApproved ?? false,
@@ -286,7 +304,7 @@ export function ChatWindow() {
          userListenerUnsubscribe.current = null;
       }
     };
-  }, [user, toast, selectedChatPartner?.uid]); // Re-run if user changes or selected partner UID changes to refresh partner data
+  }, [user, toast, selectedChatPartner?.uid, dbInstance]); // Add dbInstance
 
 
   // Fetch messages and listen to chat document for typing status
@@ -299,9 +317,8 @@ export function ChatWindow() {
           chatDocListenerUnsubscribe.current();
           chatDocListenerUnsubscribe.current = null;
       }
-      // Get Firestore instance
-     const currentDb = getFirestore(app);
-    if (!user || !selectedChatPartner || !currentDb) {
+    // Use the state variable dbInstance
+    if (!user || !selectedChatPartner || !dbInstance) {
         setMessages([]);
         setLoadingMessages(false);
         setChatId(null);
@@ -320,7 +337,7 @@ export function ChatWindow() {
      console.log(`Setting up listeners for chat: ${currentChatId}`);
 
     const messagesQuery = query(
-      collection(currentDb, 'chats', currentChatId, 'messages'),
+      collection(dbInstance, 'chats', currentChatId, 'messages'),
       orderBy('timestamp', 'asc'),
       limit(100) // Consider pagination for very long chats
     );
@@ -441,7 +458,7 @@ export function ChatWindow() {
     });
 
     // Listener for typing status in the chat document
-    const chatDocRef = doc(currentDb, 'chats', currentChatId);
+    const chatDocRef = doc(dbInstance, 'chats', currentChatId);
     chatDocListenerUnsubscribe.current = onSnapshot(chatDocRef, (docSnap) => {
         if (docSnap.exists()) {
             const chatData = docSnap.data() as Chat;
@@ -474,12 +491,12 @@ export function ChatWindow() {
             chatDocListenerUnsubscribe.current = null;
         }
         // Reset typing status when changing chats or unmounting
-         if (user?.uid && currentChatId) {
-             updateTypingStatus(currentChatId, user.uid, false);
+         if (user?.uid && currentChatId && dbInstance) {
+             updateTypingStatus(currentChatId, user.uid, false).catch(err => console.error("Cleanup error for typing status:", err));
          }
       };
 
-  }, [user, selectedChatPartner, toast, scrollToBottom]); // Dependencies
+  }, [user, selectedChatPartner, toast, scrollToBottom, dbInstance]); // Add dbInstance
 
 
   // Focus handling for notification title update
@@ -507,10 +524,14 @@ export function ChatWindow() {
   const handleSelectUser = useCallback(async (partner: UserProfile) => {
      if (selectedChatPartner?.uid === partner.uid) return; // Do nothing if already selected
 
-     // Get Firestore instance
-     const currentDb = getFirestore(app);
-     if (!currentDb || !user?.uid) {
-        console.error("Cannot select user: DB or current user UID missing.");
+     // Use the state variable dbInstance
+     if (!dbInstance || !user?.uid) {
+        console.error("Cannot select user: DB instance or current user UID missing.");
+        toast({
+            title: "Error",
+            description: "Could not initialize chat. Database connection might be unavailable.",
+            variant: "destructive",
+        });
         return;
      }
 
@@ -536,7 +557,7 @@ export function ChatWindow() {
       console.log(`Selected user ${partner.uid}, switching to chat ${newChatId}`);
 
      // Ensure chat document exists (or create it)
-     const chatDocRef = doc(currentDb, 'chats', newChatId);
+     const chatDocRef = doc(dbInstance, 'chats', newChatId);
      try {
         const chatDocSnap = await getDoc(chatDocRef);
         if (!chatDocSnap.exists()) {
@@ -565,13 +586,29 @@ export function ChatWindow() {
         });
         setIsVideoButtonDisabled(true); // Keep disabled on error
      }
-  }, [selectedChatPartner?.uid, user?.uid, chatId, toast]); // Dependencies for useCallback
+  }, [selectedChatPartner?.uid, user?.uid, chatId, toast, dbInstance]); // Add dbInstance
 
 
    const filteredUsers = users.filter(u =>
     (u.displayName && u.displayName.toLowerCase().includes(searchTerm.toLowerCase())) ||
     (u.email && u.email.toLowerCase().includes(searchTerm.toLowerCase()))
   );
+
+   // Render Loading or Error state if dbInstance is not ready
+   if (dbInstance === null && !loadingUsers) { // Only show if not already loading users
+       return (
+           <div className="flex h-[calc(100vh-theme(spacing.14))] bg-secondary items-center justify-center p-4 text-center">
+               <Card className="max-w-md p-6">
+                   <CardHeader>
+                       <CardTitle>Database Connection Error</CardTitle>
+                   </CardHeader>
+                   <CardContent>
+                       <p className="text-muted-foreground">Could not connect to the database. Please check your internet connection and configuration. Chat features are unavailable.</p>
+                   </CardContent>
+               </Card>
+           </div>
+       );
+   }
 
 
   return (
@@ -695,7 +732,7 @@ export function ChatWindow() {
                          variant="ghost"
                          size="icon"
                          onClick={() => setIsVideoModalOpen(true)}
-                         disabled={isVideoButtonDisabled}
+                         disabled={isVideoButtonDisabled || !dbInstance} // Also disable if DB is not ready
                          aria-label="Start video call"
                          className="text-muted-foreground hover:text-primary"
                      >

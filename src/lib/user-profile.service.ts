@@ -8,9 +8,9 @@ import type { FirestoreError } from 'firebase/firestore';
 
 // Import Firebase functions dynamically within the action if needed, or rely on top-level imports
 // If top-level imports continue to cause issues, uncomment the dynamic imports below.
-import { doc, setDoc, serverTimestamp as firestoreServerTimestamp, Timestamp, getDoc, updateDoc, getFirestore, collection, query, where, getDocs } from 'firebase/firestore';
-import { app, auth as serverAuth } from '@/lib/firebase'; // Import the initialized app instance AND server-side auth if needed
-import { getAuth as getAdminAuth } from 'firebase-admin/auth'; // Use Firebase Admin SDK for certain actions if needed (requires setup)
+import { doc, setDoc, serverTimestamp as firestoreServerTimestamp, Timestamp, getDoc, updateDoc, getFirestore, collection, query, where, getDocs, writeBatch } from 'firebase/firestore';
+import { app } from '@/lib/firebase'; // Import the initialized app instance
+// import { getAuth as getAdminAuth } from 'firebase-admin/auth'; // Use Firebase Admin SDK for certain actions if needed (requires setup)
 
 // IMPORTANT SECURITY WARNING: Storing secret codes directly in client-side code is highly insecure.
 // This implementation is based on the user request but is NOT recommended for production.
@@ -57,10 +57,12 @@ export const createOrUpdateUserProfile = async (
     const { uid, email, displayName, photoURL, status, adminCode } = userData;
 
     // Get Firestore instance within the server action context
-    const db = getFirestore(app);
-    if (!db) {
-        const dbErrorMsg = "Database service (db) could not be initialized in createOrUpdateUserProfile. Check Firebase app initialization.";
-        console.error("🔴 createOrUpdateUserProfile Error:", dbErrorMsg);
+    let db;
+    try {
+        db = getFirestore(app);
+    } catch (initError: any) {
+        const dbErrorMsg = `Database service (db) could not be initialized in createOrUpdateUserProfile. Check Firebase app initialization. Error: ${initError.message}`;
+        console.error("🔴 createOrUpdateUserProfile Error:", dbErrorMsg, initError);
         throw new Error(dbErrorMsg);
     }
 
@@ -79,31 +81,34 @@ export const createOrUpdateUserProfile = async (
         const firestoreData: Record<string, any> = {
             uid: uid,
             email: email?.toLowerCase() ?? null,
-            ...(displayName !== undefined && { displayName: displayName || null }),
-            ...(photoURL !== undefined && { photoURL: photoURL ?? null }),
-            ...(status !== undefined && { status: status || null }),
+            // Use provided value OR existing value OR null
+            displayName: displayName !== undefined ? (displayName || null) : (docSnap.exists() ? docSnap.data().displayName : null),
+            photoURL: photoURL !== undefined ? (photoURL || null) : (docSnap.exists() ? docSnap.data().photoURL : null),
+            status: status !== undefined ? (status || null) : (docSnap.exists() ? docSnap.data().status : null),
             lastSeen: firestoreServerTimestamp(), // Always update lastSeen
-            // Initialize password change fields for new users
-            ...(isNewUser && { passwordChangeRequested: false, passwordChangeApproved: false }),
         };
 
         if (isNewUser) {
             firestoreData.createdAt = firestoreServerTimestamp();
+            // Initialize flags only for new users
+            firestoreData.passwordChangeRequested = false;
+            firestoreData.passwordChangeApproved = false;
+            firestoreData.isAdmin = false; // Default to false
+
             // Handle admin status only for new users based on the secret code
             // WARNING: This is insecure. Do not use in production without server-side validation.
             if (adminCode === ADMIN_SECRET_CODE) {
                 console.warn(`Firestore: Assigning ADMIN role to new user ${uid} based on client-provided secret code.`);
                 firestoreData.isAdmin = true;
-            } else {
-                firestoreData.isAdmin = false;
             }
+            // Ensure status is null if not provided for new user
             if (status === undefined) {
                  firestoreData.status = null;
             }
         }
 
         console.log(`Attempting Firestore ${isNewUser ? 'set' : 'set with merge'} for user ${uid}`);
-        await setDoc(userRef, firestoreData, { merge: !isNewUser });
+        await setDoc(userRef, firestoreData, { merge: !isNewUser }); // Use merge only for updates
         console.log(`Firestore: User profile ${isNewUser ? 'created' : 'updated'} for user: ${uid}`);
 
     } catch (error: any) {
@@ -152,17 +157,21 @@ export const updateUserProfileDocument = async (uid: string, data: UserProfileUp
     }
 
     // Get Firestore instance and functions within the server action context
-    const db = getFirestore(app);
-    if (!db) {
-        const dbErrorMsg = "Database service (db) could not be initialized in updateUserProfileDocument. Check Firebase app initialization.";
-        console.error("🔴 updateUserProfileDocument Error:", dbErrorMsg);
-        throw new Error(dbErrorMsg);
-    }
+     let db;
+     try {
+         db = getFirestore(app);
+     } catch (initError: any) {
+         const dbErrorMsg = `Database service (db) could not be initialized in updateUserProfileDocument. Check Firebase app initialization. Error: ${initError.message}`;
+         console.error("🔴 updateUserProfileDocument Error:", dbErrorMsg, initError);
+         throw new Error(dbErrorMsg);
+     }
+
 
     const updateData = Object.entries(data).reduce((acc, [key, value]) => {
         if (value === 'SERVER_TIMESTAMP') {
             acc[key] = firestoreServerTimestamp();
         } else if (value !== undefined) {
+             // Treat empty string for displayName/status as null in Firestore
              if ((key === 'displayName' || key === 'status') && value === '') {
                  acc[key] = null;
              } else {
@@ -180,27 +189,34 @@ export const updateUserProfileDocument = async (uid: string, data: UserProfileUp
 
     if (Object.keys(updateData).length === 0) {
         console.warn(`Firestore: updateUserProfileDocument called for user ${uid} with no valid data to update.`);
-        return;
+        return; // No actual update needed
     }
 
     const userRef = doc(db, 'users', uid);
 
     try {
-         const docSnap = await getDoc(userRef);
-         if (!docSnap.exists()) {
-             console.warn(`Firestore: updateUserProfileDocument - Document for user ${uid} does not exist. Cannot update. Attempted data:`, updateData);
-             throw new Error(`User profile document for UID ${uid} does not exist. Update failed.`);
-         }
+         // Optionally check if doc exists before updating, though updateDoc handles non-existent docs gracefully (by failing)
+         // const docSnap = await getDoc(userRef);
+         // if (!docSnap.exists()) {
+         //     console.warn(`Firestore: updateUserProfileDocument - Document for user ${uid} does not exist. Cannot update.`);
+         //     throw new Error(`User profile document for UID ${uid} does not exist.`);
+         // }
 
-         console.log(`Attempting Firestore update for user ${uid} with data:`, JSON.stringify(updateData, null, 2));
+         console.log(`Attempting Firestore update for user ${uid} with data:`, JSON.stringify(updateData)); // Don't stringify complex objects like timestamps
          await updateDoc(userRef, updateData);
          console.log(`Firestore: Document for user ${uid} updated successfully.`);
 
     } catch (error: any) {
-        const detailedErrorMessage = `Failed to update Firestore document for UID ${uid}. Error: ${error.message || 'Unknown Firestore error'}${error.code ? ` (Code: ${error.code})` : ''}. Data attempted: ${JSON.stringify(updateData, null, 2)}`;
-        console.error("🔴 Detailed Firestore Update Error:", detailedErrorMessage, error);
-        // Re-throw a more specific error if possible, otherwise the detailed one
-        throw new Error(error.message || detailedErrorMessage);
+         const baseErrorMessage = `Failed to update Firestore document for UID ${uid}.`;
+         const firestoreErrorDetails = error.message || 'Unknown Firestore error';
+         const errorCode = error.code ? ` (Code: ${error.code})` : '';
+         const attemptedDataString = JSON.stringify(updateData); // Stringify here for error message
+
+         const detailedErrorMessage = `${baseErrorMessage} Error: ${firestoreErrorDetails}${errorCode}. Data attempted: ${attemptedDataString}`;
+         console.error("🔴 Detailed Firestore Update Error:", detailedErrorMessage, error);
+
+         // Provide a more user-friendly error message while still logging details
+         throw new Error(`${baseErrorMessage} Please check connection or try again.`);
     }
 };
 
@@ -215,8 +231,9 @@ export const requestPasswordChange = async (userId: string): Promise<void> => {
   if (!userId) {
     throw new Error("User ID is required to request password change.");
   }
-  const db = getFirestore(app);
-  if (!db) throw new Error("Database service not available.");
+   let db; try { db = getFirestore(app); } catch (e: any) { throw new Error(`DB init error: ${e.message}`); }
+   if (!db) throw new Error("Database service not available.");
+
 
   const userRef = doc(db, 'users', userId);
   try {
@@ -242,8 +259,9 @@ export const reviewPasswordChangeRequest = async (adminUserId: string, targetUse
   if (!adminUserId || !targetUserId) {
     throw new Error("Admin User ID and Target User ID are required.");
   }
-  const db = getFirestore(app);
-  if (!db) throw new Error("Database service not available.");
+   let db; try { db = getFirestore(app); } catch (e: any) { throw new Error(`DB init error: ${e.message}`); }
+   if (!db) throw new Error("Database service not available.");
+
 
   const adminRef = doc(db, 'users', adminUserId);
   const targetUserRef = doc(db, 'users', targetUserId);
@@ -279,8 +297,9 @@ export const reviewPasswordChangeRequest = async (adminUserId: string, targetUse
  */
 export const checkPasswordChangeApproval = async (userId: string): Promise<{ approved: boolean }> => {
     if (!userId) throw new Error("User ID is required.");
-    const db = getFirestore(app);
-    if (!db) throw new Error("Database service not available.");
+     let db; try { db = getFirestore(app); } catch (e: any) { throw new Error(`DB init error: ${e.message}`); }
+     if (!db) throw new Error("Database service not available.");
+
 
     const userRef = doc(db, 'users', userId);
     try {
@@ -306,8 +325,9 @@ export const checkPasswordChangeApproval = async (userId: string): Promise<{ app
  */
 export const resetPasswordChangeApproval = async (userId: string): Promise<void> => {
     if (!userId) throw new Error("User ID is required.");
-    const db = getFirestore(app);
-    if (!db) throw new Error("Database service not available.");
+     let db; try { db = getFirestore(app); } catch (e: any) { throw new Error(`DB init error: ${e.message}`); }
+     if (!db) throw new Error("Database service not available.");
+
 
     const userRef = doc(db, 'users', userId);
     try {
@@ -322,15 +342,17 @@ export const resetPasswordChangeApproval = async (userId: string): Promise<void>
 
 /**
  * Fetches all users requesting a password change. Intended for admin use.
+ * Converts Timestamps to serializable format (ISO strings).
  *
  * @param adminUserId - The UID of the admin performing the action (for verification).
- * @returns Promise<UserProfile[]> - Array of user profiles requesting password change.
+ * @returns Promise<UserProfile[]> - Array of user profiles requesting password change with serializable timestamps.
  * @throws Error if admin check fails, db is not initialized, or fetch fails.
  */
 export const getPasswordChangeRequests = async (adminUserId: string): Promise<UserProfile[]> => {
     if (!adminUserId) throw new Error("Admin User ID is required.");
-    const db = getFirestore(app);
-    if (!db) throw new Error("Database service not available.");
+     let db; try { db = getFirestore(app); } catch (e: any) { throw new Error(`DB init error: ${e.message}`); }
+     if (!db) throw new Error("Database service not available.");
+
 
     const adminRef = doc(db, 'users', adminUserId);
     try {
@@ -345,7 +367,33 @@ export const getPasswordChangeRequests = async (adminUserId: string): Promise<Us
         const q = query(usersRef, where("passwordChangeRequested", "==", true));
         const querySnapshot = await getDocs(q);
 
-        const requests: UserProfile[] = querySnapshot.docs.map(doc => doc.data() as UserProfile);
+        const requests: UserProfile[] = querySnapshot.docs.map(doc => {
+            const data = doc.data();
+             // Simple validation to ensure core fields exist
+             if (!data.uid) {
+                console.warn("Skipping user profile with missing UID:", doc.id);
+                return null;
+             }
+             // Convert Timestamps to JS Dates (or ISO strings if preferred) for client-side usage
+             const convertTimestamp = (ts: any): Date | undefined => {
+                 if (ts instanceof Timestamp) return ts.toDate();
+                 if (ts && typeof ts.toDate === 'function') return ts.toDate(); // Handle Firestore-like Timestamp objects
+                 return undefined;
+             };
+            return {
+                uid: data.uid,
+                displayName: data.displayName ?? null,
+                email: data.email ?? null,
+                photoURL: data.photoURL ?? null,
+                status: data.status ?? null,
+                lastSeen: convertTimestamp(data.lastSeen), // Convert or leave as undefined
+                createdAt: convertTimestamp(data.createdAt), // Convert or leave as undefined
+                isAdmin: data.isAdmin ?? false,
+                passwordChangeRequested: data.passwordChangeRequested ?? false,
+                passwordChangeApproved: data.passwordChangeApproved ?? false,
+            };
+        }).filter((profile): profile is UserProfile => profile !== null); // Filter out nulls
+
         console.log(`Firestore: Fetched ${requests.length} password change requests for admin ${adminUserId}.`);
         return requests;
 
