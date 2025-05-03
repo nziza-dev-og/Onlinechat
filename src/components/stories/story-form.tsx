@@ -1,3 +1,4 @@
+
 "use client";
 
 import * as React from 'react';
@@ -26,7 +27,7 @@ import {
 // --- Predefined Music Playlist ---
 // In a real app, fetch this from a config or database
 const musicPlaylist = [
-    { title: "No Music", url: "" },
+    { title: "No Music", url: "none" }, // Use 'none' instead of "" for the value
     { title: "Uplifting Adventure", url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" }, // Placeholder URL
     { title: "Chill Lo-fi", url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3" }, // Placeholder URL
     { title: "Epic Trailer", url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3" }, // Placeholder URL
@@ -65,7 +66,7 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
       text: '',
       imageUrl: '',
       videoUrl: '',
-      selectedMusicUrl: "", // Initialize music selection
+      selectedMusicUrl: "none", // Initialize music selection to 'none'
     },
   });
 
@@ -76,7 +77,9 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
     }
 
     setIsSubmitting(true);
-    // Use selectedMusicUrl from form data
+    // Use selectedMusicUrl from form data, convert 'none' back to null
+    const finalMusicUrl = data.selectedMusicUrl === "none" ? null : data.selectedMusicUrl;
+
     const storyInput: PostInput = {
         uid: user.uid,
         displayName: user.displayName,
@@ -84,7 +87,7 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
         text: data.text?.trim() || null,
         imageUrl: data.imageUrl?.trim() || null,
         videoUrl: data.videoUrl?.trim() || null,
-        musicUrl: data.selectedMusicUrl || null, // Use the value from the select dropdown
+        musicUrl: finalMusicUrl, // Use the potentially null value
         type: 'story', // Explicitly set type to 'story'
     };
 
@@ -186,7 +189,7 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
                  control={form.control}
                  render={({ field }) => (
                     <Select
-                      value={field.value ?? ""} // Handle null/undefined for Select value
+                      value={field.value ?? "none"} // Handle null/undefined for Select value, default to 'none'
                       onValueChange={field.onChange}
                       disabled={isSubmitting}
                     >
@@ -195,7 +198,8 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
                       </SelectTrigger>
                       <SelectContent>
                         {musicPlaylist.map((song) => (
-                          <SelectItem key={song.url || 'no-music'} value={song.url}>
+                          // Ensure the value prop is never an empty string
+                          <SelectItem key={song.url || 'none'} value={song.url || 'none'}>
                             {song.title}
                           </SelectItem>
                         ))}
@@ -241,3 +245,4 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
     </Card>
   );
 }
+
