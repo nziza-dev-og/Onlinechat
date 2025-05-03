@@ -6,7 +6,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Loader2, Users, MessageSquareText, Image as ImageIcon, User as UserIcon, LogOut, Settings, BarChart2, Bell, Check } from 'lucide-react'; // Added Bell, Check
+import { Loader2, Users, MessageSquareText, Image as ImageIcon, User as UserIcon, LogOut, Settings, BarChart2, Bell, Check, Palette } from 'lucide-react'; // Added Bell, Check, Palette
 import Link from 'next/link';
 import { getOnlineUsersCount } from '@/lib/admin.service'; // Re-using admin service for count
 import { useToast } from '@/hooks/use-toast';
@@ -17,6 +17,7 @@ import type { NotificationSerializable } from '@/lib/notification.service'; // I
 import { formatDistanceToNowStrict } from 'date-fns';
 import { ScrollArea } from '@/components/ui/scroll-area'; // Import ScrollArea
 import { cn } from '@/lib/utils'; // Import cn
+import { ThemeToggle } from '@/components/theme/theme-toggle'; // Import ThemeToggle
 
 // Helper to get initials
 const getInitials = (name: string | null | undefined): string => {
@@ -261,10 +262,13 @@ export default function DashboardPage() {
                 Here's a quick overview and your recent notifications.
               </CardDescription>
             </div>
-            <Button variant="outline" size="sm" onClick={signOut} className="ml-auto">
-              <LogOut className="mr-2 h-4 w-4" />
-              Sign Out
-            </Button>
+            <div className="flex items-center gap-2 ml-auto">
+                <ThemeToggle />
+                <Button variant="outline" size="sm" onClick={signOut}>
+                  <LogOut className="mr-2 h-4 w-4" />
+                  Sign Out
+                </Button>
+            </div>
           </CardHeader>
         </Card>
 
@@ -298,6 +302,15 @@ export default function DashboardPage() {
                    <Settings className="mr-2 h-4 w-4" /> Update Status
                 </Link>
               </Button>
+               {/* Add Theme Toggle to Quick Actions as well */}
+              {/* <div className="pt-3 border-t">
+                <div className="flex items-center justify-between">
+                   <Label htmlFor="theme-toggle-quick" className="text-sm font-medium flex items-center gap-2">
+                      <Palette className="h-4 w-4 text-muted-foreground"/> Theme
+                   </Label>
+                   <ThemeToggle id="theme-toggle-quick" />
+                </div>
+              </div> */}
             </CardContent>
           </Card>
 
@@ -376,6 +389,25 @@ export default function DashboardPage() {
                </CardFooter>
            </Card>
         </div>
+
+        {/* Add a Settings Card maybe? */}
+        <Card className="shadow-md">
+           <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                  <Settings className="h-5 w-5 text-primary"/> Settings
+              </CardTitle>
+              <CardDescription>Manage your preferences.</CardDescription>
+           </CardHeader>
+            <CardContent>
+                 <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium flex items-center gap-2">
+                       <Palette className="h-4 w-4 text-muted-foreground"/> Appearance
+                    </span>
+                    <ThemeToggle />
+                 </div>
+            </CardContent>
+        </Card>
+
       </div>
     </div>
   );
