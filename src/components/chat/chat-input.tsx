@@ -6,7 +6,7 @@ import { db } from '@/lib/firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Send, Image as ImageIcon, X, Mic, Square, Trash2, Play, Pause, AlertCircle, Video as VideoIcon, Paperclip, FileText, Link as LinkIcon } from 'lucide-react'; // Added LinkIcon
+import { Send, Image as ImageIcon, X, Mic, Square, Trash2, Play, Pause, AlertCircle, Video as VideoIcon, Paperclip, FileText, Link as LinkIcon } from 'lucide-react'; // Added ImageIcon, VideoIcon, LinkIcon
 import { useAuth } from '@/hooks/use-auth';
 import { updateTypingStatus } from '@/lib/chat.service';
 import { uploadAudio, uploadGenericFile } from '@/lib/storage.service'; // Import the upload services
@@ -24,11 +24,11 @@ interface ChatInputProps {
 
 export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) {
   const [message, setMessage] = useState('');
-  const [imageUrl, setImageUrl] = useState('');
-  const [videoUrl, setVideoUrl] = useState(''); // State for video URL
+  const [imageUrl, setImageUrl] = useState(''); // State for image URL input
+  const [videoUrl, setVideoUrl] = useState(''); // State for video URL input
   const [fileUrl, setFileUrl] = useState(''); // State for file URL input
   const [attachedFile, setAttachedFile] = useState<File | null>(null); // State for attached file
-  const [showImageUrlInput, setShowImageUrlInput] = useState(false);
+  const [showImageUrlInput, setShowImageUrlInput] = useState(false); // State for showing image input
   const [showVideoUrlInput, setShowVideoUrlInput] = useState(false); // State for showing video input
   const [showFileUrlInput, setShowFileUrlInput] = useState(false); // State for showing file URL input
   const { user } = useAuth();
@@ -457,9 +457,6 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
       setFileUrl('');
       discardRecording();
       discardAttachedFile();
-      setShowImageUrlInput(false);
-      setShowVideoUrlInput(false);
-      setShowFileUrlInput(false);
   };
   // --- End Generic Cleanup Function ---
 
@@ -614,6 +611,9 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
       await addDoc(messagesRef, messageData);
       console.log("Message added successfully to Firestore.");
       clearInputs(); // Clear all inputs and states after successful send
+      setShowImageUrlInput(false); // Hide URL inputs after sending
+      setShowVideoUrlInput(false);
+      setShowFileUrlInput(false);
       onClearReply(); // Clear reply context after sending
     } catch (error) {
         console.error("Error sending message (Firestore or general):", error);
@@ -798,6 +798,49 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
         </div>
       )}
 
+      {/* Text Input Field (conditionally shown) */}
+       {(showImageUrlInput || showVideoUrlInput || showFileUrlInput) && (
+          <div className="flex items-center gap-2">
+            <Input
+              ref={inputRef}
+              type={showImageUrlInput ? "url" : (showVideoUrlInput ? "url" : "url")}
+              value={showImageUrlInput ? imageUrl : (showVideoUrlInput ? videoUrl : fileUrl)}
+              onChange={(e) => {
+                if (showImageUrlInput) setImageUrl(e.target.value);
+                else if (showVideoUrlInput) setVideoUrl(e.target.value);
+                else if (showFileUrlInput) setFileUrl(e.target.value);
+              }}
+              placeholder={
+                 showImageUrlInput ? "Enter image URL..." :
+                 (showVideoUrlInput ? "Enter video URL (e.g., YouTube)..." :
+                 "Enter file URL (e.g., Drive)...")
+              }
+              className="flex-1 h-9 text-sm"
+              disabled={!user || !chatId || isSending || isRecording}
+              aria-label={
+                  showImageUrlInput ? "Image URL input" :
+                  (showVideoUrlInput ? "Video URL input" : "File URL input")
+              }
+            />
+             {/* Optional: Add a button to cancel the URL input */}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={() => {
+                setShowImageUrlInput(false);
+                setShowVideoUrlInput(false);
+                setShowFileUrlInput(false);
+                clearInputs();
+              }}
+              className="text-muted-foreground hover:text-destructive flex-shrink-0"
+              aria-label="Cancel URL input"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+       )}
+
       <form onSubmit={sendMessage} className="flex items-center gap-2">
 
         {/* Hidden File Input */}
@@ -872,7 +915,7 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
 
 
         {/* Text Input (Hidden during recording/preview unless specific inputs active) */}
-        {(!isRecording && !audioBlob) || showImageUrlInput || showVideoUrlInput || showFileUrlInput || attachedFile ? (
+        {(!isRecording && !audioBlob && !showImageUrlInput && !showVideoUrlInput && !showFileUrlInput) || attachedFile ? (
           <Input
             ref={inputRef}
             type="text"
@@ -884,7 +927,8 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
             aria-label="Chat message input"
           />
         ) : (
-          <div className="flex-1 h-10"></div> // Placeholder to maintain layout
+          // Only render placeholder if NOT showing URL inputs either
+          (!showImageUrlInput && !showVideoUrlInput && !showFileUrlInput) && <div className="flex-1 h-10"></div> // Placeholder to maintain layout
         )}
 
         {/* Microphone/Stop Button with Tooltip */}
@@ -933,50 +977,7 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
         </Button>
       </form>
 
-      {/* Image URL Input (conditionally shown) */}
-      {showImageUrlInput && (
-        <div className="flex items-center gap-2 pl-12 pr-12"> {/* Adjust padding */}
-          <Input
-            type="url"
-            value={imageUrl}
-            onChange={(e) => setImageUrl(e.target.value)}
-            placeholder="Enter image URL..."
-            className="flex-1 h-9 text-sm"
-            disabled={!user || !chatId || isSending || isRecording}
-            aria-label="Image URL input"
-          />
-        </div>
-      )}
 
-      {/* Video URL Input (conditionally shown) */}
-       {showVideoUrlInput && (
-         <div className="flex items-center gap-2 pl-12 pr-12"> {/* Adjust padding */}
-           <Input
-             type="url"
-             value={videoUrl}
-             onChange={(e) => setVideoUrl(e.target.value)}
-             placeholder="Enter video URL (e.g., YouTube, Vimeo)..."
-             className="flex-1 h-9 text-sm"
-             disabled={!user || !chatId || isSending || isRecording}
-             aria-label="Video URL input"
-           />
-         </div>
-       )}
-
-       {/* File URL Input (conditionally shown) */}
-       {showFileUrlInput && (
-         <div className="flex items-center gap-2 pl-12 pr-12"> {/* Adjust padding */}
-           <Input
-             type="url"
-             value={fileUrl}
-             onChange={(e) => setFileUrl(e.target.value)}
-             placeholder="Enter file URL (e.g., Drive, Dropbox)..."
-             className="flex-1 h-9 text-sm"
-             disabled={!user || !chatId || isSending || isRecording}
-             aria-label="File URL input"
-           />
-         </div>
-       )}
 
 
       {/* Upload Progress Bar and Status */}
@@ -989,4 +990,5 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
     </div>
   );
 }
+
 
