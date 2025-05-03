@@ -6,7 +6,7 @@ import { db } from '@/lib/firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Send, Image as ImageIcon, X, Mic, Square, Trash2, Play, Pause, AlertCircle, Video as VideoIcon, Paperclip, FileText, Link as LinkIcon } from 'lucide-react'; // Added ImageIcon, VideoIcon, LinkIcon
+import { Send, Image as ImageIcon, X, Mic, Square, Trash2, Play, Pause, AlertCircle, Video as VideoIcon, Paperclip, FileText, Link as LinkIcon, Smile } from 'lucide-react'; // Added ImageIcon, VideoIcon, LinkIcon, Smile
 import { useAuth } from '@/hooks/use-auth';
 import { updateTypingStatus } from '@/lib/chat.service';
 import { uploadAudio, uploadGenericFile } from '@/lib/storage.service'; // Import the upload services
@@ -15,6 +15,9 @@ import type { Message } from '@/types'; // Import Message type
 import { cn } from '@/lib/utils';
 import { Progress } from '@/components/ui/progress'; // Import Progress for upload indication
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"; // Import Tooltip
+import EmojiPicker, { EmojiClickData, Theme as EmojiTheme } from 'emoji-picker-react'; // Import Emoji Picker
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"; // Import Popover
+import { useTheme } from "next-themes"; // Import useTheme
 
 interface ChatInputProps {
   chatId: string | null;
@@ -37,6 +40,8 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const inputRef = useRef<HTMLInputElement>(null); // Ref for the message input
   const fileInputRef = useRef<HTMLInputElement>(null); // Ref for the hidden file input
+  const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false); // State for emoji picker popover
+  const { resolvedTheme } = useTheme(); // Get current theme for emoji picker
 
   // Audio Recording State
   const [isRecording, setIsRecording] = useState(false);
@@ -131,6 +136,15 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
     }, 3000);
   };
   // --- End Typing Indicator Logic ---
+
+  // --- Emoji Picker Logic ---
+  const onEmojiClick = (emojiData: EmojiClickData) => {
+    console.log("Emoji clicked:", emojiData);
+    setMessage(prevMessage => prevMessage + emojiData.emoji);
+    setIsEmojiPickerOpen(false); // Close picker after selection
+    inputRef.current?.focus(); // Focus back on input
+  };
+  // --- End Emoji Picker Logic ---
 
   // --- Audio Recording Logic ---
 
@@ -852,6 +866,33 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
             aria-hidden="true"
          />
 
+         {/* Emoji Picker Popover */}
+        <Popover open={isEmojiPickerOpen} onOpenChange={setIsEmojiPickerOpen}>
+          <PopoverTrigger asChild>
+            <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                disabled={!user || !chatId || isSending || isRecording}
+                aria-label="Open emoji picker"
+                className="flex-shrink-0 text-muted-foreground hover:text-primary"
+            >
+                <Smile className="h-5 w-5" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-auto p-0 border-0" align="end" side="top">
+            <EmojiPicker
+              onEmojiClick={onEmojiClick}
+              autoFocusSearch={false}
+              theme={resolvedTheme === 'dark' ? EmojiTheme.DARK : EmojiTheme.LIGHT}
+              lazyLoadEmojis={true}
+              height={350}
+              // width="100%" // Make it responsive
+              searchDisabled // Optionally disable search
+            />
+          </PopoverContent>
+        </Popover>
+
         {/* File Attach Button */}
         {!isRecording && !audioBlob && !showImageUrlInput && !showVideoUrlInput && !showFileUrlInput && (
             <Button
@@ -990,5 +1031,3 @@ export function ChatInput({ chatId, replyingTo, onClearReply }: ChatInputProps) 
     </div>
   );
 }
-
-
