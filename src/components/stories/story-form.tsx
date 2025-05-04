@@ -24,7 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"; // Import Select components
 import { getPlatformConfig } from '@/lib/config.service'; // Import service to get config
-import { cn, isFilesFmUrl, isMdundoUrl, isDirectAudioUrl, isAudiomackUrl } from '@/lib/utils'; // Import helpers, added isAudiomackUrl
+import { cn, isDirectAudioUrl } from '@/lib/utils'; // Only need isDirectAudioUrl
 
 // Validation schema specifically for stories
 // Add validation for start/end times
@@ -138,32 +138,7 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
         const audioUrl = selectedMusicTrackUrl;
         if (!audioUrl || audioUrl === 'none') return;
 
-        // **Explicitly handle known non-direct URLs**
-        if (isFilesFmUrl(audioUrl) || isMdundoUrl(audioUrl) || isAudiomackUrl(audioUrl)) {
-            let platform = "this source";
-            if (isFilesFmUrl(audioUrl)) platform = "files.fm";
-            else if (isMdundoUrl(audioUrl)) platform = "mdundo.com";
-            else if (isAudiomackUrl(audioUrl)) platform = "Audiomack";
-
-             toast({
-                title: "Preview Unavailable",
-                description: (
-                    <div className="flex items-start gap-2">
-                       <AlertCircle className="h-5 w-5 text-yellow-500 flex-shrink-0 mt-0.5" />
-                       <span>
-                         Direct audio preview isn't possible for {platform} links because they point to a page, not an audio file. You can still add the link to your story.
-                       </span>
-                    </div>
-                ),
-                duration: 7000,
-             });
-             console.warn(`Preventing audio preview for ${platform} URL:`, audioUrl);
-             stopPreview(); // Ensure any previous preview is stopped
-             return; // Do not attempt to play
-        }
-
-
-        // **Check for likely non-direct URLs (warn user)**
+        // **Warn user for potentially non-direct URLs**
         if (!isDirectAudioUrl(audioUrl)) {
             toast({
                 title: "Preview Might Fail",
@@ -181,7 +156,7 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
             // Allow attempt but warn user
         }
 
-        // Proceed with playing
+        // Proceed with playing/creating the audio element
         if (!previewAudioRef.current) {
             try {
                  console.log("Creating new Audio element for:", audioUrl);
@@ -197,7 +172,6 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
                      setIsPreviewPlaying(false);
                  }
                  previewAudioRef.current.onpause = () => {
-                     // Ensure state is synced if paused externally or by browser
                       if (isPreviewPlaying) {
                          console.log("Audio preview paused (onpause event).");
                          setIsPreviewPlaying(false);
@@ -220,11 +194,10 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
              console.log("Updating Audio element src to:", audioUrl);
              previewAudioRef.current.src = audioUrl;
              previewAudioRef.current.load(); // Load new source
-             // Reset playing state when source changes
-             setIsPreviewPlaying(false);
+             setIsPreviewPlaying(false); // Reset playing state when source changes
         }
 
-
+        // Toggle play/pause
         if (isPreviewPlaying) {
             console.log("User clicked pause preview.");
             previewAudioRef.current.pause();
@@ -247,23 +220,21 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
             });
         }
 
-   }, [selectedMusicTrackUrl, isPreviewPlaying, toast, stopPreview]);
+   }, [selectedMusicTrackUrl, isPreviewPlaying, toast]); // Removed stopPreview from dependency
 
    // Cleanup preview audio when component unmounts or track changes
    React.useEffect(() => {
-     // Stop preview when selected music changes
-     stopPreview();
+     stopPreview(); // Stop preview when selected music changes
 
      return () => {
        // Cleanup on unmount
        stopPreview();
        if (previewAudioRef.current) {
-           // Remove event listeners if added directly
            previewAudioRef.current.onended = null;
            previewAudioRef.current.onerror = null;
            previewAudioRef.current.onpause = null;
            previewAudioRef.current.onplay = null;
-           previewAudioRef.current = null; // Release the reference
+           previewAudioRef.current = null;
            console.log("Preview audio element cleaned up.");
        }
      };
@@ -435,7 +406,7 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
                     {isPreviewPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
                   </Button>
                </div>
-              <p className="text-xs text-muted-foreground">Select a song from the list. Preview may not work for all URL types (e.g., files.fm, mdundo.com, Audiomack).</p>
+              <p className="text-xs text-muted-foreground">Select a song from the list. Preview may not work for all URL types (e.g., streaming sites, pages).</p>
            </div>
 
            {/* Music Trim Controls (Conditional) */}
