@@ -131,6 +131,18 @@ export function StoryModalViewer({
     }, intervalTime);
   }, [stopMediaAndTimers, isPaused, goToNextStory]);
 
+  const handleMediaError = React.useCallback((e: Event) => {
+     const mediaElement = mediaRef.current;
+     const error = mediaElement?.error;
+     console.error(
+       `Media Error Event: Code ${error?.code}, Message: ${error?.message}`,
+       e // Log the original event object too
+     );
+      // Optionally show a toast or advance to the next story on error
+      // toast({ variant: "destructive", title: "Media Error", description: `Could not load story media. ${error?.message || ''}` });
+      // goToNextStory(); // Decide if you want to auto-advance on error
+  }, []); // Removed goToNextStory from dependencies here to avoid potential loops if errors are rapid
+
   const handleMediaLoaded = React.useCallback(() => {
     const mediaElement = mediaRef.current;
     if (!mediaElement || !isMountedRef.current) return; // Check mount status
@@ -156,7 +168,7 @@ export function StoryModalViewer({
             // No end time, use full audio duration for progress (if finite)
              if (isFinite(mediaElement.duration)) {
                 const remainingDuration = mediaElement.duration - startTime;
-                startProgress(remainingDuration);
+                startProgress(remainingDuration > 0 ? remainingDuration : 0.1); // Ensure duration is positive
              } else {
                  console.warn("Audio duration is infinite/NaN, cannot use for progress.");
                   startProgress(STORY_DURATION_SECONDS); // Fallback duration
@@ -200,9 +212,7 @@ export function StoryModalViewer({
          mediaElement.removeEventListener('ended', goToNextStory); // Use goToNextStory for 'ended'
          mediaElement.removeEventListener('play', () => {if (isMountedRef.current) setIsPaused(false)});
          mediaElement.removeEventListener('pause', () => {if (isMountedRef.current) setIsPaused(true)});
-         mediaElement.removeEventListener('error', (e) => {
-              console.error("Media Error Event:", e, mediaElement?.error); // Log more details
-         });
+         mediaElement.removeEventListener('error', handleMediaError); // Use specific error handler
 
           // Add listeners for the current media
          mediaElement.addEventListener('loadedmetadata', handleMediaLoaded);
@@ -210,9 +220,7 @@ export function StoryModalViewer({
          mediaElement.addEventListener('ended', goToNextStory); // Go next when media finishes naturally
          mediaElement.addEventListener('play', () => {if (isMountedRef.current) setIsPaused(false)});
          mediaElement.addEventListener('pause', () => {if (isMountedRef.current) setIsPaused(true)});
-         mediaElement.addEventListener('error', (e) => {
-              console.error("Media Error Event:", e, mediaElement?.error); // Log more details
-         });
+         mediaElement.addEventListener('error', handleMediaError); // Use specific error handler
 
          // Try playing (might require prior user interaction)
           mediaElement.play().catch(e => console.warn("Autoplay prevented on story change:", e));
@@ -221,7 +229,7 @@ export function StoryModalViewer({
          startProgress(STORY_DURATION_SECONDS);
      }
 
-   }, [currentIndex, activeStory, resolvedVideoUrl, resolvedMusicUrl, resolvedImageUrl, stopMediaAndTimers, handleMediaLoaded, startProgress, isMuted, goToNextStory]); // Ensure all dependencies are listed
+   }, [currentIndex, activeStory, resolvedVideoUrl, resolvedMusicUrl, resolvedImageUrl, stopMediaAndTimers, handleMediaLoaded, startProgress, isMuted, goToNextStory, handleMediaError]); // Ensure all dependencies
 
 
   // Pause/Resume logic
@@ -246,23 +254,32 @@ export function StoryModalViewer({
 
         if (mediaElement && isFinite(mediaElement.duration)) {
             const currentTime = mediaElement.currentTime;
+            const startTime = mediaElement instanceof HTMLAudioElement ? (activeStory?.musicStartTime ?? 0) : 0;
             const endTime = (mediaElement instanceof HTMLAudioElement && activeStory?.musicEndTime !== null) ? activeStory.musicEndTime : mediaElement.duration;
-             const totalMediaDuration = endTime - (mediaElement instanceof HTMLAudioElement ? (activeStory?.musicStartTime ?? 0) : 0);
+            const totalMediaDuration = endTime - startTime;
 
-            if (endTime > currentTime && totalMediaDuration > 0) {
+            if (currentTime < endTime && totalMediaDuration > 0) {
                 remainingDuration = endTime - currentTime;
-                progressAlreadyElapsed = ((currentTime - (mediaElement instanceof HTMLAudioElement ? (activeStory?.musicStartTime ?? 0) : 0)) / totalMediaDuration) * 100;
+                progressAlreadyElapsed = ((currentTime - startTime) / totalMediaDuration) * 100;
             } else {
-                // Edge case: If somehow currentTime >= endTime, advance immediately
+                 // If somehow currentTime >= endTime, or duration is invalid, advance
                  goToNextStory();
                  return;
             }
         }
 
-        // Adjust startProgress to account for already elapsed progress
-        const remainingDurationSeconds = (remainingDuration * (100 - progressAlreadyElapsed)) / 100;
-         startProgress(remainingDurationSeconds > 0 ? remainingDurationSeconds : 0.1); // Start with remaining time
+        // Calculate remaining duration in seconds based on current progress percentage
+        const remainingDurationFromProgress = (durationSeconds: number) => (durationSeconds * (100 - progress)) / 100;
 
+        let resumeDuration = STORY_DURATION_SECONDS;
+        if (mediaElement && isFinite(mediaElement.duration)) {
+             const startTime = mediaElement instanceof HTMLAudioElement ? (activeStory?.musicStartTime ?? 0) : 0;
+             const endTime = (mediaElement instanceof HTMLAudioElement && activeStory?.musicEndTime !== null) ? activeStory.musicEndTime : mediaElement.duration;
+             resumeDuration = endTime - startTime;
+        }
+
+        const remainingSeconds = remainingDurationFromProgress(resumeDuration > 0 ? resumeDuration : STORY_DURATION_SECONDS);
+         startProgress(remainingSeconds > 0 ? remainingSeconds : 0.1); // Start with remaining time
 
     }
   };
@@ -284,16 +301,15 @@ export function StoryModalViewer({
       } else {
          // Move to the next story, adjusting index if necessary
          // This logic needs refinement if deleting from middle
-         if (currentIndex >= userStories.length - 1) { // If it was the last story
-             goToPrevStory(); // Go to previous
+         if (currentIndex >= userStories.length - 2) { // If it was the last or second to last
+             goToPrevStory(); // Go to previous (which might become the new last)
          } else {
               // If not the last, the next story will shift into the current index
               // Force a re-render/reload of the current index if needed,
               // or simply let the parent's state update handle it.
-              // For simplicity, let's just stay at current index (which now holds the next story)
-              // No index change needed, but restart progress for the new story at this index.
-               setProgress(0); // Reset progress visually
-               // The main useEffect will handle starting the new story at currentIndex
+              // Let's stay at current index (which now holds the next story)
+              // and reset progress. The main useEffect will handle starting the new story.
+              setProgress(0);
          }
       }
     } catch (error: any) {
@@ -314,15 +330,17 @@ export function StoryModalViewer({
 
   return (
       <Dialog open={true} onOpenChange={(open) => !open && onClose()}>
-        {/* Add DialogTitle for accessibility */}
-        <DialogTitle className={cn("sr-only")}>
-            Story by {activeStory.displayName || 'User'}
-        </DialogTitle>
         {/* Adjust content size for medium modal */}
-        <DialogContent className="p-0 max-w-md w-[90vw] border-0 shadow-2xl bg-black rounded-lg flex flex-col overflow-hidden aspect-[9/16]" // Apply aspect ratio
+        <DialogContent
+            className="p-0 max-w-md w-[90vw] h-[80vh] border-0 shadow-2xl bg-black rounded-lg flex flex-col overflow-hidden" // Medium size, fixed height
              onInteractOutside={(e) => e.preventDefault()} // Prevent closing on outside click
              onEscapeKeyDown={onClose} // Allow closing with Esc
         >
+            {/* Visually Hidden Title for Accessibility */}
+            <DialogTitle className={cn("sr-only")}>
+               Story by {activeStory.displayName || 'User'}
+            </DialogTitle>
+
           {/* Ensure inner div takes full height */}
           <div
             className="relative w-full h-full flex flex-col text-white select-none"
@@ -380,7 +398,7 @@ export function StoryModalViewer({
              <div className="absolute inset-y-0 right-0 w-1/3 z-30" onClick={(e) => { e.stopPropagation(); goToNextStory(); }}></div>
 
             {/* Media Content */}
-            <div className="flex-1 flex items-center justify-center overflow-hidden relative bg-black"> {/* Ensure background is black */}
+            <div className="flex-1 flex items-center justify-center overflow-hidden relative bg-gray-900"> {/* Darker bg for media area */}
               {resolvedVideoUrl ? (
                 <video
                   ref={mediaRef as React.RefObject<HTMLVideoElement>}
@@ -398,7 +416,7 @@ export function StoryModalViewer({
                   src={resolvedImageUrl}
                   alt={`Story by ${activeStory.displayName}`}
                   fill
-                  style={{ objectFit: 'contain' }}
+                  style={{ objectFit: 'contain' }} // Contain ensures full image is visible
                   className="pointer-events-none"
                   priority={currentIndex === initialIndex} // Prioritize loading first image
                   unoptimized // Good for external URLs
@@ -410,13 +428,13 @@ export function StoryModalViewer({
                 </div>
               )}
               {/* Separate Audio element for music */}
-              {resolvedMusicUrl && !resolvedVideoUrl && ( // Play music only if there's no video
+              {resolvedMusicUrl && ( // Play music always if present
                    <audio
                        ref={mediaRef as React.RefObject<HTMLAudioElement>}
                        key={activeStory.id + '-music'}
                        src={resolvedMusicUrl}
                        muted={isMuted}
-                       loop // Music usually loops unless trimmed
+                       loop={activeStory.musicEndTime === null} // Loop only if not trimmed
                        playsInline
                        preload="auto" // Preload audio
                    > Your browser does not support the audio element. </audio>
@@ -455,10 +473,9 @@ export function StoryModalViewer({
                              <AlertDialogTitleComponent className="flex items-center gap-2">
                                 <AlertTriangle className="text-destructive"/> Delete this story?
                              </AlertDialogTitleComponent>
-                             <AlertDialogDescription>This action cannot be undone and will permanently remove your story.</AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                             <AlertDialogCancel disabled={isDeleting} onClick={(e) => {e.stopPropagation(); handleInteractionEnd(); }}>Cancel</AlertDialogCancel>
+                             <AlertDialogDescription>This action cannot be undone and will permanently remove your story.</AlertDialogHeader>
+                          </AlertDialogFooter>
+                          <AlertDialogCancel disabled={isDeleting} onClick={(e) => {e.stopPropagation(); handleInteractionEnd(); }}>Cancel</AlertDialogCancel>
                              <AlertDialogAction
                                 onClick={(e) => {e.stopPropagation(); handleDeleteClick();}}
                                 disabled={isDeleting}
@@ -467,8 +484,7 @@ export function StoryModalViewer({
                                 {isDeleting ? <Loader2 className="animate-spin h-4 w-4 mr-2" /> : null}
                                 Delete
                              </AlertDialogAction>
-                          </AlertDialogFooter>
-                       </AlertDialogPrimitiveContent>
+                          </AlertDialogContent>
                     </AlertDialog>
                  )}
                  {!isOwner && <div />} {/* Placeholder */}
@@ -486,4 +502,3 @@ export function StoryModalViewer({
       </Dialog>
   );
 }
-
