@@ -1,8 +1,7 @@
-
 'use server'; // May not be needed if only called from client, but good practice
 
 import { rtdb } from '@/lib/firebase';
-import { ref, push, serverTimestamp, type DatabaseReference } from 'firebase/database';
+import { ref, push, serverTimestamp, remove, type DatabaseReference } from 'firebase/database';
 import type { SignalingMessage } from '@/types'; // Assuming SignalingMessage types are defined here or imported
 
 /**
@@ -10,6 +9,7 @@ import type { SignalingMessage } from '@/types'; // Assuming SignalingMessage ty
  *
  * @param callId - The unique ID for the call (e.g., derived from chatId).
  * @param message - The signaling message (offer, answer, candidate).
+ * @param senderId - The UID of the user sending the message.
  * @returns Promise<void>
  */
 export const sendSignalingMessageRTDB = async (
@@ -21,9 +21,11 @@ export const sendSignalingMessageRTDB = async (
         console.error("🔴 RTDB Signaling Error: Realtime Database not initialized.");
         throw new Error("Realtime Database service is unavailable.");
     }
+
+    // Validate arguments, including payload existence
     if (!callId || !senderId || !message || !message.type || !message.payload) {
         console.error("🔴 RTDB Signaling Error: Invalid arguments provided.", { callId, senderId, message });
-        throw new Error("Call ID, Sender ID, and valid message object are required.");
+        throw new Error("Call ID, Sender ID, and valid message object (with type and payload) are required.");
     }
 
     const messagesRef: DatabaseReference = ref(rtdb, `calls/${callId}/messages`);
@@ -35,11 +37,11 @@ export const sendSignalingMessageRTDB = async (
 
     try {
         await push(messagesRef, messageWithSender); // push() generates a unique key for each message
-        // console.log(`RTDB: Sent ${message.type} for call ${callId}`);
+        // console.log(`RTDB: Sent ${message.type} for call ${callId}`); // Reduce logging noise
     } catch (error: any) {
         const detailedErrorMessage = `Failed to send signaling message (${message.type}) for call ${callId}. Error: ${error.message || 'Unknown RTDB error'}`;
-        console.error("🔴 RTDB Push Error:", detailedErrorMessage, error);
-        throw new Error(detailedErrorMessage);
+        console.error(`🔴 RTDB Push Error: ${detailedErrorMessage}`, error);
+        throw new Error(detailedErrorMessage); // Re-throw the error
     }
 };
 
@@ -65,10 +67,10 @@ export const removeCallSignalingData = async (callId: string): Promise<void> => 
 
     try {
         await remove(callRef);
-        console.log(`RTDB: Removed signaling data for call ${callId}.`);
+        console.log(`✅ RTDB: Cleaned up call ${callId}`);
     } catch (error: any) {
         // Log error but don't necessarily throw during cleanup
-        console.error(`Failed to remove signaling data for call ${callId}. Error: ${error.message || 'Unknown RTDB error'}`, error);
+        console.error(`⚠️ Cleanup failed for call ${callId}: ${error.message}`, error);
     }
 };
 
