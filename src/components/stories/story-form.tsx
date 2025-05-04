@@ -24,7 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"; // Import Select components
 import { getPlatformConfig } from '@/lib/config.service'; // Import service to get config
-import { cn, isFilesFmUrl, isDirectAudioUrl } from '@/lib/utils'; // Import helpers
+import { cn, isFilesFmUrl, isMdundoUrl, isDirectAudioUrl } from '@/lib/utils'; // Import helpers
 
 // Validation schema specifically for stories
 // Add validation for start/end times
@@ -156,6 +156,26 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
              stopPreview(); // Ensure any previous preview is stopped
              return; // Do not attempt to play
         }
+
+        // **Explicitly handle mdundo.com links**
+        if (isMdundoUrl(audioUrl)) {
+             toast({
+                title: "Preview Unavailable",
+                description: (
+                    <div className="flex items-start gap-2">
+                       <AlertCircle className="h-5 w-5 text-yellow-500 flex-shrink-0 mt-0.5" />
+                       <span>
+                         Direct audio preview isn't possible for mdundo.com links as they usually point to a widget or page. You can still add the link to your story.
+                       </span>
+                    </div>
+                ),
+                duration: 7000,
+             });
+             console.warn("Preventing audio preview for mdundo.com URL:", audioUrl);
+             stopPreview(); // Ensure any previous preview is stopped
+             return; // Do not attempt to play
+        }
+
 
         // **Check for likely non-direct URLs (warn user)**
         if (!isDirectAudioUrl(audioUrl)) {
@@ -429,7 +449,7 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
                     {isPreviewPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
                   </Button>
                </div>
-              <p className="text-xs text-muted-foreground">Select a song from the list. Preview may not work for all URL types (e.g., files.fm, SoundCloud).</p>
+              <p className="text-xs text-muted-foreground">Select a song from the list. Preview may not work for all URL types (e.g., files.fm, mdundo.com, SoundCloud).</p>
            </div>
 
            {/* Music Trim Controls (Conditional) */}

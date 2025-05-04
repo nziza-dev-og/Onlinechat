@@ -42,7 +42,16 @@ export const resolveMediaUrl = (url: string | null | undefined): string | undefi
   try {
     // Check if it's already an absolute URL
     new URL(url);
-    return url; // It's absolute, use it as is
+    // Check if it's a URL for the specific media server before trying to resolve
+    if (url.startsWith(MEDIA_BASE_URL)) {
+        return url;
+    }
+    // Check if it's a firebase storage url
+    if (url.startsWith('https://firebasestorage.googleapis.com')) {
+        return url;
+    }
+    // If it's any other absolute URL, return it as is.
+    return url;
   } catch (_) {
     // It's likely a relative path (or invalid, but we'll prepend anyway)
     // Only prepend if it starts with '/' to avoid modifying potential filenames or other relative paths
@@ -72,13 +81,34 @@ export const isFilesFmUrl = (url: string | null | undefined): boolean => {
 };
 
 /**
+ * Checks if a URL belongs to mdundo.com.
+ * @param url - The URL string to check.
+ * @returns True if the hostname is mdundo.com, false otherwise.
+ */
+export const isMdundoUrl = (url: string | null | undefined): boolean => {
+    if (!url) return false;
+    try {
+        const parsedUrl = new URL(url);
+        return parsedUrl.hostname === 'mdundo.com';
+    } catch (e) {
+        // Invalid URL format
+        return false;
+    }
+};
+
+
+/**
  * Basic check if a URL likely points directly to an audio file based on extension.
- * Allows localhost for testing.
+ * Allows localhost for testing. Excludes known non-direct sources like files.fm and mdundo.com.
  * @param url - The URL string to check.
  * @returns True if the URL likely points to a direct audio file, false otherwise.
  */
 export const isDirectAudioUrl = (url: string | null | undefined): boolean => {
     if (!url) return false;
+    // Exclude known non-direct sources first
+    if (isFilesFmUrl(url) || isMdundoUrl(url)) {
+        return false;
+    }
     try {
         const parsedUrl = new URL(url);
         // Allow localhost for testing
@@ -88,11 +118,16 @@ export const isDirectAudioUrl = (url: string | null | undefined): boolean => {
         // Simple check based on file extension in the pathname
         const hasAudioExtension = /\.(mp3|wav|ogg|aac|m4a|opus)$/i.test(parsedUrl.pathname);
          // Allow URLs from specific trusted CDNs or services if necessary
-         // const isTrustedSource = ['some-cdn.com'].includes(parsedUrl.hostname);
-         // return hasAudioExtension || isTrustedSource;
-         return hasAudioExtension;
+         // Example: Allow soundcloud direct streams (though these URLs might be complex/temporary)
+         const isSoundCloudStream = parsedUrl.hostname.endsWith('soundcloud.com') && parsedUrl.pathname.includes('/stream');
+
+         // Allow URLs from the media server
+         const isMediaServer = parsedUrl.hostname === 'movies-server-plia.onrender.com';
+
+         return hasAudioExtension || isSoundCloudStream || isMediaServer;
     } catch (e) {
         // Invalid URL format
         return false;
     }
 };
+

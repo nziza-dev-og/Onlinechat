@@ -7,7 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import Image from 'next/image';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
-import { getInitials, resolveMediaUrl, isFilesFmUrl } from '@/lib/utils'; // Import isFilesFmUrl
+import { getInitials, resolveMediaUrl, isFilesFmUrl, isMdundoUrl } from '@/lib/utils'; // Import isMdundoUrl
 import { Dialog, DialogContent, DialogTrigger, DialogTitle } from "@/components/ui/dialog"; // Import DialogTitle
 import { X, Volume2, VolumeX } from 'lucide-react'; // Added Volume icons
 import { Button } from '../ui/button';
@@ -46,12 +46,13 @@ export function StoryViewer({ stories }: StoryViewerProps) {
 
   // Function to attempt playing audio, handling potential errors
   const attemptAudioPlay = React.useCallback(() => {
-    if (audioRef.current && resolvedMusicUrl && !isFilesFmUrl(resolvedMusicUrl) && !isMuted && hasInteracted) { // Add files.fm check
+    if (audioRef.current && resolvedMusicUrl && !isFilesFmUrl(resolvedMusicUrl) && !isMdundoUrl(resolvedMusicUrl) && !isMuted && hasInteracted) { // Add mdundo check
         console.log("Attempting to play audio:", resolvedMusicUrl);
         audioRef.current.play().catch(e => console.warn("Audio play failed (likely autoplay restriction):", e));
     } else {
          if (!resolvedMusicUrl) console.log("No music URL for current story.");
          if (isFilesFmUrl(resolvedMusicUrl)) console.log("Skipping audio play for files.fm URL.");
+         if (isMdundoUrl(resolvedMusicUrl)) console.log("Skipping audio play for mdundo.com URL."); // Add mdundo check
          if (isMuted) console.log("Audio muted.");
          if (!hasInteracted) console.log("Audio waiting for user interaction.");
     }
@@ -89,9 +90,10 @@ export function StoryViewer({ stories }: StoryViewerProps) {
 
     // Handle music playback
     if (resolvedMusicUrl && audioRef.current) {
-        // **Check for files.fm URL before processing**
-        if (isFilesFmUrl(resolvedMusicUrl)) {
-             console.log("Skipping audio setup for files.fm URL:", resolvedMusicUrl);
+        // **Check for files.fm or mdundo.com URL before processing**
+        if (isFilesFmUrl(resolvedMusicUrl) || isMdundoUrl(resolvedMusicUrl)) {
+             const platform = isFilesFmUrl(resolvedMusicUrl) ? 'files.fm' : 'mdundo.com';
+             console.log(`Skipping audio setup for ${platform} URL:`, resolvedMusicUrl);
              // Ensure audio is stopped and source cleared if it was previously set
              audioRef.current.pause();
              audioRef.current.currentTime = 0;
@@ -135,9 +137,10 @@ export function StoryViewer({ stories }: StoryViewerProps) {
                   // Return cleanup for *this specific timeupdate listener*
                   // This doesn't replace the main effect cleanup
                   // Note: Need to manage multiple cleanup returns correctly if other async ops have cleanup
-                  // This is complex, consider a different approach if multiple cleanups are needed within one effect run
+                  // This is complex, consider a different approach if multiple cleanups are needed within one effect run.
                   // For now, assuming only one timer/listener needs specific cleanup per run.
                   // A better approach might involve useRefs for listener functions to manage addition/removal.
+                  // This doesn't replace the main effect cleanup
              }
 
         } else {
@@ -185,16 +188,16 @@ export function StoryViewer({ stories }: StoryViewerProps) {
            // Example: if (checkEndTimeListenerRef.current) audioRef.current.removeEventListener('timeupdate', checkEndTimeListenerRef.current);
        }
     };
-  }, [activeStory, stories, isMuted, attemptAudioPlay, hasInteracted, resolvedMusicUrl]); // Include resolvedMusicUrl
+  }, [activeStory, stories, isMuted, attemptAudioPlay]);
 
   const handleOpenStory = (story: PostSerializable) => {
     setHasInteracted(true); // User interaction detected
     const index = stories.findIndex(s => s.id === story.id);
     setCurrentStoryIndex(index);
     setOpenStory(story);
-     // Attempt to play immediately on open if not muted and not files.fm
+     // Attempt to play immediately on open if not muted and not files.fm/mdundo
      const storyMusicUrl = resolveMediaUrl(story.musicUrl);
-     if (!isMuted && storyMusicUrl && !isFilesFmUrl(storyMusicUrl)) {
+     if (!isMuted && storyMusicUrl && !isFilesFmUrl(storyMusicUrl) && !isMdundoUrl(storyMusicUrl)) { // Add mdundo check
         setTimeout(attemptAudioPlay, 100);
      }
   };
@@ -242,7 +245,7 @@ export function StoryViewer({ stories }: StoryViewerProps) {
          const newMutedState = !prev;
          if (audioRef.current) {
              audioRef.current.muted = newMutedState;
-             if (!newMutedState && resolvedMusicUrl && !isFilesFmUrl(resolvedMusicUrl)) { // Add files.fm check
+             if (!newMutedState && resolvedMusicUrl && !isFilesFmUrl(resolvedMusicUrl) && !isMdundoUrl(resolvedMusicUrl)) { // Add mdundo check
                  // If unmuting and there's playable music, try to play
                  console.log("User unmuted, attempting to play audio.");
                  attemptAudioPlay(); // Use the helper function
@@ -334,7 +337,7 @@ export function StoryViewer({ stories }: StoryViewerProps) {
                       </div>
                        <div className="flex items-center gap-1 flex-shrink-0"> {/* Added flex-shrink-0 */}
                            {/* Mute/Unmute Button */}
-                           {resolvedMusicUrl && !isFilesFmUrl(resolvedMusicUrl) && ( // Hide mute button for files.fm
+                           {resolvedMusicUrl && !isFilesFmUrl(resolvedMusicUrl) && !isMdundoUrl(resolvedMusicUrl) && ( // Hide mute button for files.fm/mdundo
                               <Button
                                 variant="ghost" size="icon" onClick={toggleMute}
                                 className="h-8 w-8 rounded-full bg-black/30 text-white hover:bg-black/50 hover:text-white"
