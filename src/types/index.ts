@@ -1,4 +1,5 @@
 
+
 import type { User as FirebaseUser } from 'firebase/auth';
 import type { Timestamp } from 'firebase/firestore';
 
@@ -202,3 +203,4 @@ export type UserProfileUpdateData = {
     createdAt?: never;
     isAdmin?: never; // Explicitly prevent isAdmin updates via this general function
 };
+

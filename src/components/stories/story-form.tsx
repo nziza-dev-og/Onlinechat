@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, Send, Image as ImageIcon, Video, Music, Clock, Play, Pause, AlertCircle } from 'lucide-react'; // Added AlertCircle
+import { Loader2, Send, Image as ImageIcon, Video, Music, Clock, Play, Pause, AlertCircle, Link as LinkIcon } from 'lucide-react'; // Added AlertCircle, LinkIcon
 import { Separator } from '@/components/ui/separator';
 import { useAuth } from '@/hooks/use-auth';
 import { useToast } from '@/hooks/use-toast';
@@ -27,12 +27,13 @@ import { getPlatformConfig } from '@/lib/config.service'; // Import service to g
 import { cn, isDirectAudioUrl } from '@/lib/utils'; // Only need isDirectAudioUrl
 
 // Validation schema specifically for stories
-// Add validation for start/end times
+// Add validation for start/end times and custom music URL
 const storySchema = z.object({
   text: z.string().max(200, { message: "Story text cannot exceed 200 characters." }).optional().nullable(),
   imageUrl: z.string().url({ message: "Please enter a valid image URL." }).max(1024).optional().or(z.literal('')).nullable(),
   videoUrl: z.string().url({ message: "Please enter a valid video URL." }).max(1024).optional().or(z.literal('')).nullable(),
-  selectedMusicUrl: z.string().optional().nullable(),
+  selectedMusicUrl: z.string().optional().nullable(), // From dropdown
+  customMusicUrl: z.string().url({ message: "Please enter a valid audio URL." }).max(1024).optional().or(z.literal('')).nullable(), // Custom URL input
   // Allow empty strings which will be parsed later, validate non-negative
   musicStartTime: z.string().optional().nullable(),
   musicEndTime: z.string().optional().nullable(),
@@ -40,6 +41,17 @@ const storySchema = z.object({
     // Stories must have visual content
     message: "Story must include an image URL or a video URL.",
     path: ["imageUrl"], // Associate error with imageUrl field
+}).refine(data => {
+    // Ensure either selectedMusicUrl (not 'none') OR customMusicUrl is provided, but not both simultaneously.
+    const hasSelection = data.selectedMusicUrl && data.selectedMusicUrl !== 'none';
+    const hasCustom = !!data.customMusicUrl?.trim();
+    if (hasSelection && hasCustom) {
+        return false; // Cannot have both selected track and custom URL
+    }
+    return true; // Ok if one, the other, or neither is provided
+}, {
+    message: "Choose a track from the list OR enter a custom URL, not both.",
+    path: ["customMusicUrl"], // Associate error with custom URL field for now
 }).refine(data => {
     // Validate start time is non-negative number if provided
     if (data.musicStartTime && data.musicStartTime.trim() !== '') {
@@ -65,7 +77,9 @@ const storySchema = z.object({
     if (data.musicStartTime && data.musicStartTime.trim() !== '' && data.musicEndTime && data.musicEndTime.trim() !== '') {
         const startTime = parseFloat(data.musicStartTime);
         const endTime = parseFloat(data.musicEndTime);
-        return !isNaN(startTime) && !isNaN(endTime) && endTime > startTime;
+        // Ensure both are valid numbers before comparing
+        if (isNaN(startTime) || isNaN(endTime)) return false;
+        return endTime > startTime;
     }
     return true;
 }, {
@@ -96,13 +110,18 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
       imageUrl: '',
       videoUrl: '',
       selectedMusicUrl: "none",
+      customMusicUrl: '', // Initialize custom URL as empty
       musicStartTime: '', // Initialize as empty strings
       musicEndTime: '',
     },
   });
 
   const selectedMusicTrackUrl = form.watch('selectedMusicUrl');
-  const showTrimControls = selectedMusicTrackUrl && selectedMusicTrackUrl !== 'none';
+  const customMusicUrlValue = form.watch('customMusicUrl');
+  const effectiveMusicUrl = customMusicUrlValue?.trim() || (selectedMusicTrackUrl === 'none' ? null : selectedMusicTrackUrl);
+
+  // Show trim controls if a track is selected OR a custom URL is entered
+  const showTrimControls = !!effectiveMusicUrl;
 
    // Fetch music playlist on mount
    React.useEffect(() => {
@@ -135,10 +154,11 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
    }, []);
 
    const handlePreviewToggle = React.useCallback(() => {
-        const audioUrl = selectedMusicTrackUrl;
-        if (!audioUrl || audioUrl === 'none') return;
+        // Prioritize custom URL for preview
+        const audioUrl = effectiveMusicUrl;
+        if (!audioUrl) return;
 
-        // **Warn user for potentially non-direct URLs**
+        // Warn user for potentially non-direct URLs
         if (!isDirectAudioUrl(audioUrl)) {
             toast({
                 title: "Preview Might Fail",
@@ -161,7 +181,10 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
             try {
                  console.log("Creating new Audio element for:", audioUrl);
                  previewAudioRef.current = new Audio(audioUrl);
-                 previewAudioRef.current.onended = () => setIsPreviewPlaying(false);
+                 previewAudioRef.current.onended = () => {
+                     console.log("Audio preview ended.");
+                     setIsPreviewPlaying(false);
+                 };
                  previewAudioRef.current.onerror = (e) => {
                      const mediaError = previewAudioRef.current?.error;
                      const errorCode = mediaError?.code; // Get error code (e.g., 4 for MEDIA_ERR_SRC_NOT_SUPPORTED)
@@ -173,19 +196,19 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
                          description: `Could not play audio preview. Ensure the URL is a direct link to an audio file and accessible. Error: ${errorMessage}` // Use error message from MediaError
                      });
                      setIsPreviewPlaying(false);
-                 }
+                 };
                  previewAudioRef.current.onpause = () => {
-                      if (isPreviewPlaying) {
+                      if (isPreviewPlaying) { // Only update state if it was previously playing
                          console.log("Audio preview paused (onpause event).");
                          setIsPreviewPlaying(false);
                       }
-                 }
+                 };
                  previewAudioRef.current.onplay = () => {
-                      if (!isPreviewPlaying) {
+                      if (!isPreviewPlaying) { // Only update state if it wasn't previously playing
                          console.log("Audio preview playing (onplay event).");
                          setIsPreviewPlaying(true);
                       }
-                 }
+                 };
             } catch (error) {
                  console.error("Error creating Audio element:", error);
                  toast({ variant: "destructive", title: "Preview Error", description: "Could not initialize audio player."});
@@ -196,8 +219,8 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
              // Update src if it changed
              console.log("Updating Audio element src to:", audioUrl);
              previewAudioRef.current.src = audioUrl;
+             stopPreview(); // Stop and reset state before loading new source
              previewAudioRef.current.load(); // Load new source
-             setIsPreviewPlaying(false); // Reset playing state when source changes
         }
 
         // Toggle play/pause
@@ -207,27 +230,29 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
             // onpause listener should set isPreviewPlaying to false
         } else {
             // Attempt to play and catch potential errors immediately
-            previewAudioRef.current.currentTime = 0; // Start from beginning
-            console.log("Attempting to play preview...");
-            previewAudioRef.current.play().then(() => {
-                 console.log("Audio preview play() successful.");
-                 // onplay listener should set isPreviewPlaying to true
-            }).catch(e => {
-                console.error("Preview play() error:", e);
-                toast({
-                    variant: "destructive",
-                    title: "Preview Error",
-                    description: `Could not start audio preview. ${e.message || 'Interaction might be required.'}`
+             if (previewAudioRef.current) {
+                previewAudioRef.current.currentTime = 0; // Start from beginning
+                console.log("Attempting to play preview...");
+                previewAudioRef.current.play().then(() => {
+                     console.log("Audio preview play() successful.");
+                     // onplay listener should set isPreviewPlaying to true
+                }).catch(e => {
+                    console.error("Preview play() error:", e);
+                    toast({
+                        variant: "destructive",
+                        title: "Preview Error",
+                        description: `Could not start audio preview. ${e.message || 'Interaction might be required.'}`
+                    });
+                    setIsPreviewPlaying(false); // Ensure state is false if play fails
                 });
-                setIsPreviewPlaying(false); // Ensure state is false if play fails
-            });
+             }
         }
 
-   }, [selectedMusicTrackUrl, isPreviewPlaying, toast]); // Keep dependencies
+   }, [effectiveMusicUrl, isPreviewPlaying, toast, stopPreview]); // Keep dependencies
 
-   // Cleanup preview audio when component unmounts or track changes
+   // Cleanup preview audio when component unmounts or effective URL changes
    React.useEffect(() => {
-     stopPreview(); // Stop preview when selected music changes
+     stopPreview(); // Stop preview when selected music/custom URL changes
 
      return () => {
        // Cleanup on unmount
@@ -241,7 +266,7 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
            console.log("Preview audio element cleaned up.");
        }
      };
-   }, [selectedMusicTrackUrl, stopPreview]);
+   }, [effectiveMusicUrl, stopPreview]);
    // --- End Audio Preview Logic ---
 
 
@@ -252,7 +277,10 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
     }
     stopPreview(); // Stop preview before submitting
     setIsSubmitting(true);
-    const finalMusicUrl = data.selectedMusicUrl === "none" ? null : data.selectedMusicUrl;
+
+    // Prioritize custom URL if provided, otherwise use selected (if not 'none')
+    const finalMusicUrl = data.customMusicUrl?.trim() || (data.selectedMusicUrl === "none" ? null : data.selectedMusicUrl);
+
     // Parse start/end times, default to null if empty or invalid
     const startTime = data.musicStartTime && data.musicStartTime.trim() !== '' ? parseFloat(data.musicStartTime) : null;
     const endTime = data.musicEndTime && data.musicEndTime.trim() !== '' ? parseFloat(data.musicEndTime) : null;
@@ -308,6 +336,7 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
 
    const watchedImageUrl = form.watch('imageUrl');
    const watchedVideoUrl = form.watch('videoUrl');
+   // Include customMusicUrl in submit check if needed, but form validation handles the primary logic
    const canSubmit = (!!watchedImageUrl?.trim() || !!watchedVideoUrl?.trim()) && form.formState.isValid;
 
 
@@ -357,12 +386,12 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
 
            <Separator />
 
-           {/* Background Music Select (Optional) */}
+           {/* Background Music Selection */}
            <div className="grid w-full gap-1.5">
               <Label htmlFor="musicSelectStory" className="flex items-center gap-1.5">
                  <Music className="h-4 w-4 text-muted-foreground"/> Background Music (Optional)
               </Label>
-               {/* Flex container for Select and Preview Button */}
+               {/* Flex container for Select/Input and Preview Button */}
                <div className="flex items-center gap-2">
                  <Controller
                     name="selectedMusicUrl"
@@ -372,17 +401,19 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
                          value={field.value ?? "none"}
                          onValueChange={(value) => {
                               field.onChange(value);
+                              // If a playlist track is selected, clear the custom URL
+                              if (value !== 'none') form.setValue('customMusicUrl', '');
                               stopPreview(); // Stop preview when selection changes
                               // Reset trim times if music is set to none
-                              if (value === 'none') {
+                              if (value === 'none' && !customMusicUrlValue?.trim()) {
                                   form.setValue('musicStartTime', '');
                                   form.setValue('musicEndTime', '');
                               }
                          }}
-                         disabled={isSubmitting || loadingPlaylist}
+                         disabled={isSubmitting || loadingPlaylist || !!customMusicUrlValue?.trim()} // Disable if custom URL is entered
                        >
-                         <SelectTrigger id="musicSelectStory" className="flex-1"> {/* Use flex-1 */}
-                            <SelectValue placeholder={loadingPlaylist ? "Loading music..." : "Select music..."} />
+                         <SelectTrigger id="musicSelectStory" className="flex-1">
+                            <SelectValue placeholder={loadingPlaylist ? "Loading playlist..." : "Select from playlist..."} />
                          </SelectTrigger>
                          <SelectContent>
                             {loadingPlaylist && <SelectItem value="loading" disabled>Loading...</SelectItem>}
@@ -396,25 +427,54 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
                        </Select>
                     )}
                  />
-                 {/* Preview Button */}
+                 {/* Preview Button - enabled if either selected or custom URL is valid */}
                   <Button
                     type="button"
                     variant="outline"
                     size="icon"
                     onClick={handlePreviewToggle}
-                    disabled={isSubmitting || loadingPlaylist || !selectedMusicTrackUrl || selectedMusicTrackUrl === 'none'}
-                    className={cn("flex-shrink-0 h-10 w-10", isPreviewPlaying && "bg-accent text-accent-foreground")} // Highlight when playing
+                    disabled={isSubmitting || loadingPlaylist || !effectiveMusicUrl}
+                    className={cn("flex-shrink-0 h-10 w-10", isPreviewPlaying && "bg-accent text-accent-foreground")}
                     aria-label={isPreviewPlaying ? "Stop preview" : "Preview music"}
                   >
                     {isPreviewPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
                   </Button>
                </div>
-              <p className="text-xs text-muted-foreground">Select a song from the list. Preview may not work for all URL types (e.g., streaming sites, pages).</p>
+              <p className="text-xs text-muted-foreground">Select a song OR enter a custom URL below. Preview may not work for all URL types.</p>
            </div>
+
+            {/* Custom Music URL Input */}
+           <div className="grid w-full gap-1.5">
+                <Label htmlFor="customMusicUrl" className="flex items-center gap-1.5">
+                    <LinkIcon className="h-4 w-4 text-muted-foreground" /> Custom Music URL (Optional)
+                </Label>
+                <Input
+                    id="customMusicUrl"
+                    type="url"
+                    placeholder="https://example.com/your-audio.mp3"
+                    {...form.register('customMusicUrl')}
+                    disabled={isSubmitting || (!!selectedMusicTrackUrl && selectedMusicTrackUrl !== 'none')} // Disable if playlist track selected
+                    onChange={(e) => {
+                         form.setValue('customMusicUrl', e.target.value);
+                         // If custom URL is entered, clear the playlist selection
+                         if (e.target.value.trim()) form.setValue('selectedMusicUrl', 'none');
+                         stopPreview();
+                         // Reset trim times if custom URL is cleared and no playlist track selected
+                         if (!e.target.value.trim() && form.getValues('selectedMusicUrl') === 'none') {
+                             form.setValue('musicStartTime', '');
+                             form.setValue('musicEndTime', '');
+                         }
+                    }}
+                />
+                {form.formState.errors.customMusicUrl && (
+                    <p className="text-sm text-destructive">{form.formState.errors.customMusicUrl.message}</p>
+                )}
+            </div>
+
 
            {/* Music Trim Controls (Conditional) */}
            {showTrimControls && (
-                <div className="grid grid-cols-2 gap-4 pt-2 border-t mt-4">
+                <div className="grid grid-cols-2 gap-4 pt-4 border-t mt-4">
                     <div className="space-y-1.5">
                         <Label htmlFor="musicStartTime" className="flex items-center gap-1.5">
                             <Clock className="h-4 w-4 text-muted-foreground"/> Start Time (sec)
