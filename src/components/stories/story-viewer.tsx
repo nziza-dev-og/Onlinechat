@@ -1,4 +1,3 @@
-
 "use client";
 
 import * as React from 'react';
@@ -27,6 +26,17 @@ const formatStoryTimestamp = (timestampISO: string | null | undefined): string =
     } catch { return 'Invalid date'; }
 };
 
+// Check for files.fm URLs (can be moved to utils if needed elsewhere)
+const isFilesFmUrl = (url: string | null | undefined): boolean => {
+    if (!url) return false;
+    try {
+        const parsedUrl = new URL(url);
+        return parsedUrl.hostname === 'files.fm';
+    } catch (e) {
+        return false;
+    }
+}
+
 export function StoryViewer({ stories }: StoryViewerProps) {
   const [currentStoryIndex, setCurrentStoryIndex] = React.useState(0);
   const [openStory, setOpenStory] = React.useState<PostSerializable | null>(null);
@@ -45,11 +55,12 @@ export function StoryViewer({ stories }: StoryViewerProps) {
 
   // Function to attempt playing audio, handling potential errors
   const attemptAudioPlay = React.useCallback(() => {
-    if (audioRef.current && resolvedMusicUrl && !isMuted && hasInteracted) {
+    if (audioRef.current && resolvedMusicUrl && !isFilesFmUrl(resolvedMusicUrl) && !isMuted && hasInteracted) { // Add files.fm check
         console.log("Attempting to play audio:", resolvedMusicUrl);
         audioRef.current.play().catch(e => console.warn("Audio play failed (likely autoplay restriction):", e));
     } else {
          if (!resolvedMusicUrl) console.log("No music URL for current story.");
+         if (isFilesFmUrl(resolvedMusicUrl)) console.log("Skipping audio play for files.fm URL.");
          if (isMuted) console.log("Audio muted.");
          if (!hasInteracted) console.log("Audio waiting for user interaction.");
     }
@@ -87,52 +98,65 @@ export function StoryViewer({ stories }: StoryViewerProps) {
 
     // Handle music playback
     if (resolvedMusicUrl && audioRef.current) {
-        if (audioRef.current.src !== resolvedMusicUrl) {
-            console.log("Setting new audio source:", resolvedMusicUrl);
-            audioRef.current.src = resolvedMusicUrl;
-            audioRef.current.load(); // Load new source
-            // Apply start/end times if they exist
-             audioRef.current.onloadedmetadata = () => {
-                 if (activeStory.musicStartTime !== null && activeStory.musicStartTime !== undefined && isFinite(activeStory.musicStartTime) && activeStory.musicStartTime >= 0) {
-                     audioRef.current!.currentTime = activeStory.musicStartTime;
-                     console.log(`Audio start time set to: ${activeStory.musicStartTime}`);
-                 } else {
-                     audioRef.current!.currentTime = 0; // Default to start if no valid time
-                 }
-                 // Attempt play after metadata is loaded
-                 attemptAudioPlay();
-            };
-            // Set up listener for ending at trim time
+        // **Check for files.fm URL before processing**
+        if (isFilesFmUrl(resolvedMusicUrl)) {
+             console.log("Skipping audio setup for files.fm URL:", resolvedMusicUrl);
+             // Ensure audio is stopped and source cleared if it was previously set
+             audioRef.current.pause();
+             audioRef.current.currentTime = 0;
+             if (audioRef.current.src === resolvedMusicUrl) {
+                 audioRef.current.src = '';
+             }
+        } else if (audioRef.current.src !== resolvedMusicUrl) {
+             console.log("Setting new audio source:", resolvedMusicUrl);
+             audioRef.current.src = resolvedMusicUrl;
+             audioRef.current.load(); // Load new source
+             // Apply start/end times if they exist
+              audioRef.current.onloadedmetadata = () => {
+                  if (!audioRef.current) return; // Guard against race condition on unmount
+                  if (activeStory.musicStartTime !== null && activeStory.musicStartTime !== undefined && isFinite(activeStory.musicStartTime) && activeStory.musicStartTime >= 0) {
+                      audioRef.current!.currentTime = activeStory.musicStartTime;
+                      console.log(`Audio start time set to: ${activeStory.musicStartTime}`);
+                  } else {
+                      audioRef.current!.currentTime = 0; // Default to start if no valid time
+                  }
+                  // Attempt play after metadata is loaded
+                  attemptAudioPlay();
+             };
+             // Set up listener for ending at trim time
              if (activeStory.musicEndTime !== null && activeStory.musicEndTime !== undefined && isFinite(activeStory.musicEndTime) && activeStory.musicEndTime > (activeStory.musicStartTime ?? 0)) {
-                const endTime = activeStory.musicEndTime;
-                const checkEndTime = () => {
-                    if (audioRef.current && audioRef.current.currentTime >= endTime) {
-                        audioRef.current.pause();
-                         console.log(`Audio reached end trim time: ${endTime}`);
-                        // Optionally loop or move to next story? For now, just pause.
-                         audioRef.current.removeEventListener('timeupdate', checkEndTime);
-                    }
-                };
-                 audioRef.current.addEventListener('timeupdate', checkEndTime);
-                 // Cleanup function for this specific listener
-                 const cleanupEndTimeListener = () => {
-                      if (audioRef.current) {
+                 const endTime = activeStory.musicEndTime;
+                 const checkEndTime = () => {
+                     if (audioRef.current && audioRef.current.currentTime >= endTime) {
+                         audioRef.current.pause();
+                          console.log(`Audio reached end trim time: ${endTime}`);
+                         // Optionally loop or move to next story? For now, just pause.
                           audioRef.current.removeEventListener('timeupdate', checkEndTime);
-                      }
+                     }
                  };
-                 // Return cleanup for *this specific timeupdate listener*
-                 // This doesn't replace the main effect cleanup
-                 return cleanupEndTimeListener;
+                  audioRef.current.addEventListener('timeupdate', checkEndTime);
+                  // Cleanup function for this specific listener
+                  const cleanupEndTimeListener = () => {
+                       if (audioRef.current) {
+                           audioRef.current.removeEventListener('timeupdate', checkEndTime);
+                       }
+                  };
+                  // Return cleanup for *this specific timeupdate listener*
+                  // This doesn't replace the main effect cleanup
+                  // Note: Need to manage multiple cleanup returns correctly if other async ops have cleanup
+                  // This is complex, consider a different approach if multiple cleanups are needed within one effect run
+                  // For now, assuming only one timer/listener needs specific cleanup per run.
+                  // A better approach might involve useRefs for listener functions to manage addition/removal.
              }
 
         } else {
-             // If src is the same, reset time if needed and attempt play
-             if (activeStory.musicStartTime !== null && activeStory.musicStartTime !== undefined && isFinite(activeStory.musicStartTime) && activeStory.musicStartTime >= 0) {
-                 audioRef.current.currentTime = activeStory.musicStartTime;
-             } else {
-                 audioRef.current.currentTime = 0;
-             }
-             attemptAudioPlay();
+              // If src is the same, reset time if needed and attempt play
+              if (activeStory.musicStartTime !== null && activeStory.musicStartTime !== undefined && isFinite(activeStory.musicStartTime) && activeStory.musicStartTime >= 0) {
+                  audioRef.current.currentTime = activeStory.musicStartTime;
+              } else {
+                  audioRef.current.currentTime = 0;
+              }
+              attemptAudioPlay();
         }
         audioRef.current.muted = isMuted;
     } else if (audioRef.current) {
@@ -165,6 +189,9 @@ export function StoryViewer({ stories }: StoryViewerProps) {
            audioRef.current.pause();
            console.log("Story changing, pausing audio.");
            // Don't reset src here, let the next effect handle it
+           // Remove specific timeupdate listener if it was added
+           // This requires storing the listener function reference to remove it correctly.
+           // Example: if (checkEndTimeListenerRef.current) audioRef.current.removeEventListener('timeupdate', checkEndTimeListenerRef.current);
        }
     };
   }, [activeStory, stories, isMuted, attemptAudioPlay, hasInteracted, resolvedMusicUrl]); // Include resolvedMusicUrl
@@ -174,9 +201,11 @@ export function StoryViewer({ stories }: StoryViewerProps) {
     const index = stories.findIndex(s => s.id === story.id);
     setCurrentStoryIndex(index);
     setOpenStory(story);
-     // Attempt to play immediately on open if not muted
-     // Need a slight delay for the audio element to potentially be ready
-     setTimeout(attemptAudioPlay, 100);
+     // Attempt to play immediately on open if not muted and not files.fm
+     const storyMusicUrl = resolveMediaUrl(story.musicUrl);
+     if (!isMuted && storyMusicUrl && !isFilesFmUrl(storyMusicUrl)) {
+        setTimeout(attemptAudioPlay, 100);
+     }
   };
 
   const handleCloseStory = () => {
@@ -222,11 +251,11 @@ export function StoryViewer({ stories }: StoryViewerProps) {
          const newMutedState = !prev;
          if (audioRef.current) {
              audioRef.current.muted = newMutedState;
-             if (!newMutedState && resolvedMusicUrl) {
-                 // If unmuting and there's music, try to play
+             if (!newMutedState && resolvedMusicUrl && !isFilesFmUrl(resolvedMusicUrl)) { // Add files.fm check
+                 // If unmuting and there's playable music, try to play
                  console.log("User unmuted, attempting to play audio.");
                  attemptAudioPlay(); // Use the helper function
-             } else {
+             } else if (newMutedState) { // Only explicitly pause if muting
                   audioRef.current.pause();
                   console.log("User muted, audio paused.");
              }
@@ -314,7 +343,7 @@ export function StoryViewer({ stories }: StoryViewerProps) {
                       </div>
                        <div className="flex items-center gap-1 flex-shrink-0"> {/* Added flex-shrink-0 */}
                            {/* Mute/Unmute Button */}
-                           {resolvedMusicUrl && (
+                           {resolvedMusicUrl && !isFilesFmUrl(resolvedMusicUrl) && ( // Hide mute button for files.fm
                               <Button
                                 variant="ghost" size="icon" onClick={toggleMute}
                                 className="h-8 w-8 rounded-full bg-black/30 text-white hover:bg-black/50 hover:text-white"

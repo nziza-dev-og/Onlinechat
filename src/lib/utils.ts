@@ -54,3 +54,19 @@ export const resolveMediaUrl = (url: string | null | undefined): string | undefi
     return url;
   }
 };
+
+/**
+ * Checks if a URL belongs to files.fm.
+ * @param url - The URL string to check.
+ * @returns True if the hostname is files.fm, false otherwise.
+ */
+export const isFilesFmUrl = (url: string | null | undefined): boolean => {
+    if (!url) return false;
+    try {
+        const parsedUrl = new URL(url);
+        return parsedUrl.hostname === 'files.fm';
+    } catch (e) {
+        // Invalid URL format
+        return false;
+    }
+};
