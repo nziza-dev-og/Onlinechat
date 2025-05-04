@@ -41,13 +41,12 @@ export const resolveMediaUrl = (url: string | null | undefined): string | undefi
   }
   try {
     // Check if it's already an absolute URL
-    new URL(url);
-    // Check if it's a URL for the specific media server before trying to resolve
-    if (url.startsWith(MEDIA_BASE_URL)) {
-        return url;
-    }
-    // Check if it's a firebase storage url
-    if (url.startsWith('https://firebasestorage.googleapis.com')) {
+    const parsedUrl = new URL(url);
+    // Check if it's a URL for the specific media server, Firebase Storage, or localhost
+    if (url.startsWith(MEDIA_BASE_URL) ||
+        url.startsWith('https://firebasestorage.googleapis.com') ||
+        parsedUrl.hostname === 'localhost' ||
+        parsedUrl.hostname === '127.0.0.1') {
         return url;
     }
     // If it's any other absolute URL, return it as is.
@@ -96,35 +95,48 @@ export const isMdundoUrl = (url: string | null | undefined): boolean => {
     }
 };
 
+/**
+ * Checks if a URL belongs to audiomack.com.
+ * @param url - The URL string to check.
+ * @returns True if the hostname is audiomack.com, false otherwise.
+ */
+export const isAudiomackUrl = (url: string | null | undefined): boolean => {
+    if (!url) return false;
+    try {
+        const parsedUrl = new URL(url);
+        return parsedUrl.hostname === 'audiomack.com';
+    } catch (e) {
+        // Invalid URL format
+        return false;
+    }
+};
 
 /**
  * Basic check if a URL likely points directly to an audio file based on extension.
- * Allows localhost for testing. Excludes known non-direct sources like files.fm and mdundo.com.
+ * Allows localhost and the specific media server. Excludes known non-direct sources like files.fm, mdundo.com, and audiomack.com.
  * @param url - The URL string to check.
  * @returns True if the URL likely points to a direct audio file, false otherwise.
  */
 export const isDirectAudioUrl = (url: string | null | undefined): boolean => {
     if (!url) return false;
     // Exclude known non-direct sources first
-    if (isFilesFmUrl(url) || isMdundoUrl(url)) {
+    if (isFilesFmUrl(url) || isMdundoUrl(url) || isAudiomackUrl(url)) {
         return false;
     }
     try {
         const parsedUrl = new URL(url);
-        // Allow localhost for testing
-        if (parsedUrl.hostname === 'localhost' || parsedUrl.hostname === '127.0.0.1') {
+        // Allow localhost and media server
+        if (parsedUrl.hostname === 'localhost' ||
+            parsedUrl.hostname === '127.0.0.1' ||
+            parsedUrl.hostname === 'movies-server-plia.onrender.com') {
              return true;
         }
         // Simple check based on file extension in the pathname
         const hasAudioExtension = /\.(mp3|wav|ogg|aac|m4a|opus)$/i.test(parsedUrl.pathname);
-         // Allow URLs from specific trusted CDNs or services if necessary
-         // Example: Allow soundcloud direct streams (though these URLs might be complex/temporary)
+         // Allow URLs from specific trusted CDNs or services if necessary (example: SoundCloud)
          const isSoundCloudStream = parsedUrl.hostname.endsWith('soundcloud.com') && parsedUrl.pathname.includes('/stream');
 
-         // Allow URLs from the media server
-         const isMediaServer = parsedUrl.hostname === 'movies-server-plia.onrender.com';
-
-         return hasAudioExtension || isSoundCloudStream || isMediaServer;
+         return hasAudioExtension || isSoundCloudStream;
     } catch (e) {
         // Invalid URL format
         return false;

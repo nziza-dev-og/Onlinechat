@@ -24,7 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"; // Import Select components
 import { getPlatformConfig } from '@/lib/config.service'; // Import service to get config
-import { cn, isFilesFmUrl, isMdundoUrl, isDirectAudioUrl } from '@/lib/utils'; // Import helpers
+import { cn, isFilesFmUrl, isMdundoUrl, isDirectAudioUrl, isAudiomackUrl } from '@/lib/utils'; // Import helpers, added isAudiomackUrl
 
 // Validation schema specifically for stories
 // Add validation for start/end times
@@ -138,40 +138,26 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
         const audioUrl = selectedMusicTrackUrl;
         if (!audioUrl || audioUrl === 'none') return;
 
-        // **Explicitly handle files.fm links**
-        if (isFilesFmUrl(audioUrl)) {
-             toast({
-                title: "Preview Unavailable",
-                description: (
-                    <div className="flex items-start gap-2">
-                       <AlertCircle className="h-5 w-5 text-yellow-500 flex-shrink-0 mt-0.5" />
-                       <span>
-                         Direct audio preview isn't possible for files.fm links because they point to a download page, not an audio file. You can still add the link to your story.
-                       </span>
-                    </div>
-                ),
-                duration: 7000,
-             });
-             console.warn("Preventing audio preview for files.fm URL:", audioUrl);
-             stopPreview(); // Ensure any previous preview is stopped
-             return; // Do not attempt to play
-        }
+        // **Explicitly handle known non-direct URLs**
+        if (isFilesFmUrl(audioUrl) || isMdundoUrl(audioUrl) || isAudiomackUrl(audioUrl)) {
+            let platform = "this source";
+            if (isFilesFmUrl(audioUrl)) platform = "files.fm";
+            else if (isMdundoUrl(audioUrl)) platform = "mdundo.com";
+            else if (isAudiomackUrl(audioUrl)) platform = "Audiomack";
 
-        // **Explicitly handle mdundo.com links**
-        if (isMdundoUrl(audioUrl)) {
              toast({
                 title: "Preview Unavailable",
                 description: (
                     <div className="flex items-start gap-2">
                        <AlertCircle className="h-5 w-5 text-yellow-500 flex-shrink-0 mt-0.5" />
                        <span>
-                         Direct audio preview isn't possible for mdundo.com links as they usually point to a widget or page. You can still add the link to your story.
+                         Direct audio preview isn't possible for {platform} links because they point to a page, not an audio file. You can still add the link to your story.
                        </span>
                     </div>
                 ),
                 duration: 7000,
              });
-             console.warn("Preventing audio preview for mdundo.com URL:", audioUrl);
+             console.warn(`Preventing audio preview for ${platform} URL:`, audioUrl);
              stopPreview(); // Ensure any previous preview is stopped
              return; // Do not attempt to play
         }
@@ -449,7 +435,7 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
                     {isPreviewPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
                   </Button>
                </div>
-              <p className="text-xs text-muted-foreground">Select a song from the list. Preview may not work for all URL types (e.g., files.fm, mdundo.com, SoundCloud).</p>
+              <p className="text-xs text-muted-foreground">Select a song from the list. Preview may not work for all URL types (e.g., files.fm, mdundo.com, Audiomack).</p>
            </div>
 
            {/* Music Trim Controls (Conditional) */}
@@ -527,3 +513,4 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
     </Card>
   );
 }
+
