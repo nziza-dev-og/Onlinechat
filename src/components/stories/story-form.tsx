@@ -163,11 +163,14 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
                  previewAudioRef.current = new Audio(audioUrl);
                  previewAudioRef.current.onended = () => setIsPreviewPlaying(false);
                  previewAudioRef.current.onerror = (e) => {
-                     console.error("Audio preview error event:", e, previewAudioRef.current?.error);
+                     const mediaError = previewAudioRef.current?.error;
+                     const errorCode = mediaError?.code; // Get error code (e.g., 4 for MEDIA_ERR_SRC_NOT_SUPPORTED)
+                     const errorMessage = mediaError?.message || 'Unknown audio error'; // Get error message
+                     console.error(`Audio preview error event. Code: ${errorCode}, Message: ${errorMessage}`, e); // Log code and message
                      toast({
                          variant: "destructive",
                          title: "Preview Error",
-                         description: `Could not play audio preview. Ensure the URL is a direct link to an audio file and accessible. Error: ${previewAudioRef.current?.error?.message || 'Unknown audio error'}`
+                         description: `Could not play audio preview. Ensure the URL is a direct link to an audio file and accessible. Error: ${errorMessage}` // Use error message from MediaError
                      });
                      setIsPreviewPlaying(false);
                  }
@@ -220,7 +223,7 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
             });
         }
 
-   }, [selectedMusicTrackUrl, isPreviewPlaying, toast]); // Removed stopPreview from dependency
+   }, [selectedMusicTrackUrl, isPreviewPlaying, toast]); // Keep dependencies
 
    // Cleanup preview audio when component unmounts or track changes
    React.useEffect(() => {
