@@ -1,5 +1,4 @@
 
-
 "use client";
 
 import * as React from 'react';
@@ -11,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, Send, Image as ImageIcon, Video, Music, Clock } from 'lucide-react'; // Added Clock icon
+import { Loader2, Send, Image as ImageIcon, Video, Music, Clock, Play, Pause } from 'lucide-react'; // Added Play, Pause
 import { Separator } from '@/components/ui/separator';
 import { useAuth } from '@/hooks/use-auth';
 import { useToast } from '@/hooks/use-toast';
@@ -25,6 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"; // Import Select components
 import { getPlatformConfig } from '@/lib/config.service'; // Import service to get config
+import { cn } from '@/lib/utils'; // Import cn
 
 
 // Validation schema specifically for stories
@@ -86,6 +86,8 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [musicPlaylist, setMusicPlaylist] = React.useState<MusicPlaylistItem[]>([ { id: 'none', title: "No Music", url: "none" }]); // Default with 'No Music'
   const [loadingPlaylist, setLoadingPlaylist] = React.useState(true);
+  const [isPreviewPlaying, setIsPreviewPlaying] = React.useState(false); // State for audio preview
+  const previewAudioRef = React.useRef<HTMLAudioElement | null>(null); // Ref for preview audio element
 
   const form = useForm<StoryFormData>({
     resolver: zodResolver(storySchema),
@@ -123,13 +125,82 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
      fetchPlaylist();
    }, [toast]);
 
+   // --- Audio Preview Logic ---
+   const stopPreview = React.useCallback(() => {
+     if (previewAudioRef.current) {
+       previewAudioRef.current.pause();
+       previewAudioRef.current.currentTime = 0;
+     }
+     setIsPreviewPlaying(false);
+   }, []);
+
+   const handlePreviewToggle = React.useCallback(() => {
+        const audioUrl = selectedMusicTrackUrl;
+        if (!audioUrl || audioUrl === 'none') return;
+
+        // Basic check for likely non-direct URLs (can be improved)
+        if (audioUrl.includes('soundcloud.com') || audioUrl.includes('spotify.com') || !/\.(mp3|wav|ogg|aac|m4a)$/i.test(audioUrl)) {
+            toast({
+                variant: "destructive",
+                title: "Preview Unavailable",
+                description: "Direct audio preview may not work for this URL type. Please use direct audio file links (.mp3, .wav, etc.).",
+                duration: 5000,
+            });
+            // Optionally attempt to play anyway, or just return
+            // return;
+        }
+
+        if (!previewAudioRef.current) {
+            previewAudioRef.current = new Audio(audioUrl);
+             previewAudioRef.current.onended = () => setIsPreviewPlaying(false);
+             previewAudioRef.current.onerror = (e) => {
+                 console.error("Audio preview error:", e);
+                 toast({ variant: "destructive", title: "Preview Error", description: "Could not play audio preview." });
+                 setIsPreviewPlaying(false);
+             }
+        } else {
+            // Update src if it changed
+             if (previewAudioRef.current.src !== audioUrl) {
+                previewAudioRef.current.src = audioUrl;
+                previewAudioRef.current.load(); // Load new source
+            }
+        }
+
+        if (isPreviewPlaying) {
+            previewAudioRef.current.pause();
+        } else {
+            previewAudioRef.current.currentTime = 0; // Start from beginning
+            previewAudioRef.current.play().catch(e => console.error("Preview play error:", e));
+        }
+        setIsPreviewPlaying(!isPreviewPlaying);
+
+   }, [selectedMusicTrackUrl, isPreviewPlaying, toast]);
+
+   // Cleanup preview audio when component unmounts or track changes
+   React.useEffect(() => {
+     // Stop preview when selected music changes
+     stopPreview();
+
+     return () => {
+       // Cleanup on unmount
+       stopPreview();
+       if (previewAudioRef.current) {
+           // Remove event listeners if added directly
+           previewAudioRef.current.onended = null;
+           previewAudioRef.current.onerror = null;
+           previewAudioRef.current = null; // Release the reference
+       }
+     };
+   }, [selectedMusicTrackUrl, stopPreview]);
+   // --- End Audio Preview Logic ---
+
 
   const onSubmit = async (data: StoryFormData) => {
     if (!user) {
         toast({ title: 'Authentication Error', description: 'You must be logged in to add a story.', variant: 'destructive' });
         return;
     }
-
+    stopPreview(); // Stop preview before submitting
     setIsSubmitting(true);
     const finalMusicUrl = data.selectedMusicUrl === "none" ? null : data.selectedMusicUrl;
     // Parse start/end times, default to null if empty or invalid
@@ -241,38 +312,54 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
               <Label htmlFor="musicSelectStory" className="flex items-center gap-1.5">
                  <Music className="h-4 w-4 text-muted-foreground"/> Background Music (Optional)
               </Label>
-              <Controller
-                 name="selectedMusicUrl"
-                 control={form.control}
-                 render={({ field }) => (
-                    <Select
-                      value={field.value ?? "none"}
-                      onValueChange={(value) => {
-                           field.onChange(value);
-                           // Reset trim times if music is set to none
-                           if (value === 'none') {
-                               form.setValue('musicStartTime', '');
-                               form.setValue('musicEndTime', '');
-                           }
-                      }}
-                      disabled={isSubmitting || loadingPlaylist}
-                    >
-                      <SelectTrigger id="musicSelectStory">
-                         <SelectValue placeholder={loadingPlaylist ? "Loading music..." : "Select music..."} />
-                      </SelectTrigger>
-                      <SelectContent>
-                         {loadingPlaylist && <SelectItem value="loading" disabled>Loading...</SelectItem>}
-                         {!loadingPlaylist && musicPlaylist.length === 1 && <SelectItem value="no-music" disabled>No music available</SelectItem>}
-                         {!loadingPlaylist && musicPlaylist.map((song) => (
-                           <SelectItem key={song.id || 'none'} value={song.url || 'none'}>
-                             {song.title}
-                           </SelectItem>
-                         ))}
-                      </SelectContent>
-                    </Select>
-                 )}
-              />
-              <p className="text-xs text-muted-foreground">Select a song from the list.</p>
+               {/* Flex container for Select and Preview Button */}
+               <div className="flex items-center gap-2">
+                 <Controller
+                    name="selectedMusicUrl"
+                    control={form.control}
+                    render={({ field }) => (
+                       <Select
+                         value={field.value ?? "none"}
+                         onValueChange={(value) => {
+                              field.onChange(value);
+                              stopPreview(); // Stop preview when selection changes
+                              // Reset trim times if music is set to none
+                              if (value === 'none') {
+                                  form.setValue('musicStartTime', '');
+                                  form.setValue('musicEndTime', '');
+                              }
+                         }}
+                         disabled={isSubmitting || loadingPlaylist}
+                       >
+                         <SelectTrigger id="musicSelectStory" className="flex-1"> {/* Use flex-1 */}
+                            <SelectValue placeholder={loadingPlaylist ? "Loading music..." : "Select music..."} />
+                         </SelectTrigger>
+                         <SelectContent>
+                            {loadingPlaylist && <SelectItem value="loading" disabled>Loading...</SelectItem>}
+                            {!loadingPlaylist && musicPlaylist.length === 1 && <SelectItem value="no-music" disabled>No music available</SelectItem>}
+                            {!loadingPlaylist && musicPlaylist.map((song) => (
+                              <SelectItem key={song.id || 'none'} value={song.url || 'none'}>
+                                {song.title}
+                              </SelectItem>
+                            ))}
+                         </SelectContent>
+                       </Select>
+                    )}
+                 />
+                 {/* Preview Button */}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={handlePreviewToggle}
+                    disabled={isSubmitting || loadingPlaylist || !selectedMusicTrackUrl || selectedMusicTrackUrl === 'none'}
+                    className={cn("flex-shrink-0 h-10 w-10", isPreviewPlaying && "bg-accent text-accent-foreground")} // Highlight when playing
+                    aria-label={isPreviewPlaying ? "Stop preview" : "Preview music"}
+                  >
+                    {isPreviewPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
+                  </Button>
+               </div>
+              <p className="text-xs text-muted-foreground">Select a song from the list. Preview may not work for all URL types.</p>
            </div>
 
            {/* Music Trim Controls (Conditional) */}
