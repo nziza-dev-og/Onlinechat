@@ -1,3 +1,4 @@
+
 "use client";
 
 import * as React from 'react';
@@ -9,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, Send, Image as ImageIcon, Video, Music, Clock, Play, Pause } from 'lucide-react'; // Added Play, Pause
+import { Loader2, Send, Image as ImageIcon, Video, Music, Clock, Play, Pause, AlertCircle } from 'lucide-react'; // Added AlertCircle
 import { Separator } from '@/components/ui/separator';
 import { useAuth } from '@/hooks/use-auth';
 import { useToast } from '@/hooks/use-toast';
@@ -23,8 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"; // Import Select components
 import { getPlatformConfig } from '@/lib/config.service'; // Import service to get config
-import { cn } from '@/lib/utils'; // Import cn
-
+import { cn, isFilesFmUrl, isDirectAudioUrl } from '@/lib/utils'; // Import helpers
 
 // Validation schema specifically for stories
 // Add validation for start/end times
@@ -77,36 +77,6 @@ type StoryFormData = z.infer<typeof storySchema>;
 
 interface StoryFormProps {
   onStoryAdded?: (newStory: Post) => void;
-}
-
-// Basic check for likely direct audio file URLs
-const isDirectAudioUrl = (url: string): boolean => {
-    try {
-        const parsedUrl = new URL(url);
-        // Allow localhost for testing
-        if (parsedUrl.hostname === 'localhost' || parsedUrl.hostname === '127.0.0.1') {
-             return true;
-        }
-        // Simple check based on file extension in the pathname
-        const hasAudioExtension = /\.(mp3|wav|ogg|aac|m4a|opus)$/i.test(parsedUrl.pathname);
-         // Allow URLs from specific trusted CDNs or services if necessary
-         // const isTrustedSource = ['some-cdn.com'].includes(parsedUrl.hostname);
-         // return hasAudioExtension || isTrustedSource;
-         return hasAudioExtension;
-    } catch (e) {
-        // Invalid URL format
-        return false;
-    }
-};
-
-// Check for files.fm URLs
-const isFilesFmUrl = (url: string): boolean => {
-    try {
-        const parsedUrl = new URL(url);
-        return parsedUrl.hostname === 'files.fm';
-    } catch (e) {
-        return false;
-    }
 }
 
 
@@ -168,69 +138,104 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
         const audioUrl = selectedMusicTrackUrl;
         if (!audioUrl || audioUrl === 'none') return;
 
-        // **Check for files.fm or other unsupported links first**
+        // **Explicitly handle files.fm links**
         if (isFilesFmUrl(audioUrl)) {
              toast({
-                variant: "default",
                 title: "Preview Unavailable",
-                description: "Audio preview isn't available for files.fm links, but you can still add the link to your story.",
-                duration: 6000,
+                description: (
+                    <div className="flex items-start gap-2">
+                       <AlertCircle className="h-5 w-5 text-yellow-500 flex-shrink-0 mt-0.5" />
+                       <span>
+                         Direct audio preview isn't possible for files.fm links because they point to a download page, not an audio file. You can still add the link to your story.
+                       </span>
+                    </div>
+                ),
+                duration: 7000,
              });
              console.warn("Preventing audio preview for files.fm URL:", audioUrl);
              stopPreview(); // Ensure any previous preview is stopped
              return; // Do not attempt to play
         }
 
-        // **Check for likely direct audio file URLs**
+        // **Check for likely non-direct URLs (warn user)**
         if (!isDirectAudioUrl(audioUrl)) {
             toast({
-                variant: "destructive",
                 title: "Preview Might Fail",
-                description: "Direct audio preview usually works best for links ending in .mp3, .wav, etc. Links from streaming sites (SoundCloud, Spotify) may not work.",
-                duration: 6000,
+                 description: (
+                    <div className="flex items-start gap-2">
+                       <AlertCircle className="h-5 w-5 text-yellow-500 flex-shrink-0 mt-0.5" />
+                       <span>
+                        This doesn't look like a direct audio file link (e.g., .mp3). Preview might not work for streaming sites or pages.
+                       </span>
+                    </div>
+                 ),
+                duration: 7000,
             });
             console.warn("Attempting audio preview for potentially non-direct URL:", audioUrl);
             // Allow attempt but warn user
         }
 
-        // Proceed with playing if it looks like a direct URL or user was warned
+        // Proceed with playing
         if (!previewAudioRef.current) {
-            previewAudioRef.current = new Audio(audioUrl);
-             previewAudioRef.current.onended = () => setIsPreviewPlaying(false);
-             previewAudioRef.current.onerror = (e) => {
-                 console.error("Audio preview error:", e, previewAudioRef.current?.error);
-                 // Provide more context in the error message
-                 toast({
-                     variant: "destructive",
-                     title: "Preview Error",
-                     description: `Could not play audio preview. Ensure the URL is a direct link to an audio file and accessible. Error: ${previewAudioRef.current?.error?.message || 'Unknown audio error'}`
-                 });
-                 setIsPreviewPlaying(false);
-             }
-        } else {
-            // Update src if it changed
-             if (previewAudioRef.current.src !== audioUrl) {
-                previewAudioRef.current.src = audioUrl;
-                previewAudioRef.current.load(); // Load new source
+            try {
+                 console.log("Creating new Audio element for:", audioUrl);
+                 previewAudioRef.current = new Audio(audioUrl);
+                 previewAudioRef.current.onended = () => setIsPreviewPlaying(false);
+                 previewAudioRef.current.onerror = (e) => {
+                     console.error("Audio preview error event:", e, previewAudioRef.current?.error);
+                     toast({
+                         variant: "destructive",
+                         title: "Preview Error",
+                         description: `Could not play audio preview. Ensure the URL is a direct link to an audio file and accessible. Error: ${previewAudioRef.current?.error?.message || 'Unknown audio error'}`
+                     });
+                     setIsPreviewPlaying(false);
+                 }
+                 previewAudioRef.current.onpause = () => {
+                     // Ensure state is synced if paused externally or by browser
+                      if (isPreviewPlaying) {
+                         console.log("Audio preview paused (onpause event).");
+                         setIsPreviewPlaying(false);
+                      }
+                 }
+                 previewAudioRef.current.onplay = () => {
+                      if (!isPreviewPlaying) {
+                         console.log("Audio preview playing (onplay event).");
+                         setIsPreviewPlaying(true);
+                      }
+                 }
+            } catch (error) {
+                 console.error("Error creating Audio element:", error);
+                 toast({ variant: "destructive", title: "Preview Error", description: "Could not initialize audio player."});
+                 return;
             }
+
+        } else if (previewAudioRef.current.src !== audioUrl) {
+             // Update src if it changed
+             console.log("Updating Audio element src to:", audioUrl);
+             previewAudioRef.current.src = audioUrl;
+             previewAudioRef.current.load(); // Load new source
+             // Reset playing state when source changes
+             setIsPreviewPlaying(false);
         }
 
+
         if (isPreviewPlaying) {
+            console.log("User clicked pause preview.");
             previewAudioRef.current.pause();
-            setIsPreviewPlaying(false); // Manually set state on pause request
-            console.log("Audio preview paused by user.");
+            // onpause listener should set isPreviewPlaying to false
         } else {
-            previewAudioRef.current.currentTime = 0; // Start from beginning
             // Attempt to play and catch potential errors immediately
+            previewAudioRef.current.currentTime = 0; // Start from beginning
+            console.log("Attempting to play preview...");
             previewAudioRef.current.play().then(() => {
-                console.log("Audio preview started for:", audioUrl);
-                setIsPreviewPlaying(true); // Set playing state only on successful play start
+                 console.log("Audio preview play() successful.");
+                 // onplay listener should set isPreviewPlaying to true
             }).catch(e => {
                 console.error("Preview play() error:", e);
                 toast({
                     variant: "destructive",
                     title: "Preview Error",
-                    description: `Could not start audio preview. ${e.message || 'Unknown error'}`
+                    description: `Could not start audio preview. ${e.message || 'Interaction might be required.'}`
                 });
                 setIsPreviewPlaying(false); // Ensure state is false if play fails
             });
@@ -250,7 +255,10 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
            // Remove event listeners if added directly
            previewAudioRef.current.onended = null;
            previewAudioRef.current.onerror = null;
+           previewAudioRef.current.onpause = null;
+           previewAudioRef.current.onplay = null;
            previewAudioRef.current = null; // Release the reference
+           console.log("Preview audio element cleaned up.");
        }
      };
    }, [selectedMusicTrackUrl, stopPreview]);

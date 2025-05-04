@@ -1,3 +1,4 @@
+
 "use client";
 
 import * as React from 'react';
@@ -6,7 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import Image from 'next/image';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
-import { getInitials, resolveMediaUrl } from '@/lib/utils'; // Assuming getInitials is moved to utils, import resolveMediaUrl
+import { getInitials, resolveMediaUrl, isFilesFmUrl } from '@/lib/utils'; // Import isFilesFmUrl
 import { Dialog, DialogContent, DialogTrigger, DialogTitle } from "@/components/ui/dialog"; // Import DialogTitle
 import { X, Volume2, VolumeX } from 'lucide-react'; // Added Volume icons
 import { Button } from '../ui/button';
@@ -26,23 +27,13 @@ const formatStoryTimestamp = (timestampISO: string | null | undefined): string =
     } catch { return 'Invalid date'; }
 };
 
-// Check for files.fm URLs (can be moved to utils if needed elsewhere)
-const isFilesFmUrl = (url: string | null | undefined): boolean => {
-    if (!url) return false;
-    try {
-        const parsedUrl = new URL(url);
-        return parsedUrl.hostname === 'files.fm';
-    } catch (e) {
-        return false;
-    }
-}
 
 export function StoryViewer({ stories }: StoryViewerProps) {
   const [currentStoryIndex, setCurrentStoryIndex] = React.useState(0);
   const [openStory, setOpenStory] = React.useState<PostSerializable | null>(null);
   const progressRef = React.useRef<HTMLDivElement>(null);
   const storyTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
-  const audioRef = React.useRef<HTMLAudioElement>(null); // Ref for audio element
+  const audioRef = React.useRef<HTMLAudioElement | null>(null); // Ref for audio element
   const [isMuted, setIsMuted] = React.useState(false); // State for music mute
   const [hasInteracted, setHasInteracted] = React.useState(false); // Track user interaction for autoplay
 

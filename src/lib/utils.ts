@@ -70,3 +70,29 @@ export const isFilesFmUrl = (url: string | null | undefined): boolean => {
         return false;
     }
 };
+
+/**
+ * Basic check if a URL likely points directly to an audio file based on extension.
+ * Allows localhost for testing.
+ * @param url - The URL string to check.
+ * @returns True if the URL likely points to a direct audio file, false otherwise.
+ */
+export const isDirectAudioUrl = (url: string | null | undefined): boolean => {
+    if (!url) return false;
+    try {
+        const parsedUrl = new URL(url);
+        // Allow localhost for testing
+        if (parsedUrl.hostname === 'localhost' || parsedUrl.hostname === '127.0.0.1') {
+             return true;
+        }
+        // Simple check based on file extension in the pathname
+        const hasAudioExtension = /\.(mp3|wav|ogg|aac|m4a|opus)$/i.test(parsedUrl.pathname);
+         // Allow URLs from specific trusted CDNs or services if necessary
+         // const isTrustedSource = ['some-cdn.com'].includes(parsedUrl.hostname);
+         // return hasAudioExtension || isTrustedSource;
+         return hasAudioExtension;
+    } catch (e) {
+        // Invalid URL format
+        return false;
+    }
+};
