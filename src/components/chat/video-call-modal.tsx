@@ -58,15 +58,20 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
   const [showMissedCall, setShowMissedCall] = useState(false); // Added state for missed call display
   const [isRTDBListenerAttached, setIsRTDBListenerAttached] = useState(false); // Track listener status
   const [isCheckingPermission, setIsCheckingPermission] = useState(true); // State for initial permission check
+  // Added state for audio recorder
+  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const [audioChunks, setAudioChunks] = useState<Blob[]>([]);
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const callSignalingRef = useRef<DatabaseReference | null>(null);
   const messagesListenerUnsubscribe = useRef<RtdbUnsubscribe | null>(null);
+  const iceGatheringTimeoutRef = useRef<NodeJS.Timeout | null>(null); // ICE gathering timeout
   const callEndTimeoutRef = useRef<NodeJS.Timeout | null>(null); // For missed call timeout
   const callStatusRef = useRef(callStatus); // Ref to track current status without causing re-renders
   const isMountedRef = useRef(true); // Track component mount status
+  const streamRef = useRef<MediaStream | null>(null); // Ref for local media stream
 
   const { toast } = useToast();
 
@@ -107,6 +112,12 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
        if (localVideoRef.current) {
            localVideoRef.current.srcObject = null;
        }
+       // Also stop the stream stored in streamRef
+       if (streamRef.current) {
+            streamRef.current.getTracks().forEach(track => track.stop());
+            streamRef.current = null;
+            console.log("Stream ref stopped.");
+       }
       return null; // Set state to null
     });
   }, []);
@@ -124,9 +135,15 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
       }
       // Clear remote stream and video element
       setRemoteStream(prevStream => {
-          if (prevStream && remoteVideoRef.current) {
+          if (
+          prevStream && remoteVideoRef.current) {
               remoteVideoRef.current.srcObject = null;
           }
+           // Clear ICE gathering timeout
+           if (iceGatheringTimeoutRef.current) {
+                clearTimeout(iceGatheringTimeoutRef.current);
+                iceGatheringTimeoutRef.current = null;
+           }
           return null;
       });
   }, []);
@@ -162,6 +179,11 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
       clearTimeout(callEndTimeoutRef.current);
       callEndTimeoutRef.current = null;
     }
+     // Clear ICE gathering timeout
+     if (iceGatheringTimeoutRef.current) {
+          clearTimeout(iceGatheringTimeoutRef.current);
+          iceGatheringTimeoutRef.current = null;
+     }
 
     // Remove signaling data from RTDB only if the call was active and ended explicitly by this user
     const wasCallActive = ['calling', 'receiving', 'connecting', 'in_call'].includes(currentStatusOnCleanupStart);
@@ -304,6 +326,11 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
 
             // Handle ICE candidate generation
             pc.onicecandidate = (event) => {
+                 // Clear ICE gathering timeout when a candidate is generated or gathering finishes
+                 if (iceGatheringTimeoutRef.current) {
+                     clearTimeout(iceGatheringTimeoutRef.current);
+                     iceGatheringTimeoutRef.current = null;
+                 }
                 if (event.candidate) {
                     // console.log(`%cWebRTC: Generated ICE candidate:`, 'color: cyan', event.candidate.type);
                     sendSignalingMessage({ type: 'candidate', payload: event.candidate.toJSON() });
@@ -317,6 +344,12 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
                 const currentState = pc.iceConnectionState;
                 const currentCallStatus = callStatusRef.current; // Use ref for current status
                 console.log(`%cWebRTC: ICE Connection State: ${currentState}, Current Call Status: ${currentCallStatus}`, 'color: orange');
+                 // Clear ICE gathering timeout if connected or completed
+                 if (['connected', 'completed'].includes(currentState) && iceGatheringTimeoutRef.current) {
+                      clearTimeout(iceGatheringTimeoutRef.current);
+                      iceGatheringTimeoutRef.current = null;
+                 }
+
                 if (!isMountedRef.current) return; // Prevent updates if unmounted
 
                 switch (currentState) {
@@ -352,6 +385,16 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
                 }
             };
 
+             // Implement ICE gathering timeout
+             if (iceGatheringTimeoutRef.current) clearTimeout(iceGatheringTimeoutRef.current); // Clear previous if any
+             iceGatheringTimeoutRef.current = setTimeout(() => {
+                 if (pc.iceGatheringState !== 'complete' && isMountedRef.current) {
+                     console.warn("WebRTC: ICE gathering timeout reached. Ending call.");
+                     toast({ variant: "destructive", title: "Connection Timeout", description: "Failed to establish connection quickly enough." });
+                     handleEndCall(); // End the call if ICE gathering takes too long
+                 }
+             }, 15000); // 15 seconds timeout
+
             console.log("PeerConnection initialized successfully.");
             return pc;
 
@@ -362,7 +405,7 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
             handleEndCall();
             return null;
         }
-  }, [localStream, toast, handleEndCall, closePeerConnection, sendSignalingMessage, updateStatus]); // Add dependencies
+  }, [localStream, toast, handleEndCall, closePeerConnection, sendSignalingMessage, updateStatus]); // Added localStream, handleEndCall, sendSignalingMessage, updateStatus
 
 
   // Setup RTDB signaling listener
@@ -520,7 +563,7 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
             detachListener(); // Ensure listener is detached on error
         });
 
-   }, [rtdb, chatId, currentUser?.uid, toast, handleEndCall, sendSignalingMessage, detachListener, initializePeerConnection, updateStatus, isRTDBListenerAttached, isCaller]); // Dependencies
+   }, [rtdb, chatId, currentUser?.uid, toast, handleEndCall, sendSignalingMessage, detachListener, initializePeerConnection, updateStatus, isRTDBListenerAttached, isCaller]); // Added isCaller
 
 
   // Main effect for handling modal open/close and permissions
@@ -551,6 +594,7 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
                 }
                 console.log("%cMedia access granted.", 'color: green');
                 setLocalStream(stream);
+                streamRef.current = stream; // Store stream in ref as well
                 // Assign stream to local video element
                 if (localVideoRef.current) {
                     localVideoRef.current.srcObject = stream;
@@ -588,6 +632,8 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
         };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]); // Only re-run when isOpen changes
+
+
 
   // Function to initiate the call
   const handleStartCall = async () => {
@@ -826,3 +872,4 @@ export function VideoCallModal({ chatId, currentUser, partnerUser, isOpen, onClo
     </Dialog>
   );
 }
+
