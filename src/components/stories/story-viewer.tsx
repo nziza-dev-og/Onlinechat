@@ -6,7 +6,7 @@ import Image from 'next/image';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { getInitials, resolveMediaUrl, cn } from '@/lib/utils';
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"; // Keep DialogTitle
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"; // Corrected import
 import { X, Volume2, VolumeX, Trash2, Loader2, AlertTriangle, ChevronLeft, ChevronRight, Pause, Play as PlayIcon } from 'lucide-react'; // Added Chevrons, Pause, Play
 import { Button } from '../ui/button';
 import { AnimatePresence, motion } from "framer-motion";
@@ -131,7 +131,7 @@ export function StoryModalViewer({
     }, intervalTime);
   }, [stopMediaAndTimers, isPaused, goToNextStory]);
 
-  const handleMediaError = React.useCallback((e: Event) => {
+ const handleMediaError = React.useCallback((e: Event) => {
      const mediaElement = mediaRef.current;
      const error = mediaElement?.error;
      console.error(
@@ -140,8 +140,8 @@ export function StoryModalViewer({
      );
       // Optionally show a toast or advance to the next story on error
       // toast({ variant: "destructive", title: "Media Error", description: `Could not load story media. ${error?.message || ''}` });
-      // goToNextStory(); // Decide if you want to auto-advance on error
-  }, []); // Removed goToNextStory from dependencies here to avoid potential loops if errors are rapid
+      goToNextStory(); // Decide if you want to auto-advance on error
+  }, [goToNextStory]); // Add goToNextStory as a dependency
 
   const handleMediaLoaded = React.useCallback(() => {
     const mediaElement = mediaRef.current;
@@ -292,6 +292,7 @@ export function StoryModalViewer({
     // Pause story while confirming delete
     handleInteractionStart();
     try {
+      // Assuming deletePost only needs postId, adjust if userId is required
       await deletePost(activeStory.id, currentUserId || '');
       toast({ title: "Story Deleted", description: "The story has been removed." });
       onDelete(activeStory.id); // Notify parent to remove from its state
@@ -473,9 +474,10 @@ export function StoryModalViewer({
                              <AlertDialogTitleComponent className="flex items-center gap-2">
                                 <AlertTriangle className="text-destructive"/> Delete this story?
                              </AlertDialogTitleComponent>
-                             <AlertDialogDescription>This action cannot be undone and will permanently remove your story.</AlertDialogHeader>
-                          </AlertDialogFooter>
-                          <AlertDialogCancel disabled={isDeleting} onClick={(e) => {e.stopPropagation(); handleInteractionEnd(); }}>Cancel</AlertDialogCancel>
+                             <AlertDialogDescription>This action cannot be undone and will permanently remove your story.</AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                             <AlertDialogCancel disabled={isDeleting} onClick={(e) => {e.stopPropagation(); handleInteractionEnd(); }}>Cancel</AlertDialogCancel>
                              <AlertDialogAction
                                 onClick={(e) => {e.stopPropagation(); handleDeleteClick();}}
                                 disabled={isDeleting}
@@ -484,7 +486,8 @@ export function StoryModalViewer({
                                 {isDeleting ? <Loader2 className="animate-spin h-4 w-4 mr-2" /> : null}
                                 Delete
                              </AlertDialogAction>
-                          </AlertDialogContent>
+                          </AlertDialogFooter>
+                       </AlertDialogPrimitiveContent>
                     </AlertDialog>
                  )}
                  {!isOwner && <div />} {/* Placeholder */}
