@@ -34,41 +34,108 @@ export function StoryViewer({ stories }: StoryViewerProps) {
   const storyTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
   const audioRef = React.useRef<HTMLAudioElement>(null); // Ref for audio element
   const [isMuted, setIsMuted] = React.useState(false); // State for music mute
+  const [hasInteracted, setHasInteracted] = React.useState(false); // Track user interaction for autoplay
 
   const activeStory = openStory ? stories.find(s => s.id === openStory.id) : null;
+
+  // Function to attempt playing audio, handling potential errors
+  const attemptAudioPlay = React.useCallback(() => {
+    if (audioRef.current && activeStory?.musicUrl && !isMuted && hasInteracted) {
+        console.log("Attempting to play audio:", activeStory.musicUrl);
+        audioRef.current.play().catch(e => console.warn("Audio play failed (likely autoplay restriction):", e));
+    } else {
+         if (!activeStory?.musicUrl) console.log("No music URL for current story.");
+         if (isMuted) console.log("Audio muted.");
+         if (!hasInteracted) console.log("Audio waiting for user interaction.");
+    }
+  }, [activeStory, isMuted, hasInteracted]);
 
   // Handle story progression and music
   React.useEffect(() => {
     if (!activeStory) {
        // Stop music when viewer closes
-       audioRef.current?.pause();
+       if(audioRef.current) {
+           audioRef.current.pause();
+           audioRef.current.currentTime = 0; // Reset time
+           audioRef.current.src = ''; // Clear source
+           console.log("Story viewer closed, audio paused and reset.");
+       }
        return;
     }
+
+    console.log("Active story changed:", activeStory.id, "Music:", activeStory.musicUrl);
 
     // Reset progress animation
     if (progressRef.current) {
       progressRef.current.style.width = '0%';
+      progressRef.current.style.transition = 'none'; // Remove transition first
       // Force reflow to restart animation
       void progressRef.current.offsetWidth;
-      progressRef.current.style.transition = 'width 5s linear'; // Duration of story display
-      progressRef.current.style.width = '100%';
+      // Apply transition *after* reset
+       setTimeout(() => {
+            if (progressRef.current) {
+               progressRef.current.style.transition = 'width 5s linear'; // Duration of story display
+               progressRef.current.style.width = '100%';
+            }
+       }, 50); // Small delay to ensure reset takes effect
     }
 
     // Handle music playback
     if (activeStory.musicUrl && audioRef.current) {
         if (audioRef.current.src !== activeStory.musicUrl) {
+            console.log("Setting new audio source:", activeStory.musicUrl);
             audioRef.current.src = activeStory.musicUrl;
             audioRef.current.load(); // Load new source
-        }
-        if (!isMuted) {
-            audioRef.current.play().catch(e => console.warn("Audio play failed:", e));
+            // Apply start/end times if they exist
+             audioRef.current.onloadedmetadata = () => {
+                 if (activeStory.musicStartTime !== null && activeStory.musicStartTime !== undefined && isFinite(activeStory.musicStartTime) && activeStory.musicStartTime >= 0) {
+                     audioRef.current!.currentTime = activeStory.musicStartTime;
+                     console.log(`Audio start time set to: ${activeStory.musicStartTime}`);
+                 } else {
+                     audioRef.current!.currentTime = 0; // Default to start if no valid time
+                 }
+                 // Attempt play after metadata is loaded
+                 attemptAudioPlay();
+            };
+            // Set up listener for ending at trim time
+             if (activeStory.musicEndTime !== null && activeStory.musicEndTime !== undefined && isFinite(activeStory.musicEndTime) && activeStory.musicEndTime > (activeStory.musicStartTime ?? 0)) {
+                const endTime = activeStory.musicEndTime;
+                const checkEndTime = () => {
+                    if (audioRef.current && audioRef.current.currentTime >= endTime) {
+                        audioRef.current.pause();
+                         console.log(`Audio reached end trim time: ${endTime}`);
+                        // Optionally loop or move to next story? For now, just pause.
+                         audioRef.current.removeEventListener('timeupdate', checkEndTime);
+                    }
+                };
+                 audioRef.current.addEventListener('timeupdate', checkEndTime);
+                 // Cleanup function for this specific listener
+                 const cleanupEndTimeListener = () => {
+                      if (audioRef.current) {
+                          audioRef.current.removeEventListener('timeupdate', checkEndTime);
+                      }
+                 };
+                 // Return cleanup for *this specific timeupdate listener*
+                 // This doesn't replace the main effect cleanup
+                 return cleanupEndTimeListener;
+             }
+
         } else {
-            audioRef.current.pause();
+             // If src is the same, reset time if needed and attempt play
+             if (activeStory.musicStartTime !== null && activeStory.musicStartTime !== undefined && isFinite(activeStory.musicStartTime) && activeStory.musicStartTime >= 0) {
+                 audioRef.current.currentTime = activeStory.musicStartTime;
+             } else {
+                 audioRef.current.currentTime = 0;
+             }
+             attemptAudioPlay();
         }
         audioRef.current.muted = isMuted;
     } else if (audioRef.current) {
         // If no music URL for this story, pause any currently playing music
         audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+        audioRef.current.src = ''; // Clear source
+        console.log("No music for this story, pausing and clearing audio source.");
     }
 
 
@@ -88,24 +155,40 @@ export function StoryViewer({ stories }: StoryViewerProps) {
        if (progressRef.current) {
           progressRef.current.style.transition = 'none';
        }
-       // Don't pause audio here, let the next effect handle it or the close handler
+       // Pause audio when story *changes* (next effect will handle playing if needed)
+       if (audioRef.current) {
+           audioRef.current.pause();
+           console.log("Story changing, pausing audio.");
+           // Don't reset src here, let the next effect handle it
+       }
     };
-  }, [activeStory, stories, isMuted]); // Add isMuted dependency
+  }, [activeStory, stories, isMuted, attemptAudioPlay, hasInteracted]);
 
   const handleOpenStory = (story: PostSerializable) => {
+    setHasInteracted(true); // User interaction detected
     const index = stories.findIndex(s => s.id === story.id);
     setCurrentStoryIndex(index);
     setOpenStory(story);
+     // Attempt to play immediately on open if not muted
+     // Need a slight delay for the audio element to potentially be ready
+     setTimeout(attemptAudioPlay, 100);
   };
 
   const handleCloseStory = () => {
     setOpenStory(null);
+    setHasInteracted(false); // Reset interaction state
     if (storyTimeoutRef.current) clearTimeout(storyTimeoutRef.current);
-    audioRef.current?.pause(); // Ensure audio stops on close
+    if(audioRef.current) {
+        audioRef.current.pause(); // Ensure audio stops on close
+        audioRef.current.currentTime = 0;
+        audioRef.current.src = ''; // Clear source
+        console.log("Story viewer explicitly closed, audio stopped and reset.");
+    }
   };
 
   const handleNextStory = (e?: React.MouseEvent) => {
      e?.stopPropagation(); // Prevent closing if clicking overlay
+     setHasInteracted(true); // Ensure interaction is registered
      const currentIndex = stories.findIndex(s => s.id === activeStory?.id);
      if (currentIndex < stories.length - 1) {
         setOpenStory(stories[currentIndex + 1]);
@@ -116,6 +199,7 @@ export function StoryViewer({ stories }: StoryViewerProps) {
 
   const handlePrevStory = (e?: React.MouseEvent) => {
      e?.stopPropagation();
+     setHasInteracted(true); // Ensure interaction is registered
      const currentIndex = stories.findIndex(s => s.id === activeStory?.id);
      if (currentIndex > 0) {
         setOpenStory(stories[currentIndex - 1]);
@@ -128,15 +212,18 @@ export function StoryViewer({ stories }: StoryViewerProps) {
 
    const toggleMute = (e: React.MouseEvent) => {
      e.stopPropagation(); // Prevent interfering with story navigation
+     setHasInteracted(true); // Mute toggle counts as interaction
      setIsMuted(prev => {
          const newMutedState = !prev;
          if (audioRef.current) {
              audioRef.current.muted = newMutedState;
              if (!newMutedState && activeStory?.musicUrl) {
                  // If unmuting and there's music, try to play
-                 audioRef.current.play().catch(e => console.warn("Audio play failed:", e));
+                 console.log("User unmuted, attempting to play audio.");
+                 attemptAudioPlay(); // Use the helper function
              } else {
                   audioRef.current.pause();
+                  console.log("User muted, audio paused.");
              }
          }
          return newMutedState;
@@ -149,36 +236,33 @@ export function StoryViewer({ stories }: StoryViewerProps) {
       <h2 className="text-lg font-semibold mb-3 text-foreground">Recent Stories</h2>
       {/* Horizontal scrollable list of story previews */}
       <div className="flex space-x-3 overflow-x-auto pb-4 -mb-4">
-        {stories.map((story, index) => (
-           <Dialog key={story.id} onOpenChange={(open) => !open && handleCloseStory()}>
-            <DialogTrigger asChild>
-             <button
-               onClick={() => handleOpenStory(story)}
-               className="relative flex-shrink-0 w-20 h-32 rounded-lg overflow-hidden focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 group"
-               aria-label={`View story by ${story.displayName}`}
-             >
-               {story.imageUrl || story.videoUrl ? (
-                 <Image
-                   src={story.imageUrl || story.videoUrl || ''} // Prioritize image for preview
-                   alt={`Story preview by ${story.displayName}`}
-                   fill
-                   style={{ objectFit: 'cover' }}
-                   className="bg-muted group-hover:scale-105 transition-transform duration-200"
-                   sizes="(max-width: 768px) 20vw, 10vw"
-                   data-ai-hint="story preview image"
-                 />
-               ) : (
-                 <div className="w-full h-full bg-muted flex items-center justify-center text-muted-foreground">?</div>
-               )}
-               <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent"></div>
-               <Avatar className="absolute bottom-1.5 left-1.5 h-6 w-6 border-2 border-background">
-                 <AvatarImage src={story.photoURL || undefined} />
-                 <AvatarFallback className="text-xs">{getInitials(story.displayName)}</AvatarFallback>
-               </Avatar>
-             </button>
-             </DialogTrigger>
-             {/* DialogContent is moved outside the loop, managed by openStory state */}
-           </Dialog>
+        {stories.map((story) => (
+           // DialogTrigger now just opens the modal via handleOpenStory
+           <button
+             key={story.id}
+             onClick={() => handleOpenStory(story)}
+             className="relative flex-shrink-0 w-20 h-32 rounded-lg overflow-hidden focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 group"
+             aria-label={`View story by ${story.displayName}`}
+           >
+             {story.imageUrl || story.videoUrl ? (
+               <Image
+                 src={story.imageUrl || story.videoUrl || ''} // Prioritize image for preview
+                 alt={`Story preview by ${story.displayName}`}
+                 fill
+                 style={{ objectFit: 'cover' }}
+                 className="bg-muted group-hover:scale-105 transition-transform duration-200"
+                 sizes="(max-width: 768px) 20vw, 10vw"
+                 data-ai-hint="story preview image"
+               />
+             ) : (
+               <div className="w-full h-full bg-muted flex items-center justify-center text-muted-foreground">?</div>
+             )}
+             <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent"></div>
+             <Avatar className="absolute bottom-1.5 left-1.5 h-6 w-6 border-2 border-background">
+               <AvatarImage src={story.photoURL || undefined} />
+               <AvatarFallback className="text-xs">{getInitials(story.displayName)}</AvatarFallback>
+             </Avatar>
+           </button>
         ))}
       </div>
 
@@ -192,11 +276,13 @@ export function StoryViewer({ stories }: StoryViewerProps) {
              aria-describedby={activeStory?.text ? `story-caption-${activeStory.id}` : undefined} // Describe content if caption exists
           >
              {/* Visually Hidden Title for Accessibility */}
-             <DialogTitle id={activeStory ? `story-title-${activeStory.id}` : undefined} className={cn("sr-only")}>
-                Story by {activeStory?.displayName || 'User'} {activeStory?.text ? `- Caption: ${activeStory.text}` : ''}
-             </DialogTitle>
+             {activeStory && ( // Ensure activeStory exists before rendering title
+               <DialogTitle id={`story-title-${activeStory.id}`} className={cn("sr-only")}>
+                 Story by {activeStory?.displayName || 'User'} {activeStory?.text ? `- Caption: ${activeStory.text}` : ''}
+               </DialogTitle>
+             )}
              {activeStory && (
-                <div className="relative w-full h-full">
+                <div className="relative w-full h-full" onClick={() => setHasInteracted(true)}> {/* Register interaction on main container click */}
                    {/* Navigation Areas */}
                    <div className="absolute top-0 left-0 h-full w-1/3 z-30 cursor-pointer" onClick={handlePrevStory} aria-label="Previous story"></div>
                    <div className="absolute top-0 right-0 h-full w-1/3 z-30 cursor-pointer" onClick={handleNextStory} aria-label="Next story"></div>
@@ -257,7 +343,8 @@ export function StoryViewer({ stories }: StoryViewerProps) {
                             src={activeStory.videoUrl}
                             autoPlay
                             playsInline
-                            muted={isMuted} // Mute video if music is also muted
+                            muted // Video should always be muted if music might play
+                            loop={!activeStory.musicUrl} // Loop video only if there's no music
                             className="w-full h-full object-contain"
                             onEnded={handleNextStory} // Go to next story when video ends
                             data-ai-hint="story full view video"
@@ -278,7 +365,7 @@ export function StoryViewer({ stories }: StoryViewerProps) {
                     )}
 
                     {/* Hidden Audio Element for Background Music */}
-                    <audio ref={audioRef} loop preload="auto" className="hidden"></audio>
+                    <audio ref={audioRef} loop={!activeStory.musicEndTime} preload="auto" className="hidden"></audio>
                 </div>
              )}
           </DialogContent>
@@ -287,4 +374,3 @@ export function StoryViewer({ stories }: StoryViewerProps) {
     </div>
   );
 }
-
