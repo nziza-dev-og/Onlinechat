@@ -83,6 +83,13 @@ const nextConfig: NextConfig = {
          port: '',
          pathname: '/**',
        },
+       // Add pattern for macdn.hakunaymatata.com
+       {
+         protocol: 'https',
+         hostname: 'macdn.hakunaymatata.com',
+         port: '',
+         pathname: '/**',
+       },
     ],
   },
    // The `env` block is removed. NEXT_PUBLIC_ prefixed variables are automatically available client-side.
