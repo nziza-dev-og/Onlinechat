@@ -1,18 +1,19 @@
+
 "use client";
 
 import * as React from 'react';
 import type { PostSerializable } from '@/types';
-import { Card, CardContent } from '@/components/ui/card';
 import Image from 'next/image';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { getInitials, resolveMediaUrl, cn } from '@/lib/utils';
-import { Dialog, DialogContent, DialogTrigger, DialogTitle } from "@/components/ui/dialog";
-import { X, Volume2, VolumeX, Trash2, Loader2, AlertTriangle } from 'lucide-react';
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"; // Keep DialogTitle
+import { X, Volume2, VolumeX, Trash2, Loader2, AlertTriangle, ChevronLeft, ChevronRight, Pause, Play as PlayIcon } from 'lucide-react'; // Added Chevrons, Pause, Play
 import { Button } from '../ui/button';
 import { AnimatePresence, motion } from "framer-motion";
 import { deletePost } from '@/lib/posts.service';
 import { useToast } from '@/hooks/use-toast';
+import { Progress } from "@/components/ui/progress"; // Import Progress
 import {
     AlertDialog,
     AlertDialogAction,
@@ -21,263 +22,446 @@ import {
     AlertDialogDescription,
     AlertDialogFooter,
     AlertDialogHeader,
-    AlertDialogTitle as AlertDialogTitleComponent,
+    AlertDialogTitle as AlertDialogTitleComponent, // Rename imported component
     AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
-interface StoryViewerProps {
-  stories: PostSerializable[];
-  userId: string | null;
-  onDelete: (storyId: string) => void;
+interface StoryModalViewerProps {
+  userStories: PostSerializable[]; // Array of stories for the selected user
+  initialIndex?: number; // Which story to start with
+  currentUserId: string | null; // ID of the viewing user
+  onClose: () => void; // Function to close the modal
+  onDelete: (storyId: string) => void; // Function to call when a story is deleted
 }
 
+const STORY_DURATION_SECONDS = 8; // Default duration for image stories
+
+// Format timestamp for stories (short relative time)
 const formatStoryTimestamp = (timestampISO: string | null | undefined): string => {
-  if (!timestampISO) return 'just now';
-  try {
-    const date = parseISO(timestampISO);
-    return formatDistanceToNowStrict(date, { addSuffix: true });
-  } catch {
-    return 'Invalid date';
-  }
+    if (!timestampISO) return 'just now';
+    try {
+        const date = parseISO(timestampISO);
+        return formatDistanceToNowStrict(date, { addSuffix: true });
+    } catch {
+        return 'Invalid date';
+    }
 };
 
-export function StoryViewer({ stories, userId, onDelete }: StoryViewerProps) {
-  const [currentStoryIndex, setCurrentStoryIndex] = React.useState(0);
-  const [openStory, setOpenStory] = React.useState<PostSerializable | null>(null);
-  const [isDeleting, setIsDeleting] = React.useState(false);
+export function StoryModalViewer({
+  userStories = [],
+  initialIndex = 0,
+  currentUserId,
+  onClose,
+  onDelete,
+}: StoryModalViewerProps) {
+  const [currentIndex, setCurrentIndex] = React.useState(initialIndex);
+  const [isPaused, setIsPaused] = React.useState(false);
   const [isMuted, setIsMuted] = React.useState(false);
-  const [hasInteracted, setHasInteracted] = React.useState(false);
-  const audioRef = React.useRef<HTMLVideoElement>(null); // Changed to HTMLVideoElement to match usage
-  const { toast } = useToast();
+  const [progress, setProgress] = React.useState(0);
+  const [isDeleting, setIsDeleting] = React.useState(false);
 
-  const activeStory = openStory ? stories.find(s => s.id === openStory.id) : null;
-  const isOwner = activeStory ? userId === activeStory.uid : false;
+  const mediaRef = React.useRef<HTMLVideoElement | HTMLAudioElement | null>(null); // Can be video or audio
+  const timerRef = React.useRef<NodeJS.Timeout | null>(null);
+  const progressIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
+
+  const { toast } = useToast();
+  const activeStory = userStories[currentIndex];
+  const isOwner = activeStory ? currentUserId === activeStory.uid : false;
 
   const resolvedImageUrl = activeStory ? resolveMediaUrl(activeStory.imageUrl) : undefined;
   const resolvedVideoUrl = activeStory?.videoUrl ? resolveMediaUrl(activeStory.videoUrl) : undefined;
-  // Added logic for music URL - assuming music is played in the video element if no other audio context
   const resolvedMusicUrl = activeStory ? resolveMediaUrl(activeStory.musicUrl) : undefined;
 
-  const handleDelete = async () => {
-    if (!activeStory) return;
-    setIsDeleting(true);
-    try {
-      // Assuming deletePost takes postId and optionally userId
-      await deletePost(activeStory.id, userId || ''); // Pass userId for ownership check in backend
-      toast({ title: "Story deleted." });
-      onDelete(activeStory.id);
-      setOpenStory(null);
-    } catch (error) {
-      toast({ title: "Failed to delete story", description: (error as Error).message, variant: "destructive" });
-    } finally {
-      setIsDeleting(false);
+  // --- Navigation ---
+  const goToNextStory = React.useCallback(() => {
+    setCurrentIndex((prevIndex) => {
+      if (prevIndex < userStories.length - 1) {
+        return prevIndex + 1;
+      }
+      onClose(); // Close modal if it's the last story
+      return prevIndex;
+    });
+  }, [userStories.length, onClose]);
+
+  const goToPrevStory = () => {
+    setCurrentIndex((prevIndex) => Math.max(0, prevIndex - 1));
+  };
+
+  // --- Media & Progress Handling ---
+  const stopMediaAndTimers = React.useCallback(() => {
+    // Pause media
+    if (mediaRef.current) {
+      mediaRef.current.pause();
+    }
+    // Clear timers
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    if (progressIntervalRef.current) {
+      clearInterval(progressIntervalRef.current);
+      progressIntervalRef.current = null;
+    }
+  }, []);
+
+  const startProgress = React.useCallback((durationSeconds: number) => {
+    stopMediaAndTimers(); // Clear previous timers/intervals
+    setProgress(0);
+    const intervalTime = 50; // Update progress roughly 20 times per second
+    const totalSteps = (durationSeconds * 1000) / intervalTime;
+    let currentStep = 0;
+
+    progressIntervalRef.current = setInterval(() => {
+      if (isPaused || !isMountedRef.current) return; // Check isPaused and mount status
+      currentStep++;
+      const currentProgress = (currentStep / totalSteps) * 100;
+      setProgress(currentProgress);
+      if (currentProgress >= 100) {
+        goToNextStory();
+      }
+    }, intervalTime);
+  }, [stopMediaAndTimers, isPaused, goToNextStory]);
+
+  const handleMediaLoaded = React.useCallback(() => {
+    const mediaElement = mediaRef.current;
+    if (!mediaElement) return;
+
+    // Apply music trimming if applicable
+    if (activeStory?.musicUrl && mediaElement instanceof HTMLAudioElement) {
+         const startTime = activeStory.musicStartTime ?? 0;
+         mediaElement.currentTime = startTime;
+         console.log(`Audio starting at: ${startTime}s`);
+
+         // If there's an end time, set up a listener to pause/advance
+         if (activeStory.musicEndTime !== null && activeStory.musicEndTime > startTime) {
+             const durationToPlay = (activeStory.musicEndTime - startTime) * 1000;
+             if (timerRef.current) clearTimeout(timerRef.current);
+             timerRef.current = setTimeout(() => {
+                 if (!isPaused && isMountedRef.current) {
+                     console.log(`Audio reached end time: ${activeStory.musicEndTime}s. Advancing.`);
+                     goToNextStory();
+                 }
+             }, durationToPlay);
+              startProgress((activeStory.musicEndTime - startTime)); // Start progress bar for trim duration
+         } else {
+            // No end time, use full audio duration for progress (if finite)
+             if (isFinite(mediaElement.duration)) {
+                const remainingDuration = mediaElement.duration - startTime;
+                startProgress(remainingDuration);
+             } else {
+                 console.warn("Audio duration is infinite/NaN, cannot use for progress.");
+                  startProgress(STORY_DURATION_SECONDS); // Fallback duration
+             }
+         }
+    } else if (mediaElement instanceof HTMLVideoElement && isFinite(mediaElement.duration)) {
+        // For video, use its duration
+        startProgress(mediaElement.duration);
+    } else {
+        // For images or media with unknown duration, use default
+        startProgress(STORY_DURATION_SECONDS);
+    }
+
+    // Attempt to play after metadata is loaded (requires user interaction first)
+     mediaElement.play().catch(e => console.warn("Autoplay prevented:", e));
+
+  }, [activeStory, startProgress, isPaused, goToNextStory]); // Added goToNextStory
+
+  // Reset and play media when story index changes
+   React.useEffect(() => {
+     stopMediaAndTimers();
+     setProgress(0);
+     const mediaElement = mediaRef.current;
+
+     if (mediaElement) {
+         // Check if source needs updating (important for video/audio)
+         const newSrc = resolvedVideoUrl || resolvedMusicUrl;
+         if (newSrc && mediaElement.currentSrc !== newSrc) {
+             mediaElement.src = newSrc;
+             mediaElement.load(); // Important to load the new source
+         } else if (!newSrc && mediaElement.currentSrc) {
+              // If there's no media for the new story, clear the src
+              mediaElement.src = '';
+         }
+
+         mediaElement.muted = isMuted; // Apply mute state
+         mediaElement.currentTime = activeStory?.musicStartTime ?? 0; // Apply start time
+
+          // Remove previous listeners before adding new ones
+         mediaElement.removeEventListener('loadedmetadata', handleMediaLoaded);
+         mediaElement.removeEventListener('ended', goToNextStory); // Use goToNextStory for 'ended'
+         mediaElement.removeEventListener('play', () => setIsPaused(false));
+         mediaElement.removeEventListener('pause', () => setIsPaused(true));
+
+          // Add listeners for the current media
+         mediaElement.addEventListener('loadedmetadata', handleMediaLoaded);
+         // Use ended event primarily for untrimmed media or video loops
+         mediaElement.addEventListener('ended', goToNextStory); // Go next when media finishes naturally
+         mediaElement.addEventListener('play', () => {if (isMountedRef.current) setIsPaused(false)});
+         mediaElement.addEventListener('pause', () => {if (isMountedRef.current) setIsPaused(true)});
+
+         // Try playing (might require prior user interaction)
+          mediaElement.play().catch(e => console.warn("Autoplay prevented on story change:", e));
+     } else if (resolvedImageUrl) {
+         // Handle image-only stories
+         startProgress(STORY_DURATION_SECONDS);
+     }
+
+   }, [currentIndex, activeStory, resolvedVideoUrl, resolvedMusicUrl, resolvedImageUrl, stopMediaAndTimers, handleMediaLoaded, startProgress, isMuted, goToNextStory]); // Ensure all dependencies are listed
+
+
+  // Pause/Resume logic
+  const handleInteractionStart = () => {
+    if (!isPaused) {
+        setIsPaused(true);
+         if (mediaRef.current) mediaRef.current.pause();
+         if (timerRef.current) clearTimeout(timerRef.current);
+         if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
     }
   };
 
-  // Handle opening a story - this should be triggered by clicking a story preview
-  const handleOpenStory = (story: PostSerializable) => {
-     setOpenStory(story);
-     setHasInteracted(true); // Assume interaction when opening
+  const handleInteractionEnd = () => {
+    if (isPaused) {
+        setIsPaused(false);
+        // Resume media and progress
+        if (mediaRef.current) mediaRef.current.play().catch(e => console.warn("Resume play prevented:", e));
+        // Restart progress calculation from current point
+        const mediaElement = mediaRef.current;
+        let remainingDuration = STORY_DURATION_SECONDS; // Default for images
+        if (mediaElement && isFinite(mediaElement.duration)) {
+            const currentTime = mediaElement.currentTime;
+            const endTime = (mediaElement instanceof HTMLAudioElement && activeStory?.musicEndTime !== null) ? activeStory.musicEndTime : mediaElement.duration;
+            if (endTime > currentTime) {
+                remainingDuration = endTime - currentTime;
+            }
+        }
+        startProgress(remainingDuration);
+    }
+  };
+
+   // Mount/Unmount tracking
+   const isMountedRef = React.useRef(true);
+   React.useEffect(() => {
+       isMountedRef.current = true;
+       return () => {
+           isMountedRef.current = false;
+           stopMediaAndTimers(); // Clean up timers on unmount
+       };
+   }, [stopMediaAndTimers]);
+
+
+  // Delete handler
+  const handleDeleteClick = async () => {
+    if (!activeStory || isDeleting) return;
+    setIsDeleting(true);
+    // Pause story while confirming delete
+    handleInteractionStart();
+    try {
+      await deletePost(activeStory.id, currentUserId || '');
+      toast({ title: "Story Deleted", description: "The story has been removed." });
+      onDelete(activeStory.id); // Notify parent to remove from its state
+      // Decide how to proceed after delete: go next or close
+      if (userStories.length <= 1) {
+         onClose();
+      } else {
+         // Move to the next story, adjusting index if necessary
+         // This logic needs refinement if deleting from middle
+         if (currentIndex >= userStories.length - 1) { // If it was the last story
+             goToPrevStory(); // Go to previous
+         } else {
+              // If not the last, the next story will shift into the current index
+              // Force a re-render/reload of the current index if needed,
+              // or simply let the parent's state update handle it.
+              // For simplicity, let's just stay at current index (which now holds the next story)
+              // No index change needed, but restart progress for the new story at this index.
+               setProgress(0); // Reset progress visually
+               // The main useEffect will handle starting the new story at currentIndex
+         }
+      }
+    } catch (error: any) {
+      console.error("Error deleting story:", error);
+      toast({ title: "Delete Failed", description: error.message || "Could not delete the story.", variant: "destructive" });
+       // Resume story if delete fails
+      handleInteractionEnd();
+    } finally {
+       // Ensure deleting state is reset even if component unmounts quickly
+       if(isMountedRef.current) setIsDeleting(false);
+    }
   };
 
 
-  // Preview Card Component (Internal)
-  const StoryPreviewCard = ({ story }: { story: PostSerializable }) => {
-      const previewImageUrl = resolveMediaUrl(story.imageUrl) || resolveMediaUrl(story.videoUrl); // Use video as fallback preview
-      return (
-          <Card
-              className="w-28 h-40 sm:w-32 sm:h-48 relative overflow-hidden cursor-pointer group border-2 border-border hover:border-primary transition-all duration-200 shadow-md hover:shadow-lg"
-              onClick={() => handleOpenStory(story)}
-              role="button"
-              tabIndex={0}
-              aria-label={`View story by ${story.displayName || 'User'}`}
-          >
-              {previewImageUrl ? (
-                  <Image
-                      src={previewImageUrl}
-                      alt={`Story by ${story.displayName}`}
-                      fill
-                      style={{ objectFit: 'cover' }}
-                      className="group-hover:scale-105 transition-transform duration-300"
-                  />
-              ) : (
-                  <div className="w-full h-full bg-muted flex items-center justify-center text-muted-foreground">
-                      <AlertTriangle className="h-6 w-6" />
-                  </div>
-              )}
-               <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent"></div>
-               <div className="absolute bottom-2 left-2 right-2 flex items-end gap-1.5">
-                    <Avatar className="h-6 w-6 border-2 border-background flex-shrink-0">
-                       <AvatarImage src={story.photoURL || undefined} alt={story.displayName || 'User'} data-ai-hint="story preview avatar"/>
-                       <AvatarFallback className="text-xs">{getInitials(story.displayName)}</AvatarFallback>
-                    </Avatar>
-                    <p className="text-xs font-medium text-white truncate flex-1">{story.displayName || 'User'}</p>
-               </div>
-          </Card>
-      );
-  };
+  if (!activeStory) {
+    return null; // Should not happen if Dialog's open state is managed correctly
+  }
 
-
-  // Main return statement for the viewer container and the modal
   return (
-    <>
-      {/* Grid for Story Previews */}
-      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3 p-1">
-         {stories.map((story) => (
-            <StoryPreviewCard key={story.id} story={story} />
-         ))}
-      </div>
-
-      {/* Dialog for Viewing Full Story */}
-      <AnimatePresence>
-        {activeStory && (
-          <Dialog open={!!openStory} onOpenChange={(open) => !open && setOpenStory(null)}>
-             <DialogTitle className={cn("sr-only")}>
-                 Story by {activeStory.displayName || 'User'}
-             </DialogTitle>
-            <DialogContent className="p-0 max-w-md sm:max-w-lg md:max-w-xl lg:max-w-2xl w-[90vw] h-auto aspect-[9/16] overflow-hidden border-0 shadow-2xl bg-black">
-              <div className="relative w-full h-full flex flex-col text-white">
-                  {/* Progress Bar / Header Area */}
-                 <div className="absolute top-0 left-0 right-0 p-3 z-20">
-                     <div className="h-1 w-full bg-white/30 rounded-full overflow-hidden mb-2">
-                         {/* Placeholder for actual progress bar animation */}
-                         <motion.div
-                           className="h-full bg-white"
-                           initial={{ width: '0%' }}
-                           animate={{ width: '100%' }} // This needs real timer logic
-                           transition={{ duration: 5 }} // Example duration, needs sync with media
-                         />
-                     </div>
-                     <div className="flex items-center justify-between">
-                         <div className="flex items-center gap-2">
-                             <Avatar className="h-8 w-8">
-                                <AvatarImage src={activeStory.photoURL || undefined} alt={activeStory.displayName || 'User'} data-ai-hint="story avatar large"/>
-                                <AvatarFallback>{getInitials(activeStory.displayName)}</AvatarFallback>
-                             </Avatar>
-                             <div>
-                                 <p className="text-sm font-semibold leading-tight">{activeStory.displayName || 'User'}</p>
-                                 <p className="text-xs text-white/70 leading-tight">
-                                     {formatStoryTimestamp(activeStory.timestamp)}
-                                 </p>
-                             </div>
-                         </div>
-                         <Button
-                             variant="ghost"
-                             size="icon"
-                             onClick={() => setOpenStory(null)}
-                             className="h-8 w-8 text-white/80 hover:bg-white/20 hover:text-white"
-                             aria-label="Close story"
-                         >
-                             <X className="w-5 h-5" />
-                         </Button>
+    // Use AnimatePresence for smooth modal transition (optional)
+    // <AnimatePresence>
+      <Dialog open={true} onOpenChange={(open) => !open && onClose()}>
+        {/* Add DialogTitle for accessibility */}
+        <DialogTitle className={cn("sr-only")}>
+            Story by {activeStory.displayName || 'User'}
+        </DialogTitle>
+        {/* Make content responsive and aspect ratio controlled */}
+        <DialogContent className="p-0 max-w-md sm:max-w-lg md:max-w-md lg:max-w-md w-[90vw] h-auto aspect-[9/16] overflow-hidden border-0 shadow-2xl bg-black rounded-lg flex items-center justify-center">
+          {/* Ensure inner div takes full height */}
+          <div
+            className="relative w-full h-full flex flex-col text-white select-none"
+             // Add mouse/touch handlers for pausing
+             onMouseDown={handleInteractionStart}
+             onTouchStart={handleInteractionStart}
+             onMouseUp={handleInteractionEnd}
+             onTouchEnd={handleInteractionEnd}
+             onMouseLeave={handleInteractionEnd} // Resume if mouse leaves while held down
+           >
+            {/* Progress Bar Container */}
+            <div className="absolute top-0 left-0 right-0 p-2 z-20">
+              <div className="flex items-center gap-1 h-1 w-full">
+                {userStories.map((_, index) => (
+                  <div key={index} className="flex-1 h-full bg-white/30 rounded-full overflow-hidden">
+                    <motion.div
+                      className="h-full bg-white"
+                      initial={{ width: '0%' }}
+                      animate={{
+                        width: index < currentIndex ? '100%' : (index === currentIndex ? `${progress}%` : '0%')
+                      }}
+                      transition={{ duration: index === currentIndex ? 0.05 : 0, ease: "linear" }} // Fast update for current bar
+                    />
+                  </div>
+                ))}
+              </div>
+               {/* Header Info (Avatar, Name, Time, Close) */}
+               <div className="flex items-center justify-between mt-2">
+                 <div className="flex items-center gap-2">
+                     <Avatar className="h-8 w-8">
+                         <AvatarImage src={activeStory.photoURL || undefined} alt={activeStory.displayName || 'User'} data-ai-hint="story author avatar"/>
+                         <AvatarFallback>{getInitials(activeStory.displayName)}</AvatarFallback>
+                     </Avatar>
+                     <div>
+                         <p className="text-sm font-semibold leading-tight">{activeStory.displayName || 'User'}</p>
+                         <p className="text-xs text-white/70 leading-tight">
+                             {formatStoryTimestamp(activeStory.timestamp)}
+                         </p>
                      </div>
                  </div>
+                 <Button
+                     variant="ghost"
+                     size="icon"
+                     onClick={(e) => { e.stopPropagation(); onClose(); }} // Prevent pausing
+                     className="h-8 w-8 text-white/80 hover:bg-white/20 hover:text-white"
+                     aria-label="Close story viewer"
+                 >
+                     <X className="w-5 h-5" />
+                 </Button>
+               </div>
+            </div>
 
-                {/* Media Content */}
-                <div className="flex-1 flex items-center justify-center overflow-hidden relative">
-                  {resolvedVideoUrl ? (
-                    <video
-                      ref={audioRef} // Use this ref for video as well
-                      src={resolvedVideoUrl}
-                      className="max-w-full max-h-full object-contain" // Contain fits the video
-                      // controls // Keep controls off for story feel
-                      muted={isMuted}
-                      autoPlay={hasInteracted} // Autoplay only after interaction
-                      playsInline
-                      loop={!resolvedMusicUrl} // Loop video if there's no separate music
-                      // Add event listeners for progress, end etc.
-                    />
-                  ) : resolvedImageUrl ? (
-                    <Image
-                      src={resolvedImageUrl}
-                      alt={`Story by ${activeStory.displayName}`}
-                      fill
-                      style={{ objectFit: 'contain' }} // Contain fits the image
-                      className="pointer-events-none" // Prevent dragging
-                    />
-                  ) : (
-                    <div className="p-6 text-center text-gray-300">No media found.</div>
-                  )}
-                   {/* Music Player (Hidden, controlled programmatically) */}
-                   {resolvedMusicUrl && (
-                       <audio
-                           ref={audioRef as React.RefObject<HTMLAudioElement>} // Need separate ref if video exists
-                           src={resolvedMusicUrl}
-                           muted={isMuted}
-                           autoPlay={hasInteracted}
-                           loop
-                           // Add event listeners if needed for music controls
-                       > Your browser does not support the audio element. </audio>
-                   )}
+            {/* Clickable Navigation Areas */}
+             <div className="absolute inset-y-0 left-0 w-1/3 z-30" onClick={(e) => { e.stopPropagation(); goToPrevStory(); }}></div>
+             <div className="absolute inset-y-0 right-0 w-1/3 z-30" onClick={(e) => { e.stopPropagation(); goToNextStory(); }}></div>
+
+            {/* Media Content */}
+            <div className="flex-1 flex items-center justify-center overflow-hidden relative">
+              {resolvedVideoUrl ? (
+                <video
+                  ref={mediaRef as React.RefObject<HTMLVideoElement>}
+                  key={activeStory.id + '-video'} // Key to force re-render on story change
+                  src={resolvedVideoUrl}
+                  className="max-w-full max-h-full object-contain pointer-events-none"
+                  muted={isMuted}
+                  playsInline
+                  loop={!resolvedMusicUrl} // Loop video only if no separate music
+                />
+              ) : resolvedImageUrl ? (
+                <Image
+                  key={activeStory.id + '-image'}
+                  src={resolvedImageUrl}
+                  alt={`Story by ${activeStory.displayName}`}
+                  fill
+                  style={{ objectFit: 'contain' }}
+                  className="pointer-events-none"
+                  priority={currentIndex === initialIndex} // Prioritize loading first image
+                  unoptimized // Good for external URLs
+                />
+              ) : (
+                <div className="p-6 text-center text-gray-300 flex flex-col items-center gap-2">
+                    <AlertTriangle className="w-10 h-10 text-yellow-400"/>
+                    <span>No media found for this story.</span>
                 </div>
+              )}
+              {/* Separate Audio element for music */}
+              {resolvedMusicUrl && !resolvedVideoUrl && ( // Play music only if there's no video
+                   <audio
+                       ref={mediaRef as React.RefObject<HTMLAudioElement>}
+                       key={activeStory.id + '-music'}
+                       src={resolvedMusicUrl}
+                       muted={isMuted}
+                       loop // Music usually loops unless trimmed
+                       playsInline
+                   > Your browser does not support the audio element. </audio>
+               )}
+            </div>
 
-                {/* Footer with actions */}
-                <div className="absolute bottom-0 left-0 right-0 p-4 flex items-center justify-between z-20 bg-gradient-to-t from-black/60 to-transparent">
-                   {/* Mute/Unmute (Only if music or video has audio) */}
-                   {(resolvedVideoUrl || resolvedMusicUrl) && (
-                         <Button
-                            variant="ghost"
-                            onClick={() => setIsMuted(!isMuted)}
-                            size="icon"
-                            className="text-white/80 hover:bg-white/20 hover:text-white"
-                            aria-label={isMuted ? "Unmute" : "Mute"}
-                         >
-                           {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
-                         </Button>
-                   )}
-                   {/* Spacer if no audio controls */}
-                   {!(resolvedVideoUrl || resolvedMusicUrl) && <div></div>}
+             {/* Footer with Mute/Delete */}
+             <div className="absolute bottom-0 left-0 right-0 p-3 flex items-center justify-between z-20 bg-gradient-to-t from-black/50 to-transparent">
+                {(resolvedVideoUrl || resolvedMusicUrl) ? (
+                     <Button
+                         variant="ghost"
+                         onClick={(e) => { e.stopPropagation(); setIsMuted(!isMuted); }}
+                         size="icon"
+                         className="text-white/80 hover:bg-white/20 hover:text-white"
+                         aria-label={isMuted ? "Unmute" : "Mute"}
+                     >
+                       {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+                     </Button>
+                ) : <div />} {/* Placeholder to keep delete button on the right */}
 
-                  {/* Delete if owner */}
-                  {isOwner && (
+                 {isOwner && (
                     <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button
-                           variant="ghost"
-                           size="icon"
-                           className="text-red-400 hover:bg-red-500/20 hover:text-red-300"
-                           aria-label="Delete story"
-                        >
-                          <Trash2 className="w-5 h-5" />
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitleComponent className="flex items-center gap-2">
-                             <AlertTriangle className="text-destructive"/> Delete this story?
-                          </AlertDialogTitleComponent>
-                          <AlertDialogDescription>This action cannot be undone and will permanently remove your story.</AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
-                          <AlertDialogAction
-                             onClick={handleDelete}
-                             disabled={isDeleting}
-                             className={cn("bg-destructive text-destructive-foreground hover:bg-destructive/90")} // Consistent destructive style
+                       <AlertDialogTrigger asChild>
+                          <Button
+                             variant="ghost"
+                             size="icon"
+                             onClick={(e) => e.stopPropagation()} // Prevent pausing
+                             className="text-red-400 hover:bg-red-500/20 hover:text-red-300"
+                             aria-label="Delete story"
                           >
-                            {isDeleting ? <Loader2 className="animate-spin h-4 w-4 mr-2" /> : null}
-                            Delete
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
+                             <Trash2 className="w-5 h-5" />
+                          </Button>
+                       </AlertDialogTrigger>
+                       <AlertDialogContent onClick={(e) => e.stopPropagation()}> {/* Prevent closing modal */}
+                          <AlertDialogHeader>
+                             <AlertDialogTitleComponent className="flex items-center gap-2">
+                                <AlertTriangle className="text-destructive"/> Delete this story?
+                             </AlertDialogTitleComponent>
+                             <AlertDialogDescription>This action cannot be undone and will permanently remove your story.</AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                             <AlertDialogCancel disabled={isDeleting} onClick={(e) => {e.stopPropagation(); handleInteractionEnd(); }}>Cancel</AlertDialogCancel>
+                             <AlertDialogAction
+                                onClick={(e) => {e.stopPropagation(); handleDeleteClick();}}
+                                disabled={isDeleting}
+                                className={cn("bg-destructive text-destructive-foreground hover:bg-destructive/90")}
+                             >
+                                {isDeleting ? <Loader2 className="animate-spin h-4 w-4 mr-2" /> : null}
+                                Delete
+                             </AlertDialogAction>
+                          </AlertDialogFooter>
+                       </AlertDialogContent>
                     </AlertDialog>
-                  )}
-                   {/* Spacer if not owner */}
-                   {!isOwner && <div></div>}
-                </div>
+                 )}
+                 {!isOwner && <div />} {/* Placeholder */}
+             </div>
 
-                 {/* Optional Caption Overlay */}
-                 {activeStory.text && (
-                      <div className="absolute bottom-16 left-4 right-4 z-10 text-center">
-                          <p className="text-sm bg-black/60 px-2 py-1 rounded inline-block">{activeStory.text}</p>
-                      </div>
-                  )}
+             {/* Optional Caption Overlay */}
+             {activeStory.text && (
+                  <div className="absolute bottom-16 left-4 right-4 z-10 text-center pointer-events-none">
+                      <p className="text-sm bg-black/60 px-2 py-1 rounded inline-block">{activeStory.text}</p>
+                  </div>
+              )}
 
-              </div>
-            </DialogContent>
-          </Dialog>
-        )}
-      </AnimatePresence>
-    </>
+          </div>
+        </DialogContent>
+      </Dialog>
+    // </AnimatePresence>
   );
 }
