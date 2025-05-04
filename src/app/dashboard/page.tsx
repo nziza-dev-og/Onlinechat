@@ -6,7 +6,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Loader2, Users, MessageSquareText, Image as ImageIcon, User as UserIcon, LogOut, Settings, BarChart2, Bell, Check, Palette } from 'lucide-react'; // Added Bell, Check, Palette
+import { Loader2, Users, MessageSquareText, Image as ImageIcon, User as UserIcon, LogOut, Settings, BarChart2, Bell, Check, Palette, Clapperboard } from 'lucide-react'; // Added Clapperboard
 import Link from 'next/link';
 import { getOnlineUsersCount } from '@/lib/admin.service'; // Re-using admin service for count
 import { useToast } from '@/hooks/use-toast';
@@ -292,6 +292,11 @@ export default function DashboardPage() {
                   <ImageIcon className="mr-2 h-4 w-4" /> View Posts Feed
                 </Link>
               </Button>
+               <Button asChild variant="outline" className="w-full justify-start">
+                <Link href="/stories">
+                  <Clapperboard className="mr-2 h-4 w-4" /> View Stories
+                </Link>
+              </Button>
               <Button asChild variant="outline" className="w-full justify-start">
                 <Link href="/profile">
                   <UserIcon className="mr-2 h-4 w-4" /> Edit Profile
@@ -412,3 +417,4 @@ export default function DashboardPage() {
     </div>
   );
 }
+
