@@ -1,4 +1,3 @@
-
 "use client";
 
 import * as React from 'react';
@@ -80,6 +79,19 @@ interface StoryFormProps {
   onStoryAdded?: (newStory: Post) => void;
 }
 
+// Basic check for likely direct audio file URLs
+const isDirectAudioUrl = (url: string): boolean => {
+    try {
+        const parsedUrl = new URL(url);
+        // Simple check based on file extension in the pathname
+        return /\.(mp3|wav|ogg|aac|m4a|opus)$/i.test(parsedUrl.pathname);
+    } catch (e) {
+        // Invalid URL format
+        return false;
+    }
+};
+
+
 export function StoryForm({ onStoryAdded }: StoryFormProps) {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -138,24 +150,30 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
         const audioUrl = selectedMusicTrackUrl;
         if (!audioUrl || audioUrl === 'none') return;
 
-        // Basic check for likely non-direct URLs (can be improved)
-        if (audioUrl.includes('soundcloud.com') || audioUrl.includes('spotify.com') || !/\.(mp3|wav|ogg|aac|m4a)$/i.test(audioUrl)) {
+        // **Enhanced Check:** Verify if it's likely a direct audio file URL
+        if (!isDirectAudioUrl(audioUrl)) {
             toast({
                 variant: "destructive",
                 title: "Preview Unavailable",
-                description: "Direct audio preview may not work for this URL type. Please use direct audio file links (.mp3, .wav, etc.).",
-                duration: 5000,
+                description: "Direct audio preview only works for links ending in .mp3, .wav, etc. Links from streaming sites (SoundCloud, Spotify) are not supported for preview.",
+                duration: 6000, // Show longer
             });
-            // Optionally attempt to play anyway, or just return
-            // return;
+            console.warn("Preventing audio preview for non-direct URL:", audioUrl);
+            return; // Do not attempt to play
         }
 
+        // Proceed with playing if it looks like a direct URL
         if (!previewAudioRef.current) {
             previewAudioRef.current = new Audio(audioUrl);
              previewAudioRef.current.onended = () => setIsPreviewPlaying(false);
              previewAudioRef.current.onerror = (e) => {
                  console.error("Audio preview error:", e);
-                 toast({ variant: "destructive", title: "Preview Error", description: "Could not play audio preview." });
+                 // Provide more context in the error message
+                 toast({
+                     variant: "destructive",
+                     title: "Preview Error",
+                     description: `Could not play audio preview. Ensure the URL is a direct link to an audio file and accessible. Error: ${previewAudioRef.current?.error?.message || 'Unknown audio error'}`
+                 });
                  setIsPreviewPlaying(false);
              }
         } else {
@@ -170,9 +188,21 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
             previewAudioRef.current.pause();
         } else {
             previewAudioRef.current.currentTime = 0; // Start from beginning
-            previewAudioRef.current.play().catch(e => console.error("Preview play error:", e));
+            // Attempt to play and catch potential errors immediately
+            previewAudioRef.current.play().then(() => {
+                console.log("Audio preview started for:", audioUrl);
+                setIsPreviewPlaying(true); // Set playing state only on successful play start
+            }).catch(e => {
+                console.error("Preview play() error:", e);
+                toast({
+                    variant: "destructive",
+                    title: "Preview Error",
+                    description: `Could not start audio preview. ${e.message || 'Unknown error'}`
+                });
+                setIsPreviewPlaying(false); // Ensure state is false if play fails
+            });
         }
-        setIsPreviewPlaying(!isPreviewPlaying);
+        // Don't toggle state here, let the play().then() handle it for success
 
    }, [selectedMusicTrackUrl, isPreviewPlaying, toast]);
 
