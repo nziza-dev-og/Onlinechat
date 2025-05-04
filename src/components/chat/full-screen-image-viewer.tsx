@@ -5,7 +5,8 @@ import * as React from 'react';
 import Image from 'next/image';
 import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogOverlay } from '@/components/ui/dialog'; // Using Dialog for modal
+import { Dialog, DialogContent, DialogOverlay, DialogTitle } from '@/components/ui/dialog'; // Import DialogTitle
+import { cn } from '@/lib/utils'; // Import cn
 
 interface FullScreenImageViewerProps {
   imageUrl: string;
@@ -23,7 +24,12 @@ export function FullScreenImageViewer({ imageUrl, altText, onClose }: FullScreen
         onEscapeKeyDown={onClose}
         onPointerDownOutside={onClose}
         aria-label="Full screen image viewer"
+        aria-describedby={altText ? 'image-viewer-description' : undefined} // Optional description if altText is used
       >
+        {/* Visually Hidden Title for Accessibility */}
+        <DialogTitle className={cn("sr-only")} id="image-viewer-title">
+          {altText || 'Full screen image'}
+        </DialogTitle>
         <div className="relative w-full h-full flex items-center justify-center">
            {/* Close button positioned top-right */}
            <Button
@@ -54,7 +60,11 @@ export function FullScreenImageViewer({ imageUrl, altText, onClose }: FullScreen
                    data-ai-hint="full screen chat image"
                    unoptimized // Useful if images can be external and varied
                    priority // Prioritize loading the full-screen image
+                   // Add aria-describedby if using altText as a description
+                   aria-describedby={altText ? 'image-viewer-description' : undefined}
                />
+               {/* Optional hidden description for screen readers */}
+               {altText && <p id="image-viewer-description" className={cn("sr-only")}>{altText}</p>}
            </div>
         </div>
       </DialogContent>
