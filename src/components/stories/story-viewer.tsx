@@ -9,13 +9,28 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { getInitials, resolveMediaUrl } from '@/lib/utils'; // Removed platform-specific checks
 import { Dialog, DialogContent, DialogTrigger, DialogTitle } from "@/components/ui/dialog"; // Import DialogTitle
-import { X, Volume2, VolumeX } from 'lucide-react'; // Added Volume icons
+import { X, Volume2, VolumeX, Trash2, Loader2, AlertTriangle } from 'lucide-react'; // Added Volume, Trash2, Loader2, AlertTriangle icons
 import { Button } from '../ui/button';
 import { AnimatePresence, motion } from 'framer-motion';
 import { cn } from '@/lib/utils'; // Import cn for sr-only class
+import { deletePost } from '@/lib/posts.service'; // Import deletePost service
+import { useToast } from '@/hooks/use-toast'; // Import useToast
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle as AlertDialogTitleComponent, // Alias to avoid name clash
+    AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"; // Import AlertDialog components
 
 interface StoryViewerProps {
   stories: PostSerializable[];
+  userId: string | null; // Add current user ID
+  onDelete: (storyId: string) => void; // Add delete callback
 }
 
 // Function to safely format timestamp from ISO string (or reuse from utils)
@@ -28,16 +43,19 @@ const formatStoryTimestamp = (timestampISO: string | null | undefined): string =
 };
 
 
-export function StoryViewer({ stories }: StoryViewerProps) {
+export function StoryViewer({ stories, userId, onDelete }: StoryViewerProps) {
   const [currentStoryIndex, setCurrentStoryIndex] = React.useState(0);
   const [openStory, setOpenStory] = React.useState<PostSerializable | null>(null);
+  const [isDeleting, setIsDeleting] = React.useState(false); // State for delete operation
   const progressRef = React.useRef<HTMLDivElement>(null);
   const storyTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
   const audioRef = React.useRef<HTMLAudioElement | null>(null); // Ref for audio element
   const [isMuted, setIsMuted] = React.useState(false); // State for music mute
   const [hasInteracted, setHasInteracted] = React.useState(false); // Track user interaction for autoplay
+  const { toast } = useToast(); // Get toast
 
   const activeStory = openStory ? stories.find(s => s.id === openStory.id) : null;
+  const isOwner = activeStory ? userId === activeStory.uid : false; // Check if current user owns the active story
 
   // Resolve media URLs for the active story
   const resolvedImageUrl = activeStory ? resolveMediaUrl(activeStory.imageUrl) : undefined;
@@ -53,8 +71,6 @@ export function StoryViewer({ stories }: StoryViewerProps) {
     } else {
         // Log reasons for not playing
          if (!resolvedMusicUrl) console.log("No music URL for current story.");
-         // Add specific checks if needed, but generally allow attempt
-         // if (isKnownNonDirectSource(resolvedMusicUrl)) console.log("Skipping known non-direct source.");
          if (isMuted) console.log("Audio muted.");
          if (!hasInteracted) console.log("Audio waiting for user interaction.");
     }
@@ -92,7 +108,6 @@ export function StoryViewer({ stories }: StoryViewerProps) {
 
     // Handle music playback
     if (resolvedMusicUrl && audioRef.current) {
-        // Always try to set the source and play, let the browser handle errors/restrictions
         if (audioRef.current.src !== resolvedMusicUrl) {
              console.log("Setting new audio source:", resolvedMusicUrl);
              audioRef.current.src = resolvedMusicUrl;
@@ -110,10 +125,8 @@ export function StoryViewer({ stories }: StoryViewerProps) {
              };
               audioRef.current.onerror = (e) => {
                    console.error("Audio Error Event:", e, audioRef.current?.error);
-                   // Optionally show a toast? Be careful not to be too noisy.
               }
         } else {
-              // If src is the same, reset time if needed and attempt play
               const startTime = activeStory.musicStartTime ?? 0;
                if (isFinite(startTime) && startTime >= 0) {
                    audioRef.current.currentTime = startTime;
@@ -124,51 +137,35 @@ export function StoryViewer({ stories }: StoryViewerProps) {
         }
         audioRef.current.muted = isMuted;
 
-        // Handle end time trimming (if applicable)
         const endTime = activeStory.musicEndTime;
          const hasEndTime = endTime !== null && endTime !== undefined && isFinite(endTime) && endTime > (activeStory.musicStartTime ?? 0);
 
-         // Define the time update handler function separately
          const checkEndTime = () => {
              if (audioRef.current && hasEndTime && audioRef.current.currentTime >= endTime) {
                  audioRef.current.pause();
                  console.log(`Audio reached end trim time: ${endTime}`);
-                 // Loop back to start if needed, or just stop
-                 // audioRef.current.currentTime = activeStory.musicStartTime ?? 0;
-                 // audioRef.current.play().catch(e => console.warn("Loop play failed:", e));
              }
          };
 
-         // Add or remove the listener based on whether an end time exists
          if (hasEndTime) {
             audioRef.current.addEventListener('timeupdate', checkEndTime);
          } else {
-             // Ensure listener is removed if no end time is set for this story
             audioRef.current.removeEventListener('timeupdate', checkEndTime);
          }
 
-         // Cleanup function for the timeupdate listener specifically
          const cleanupEndTimeListener = () => {
              if (audioRef.current) {
                  audioRef.current.removeEventListener('timeupdate', checkEndTime);
              }
          };
-
-         // Return the specific listener cleanup
-          // Note: This replaces the previous simpler return, assuming the timeout cleanup is handled separately
           return cleanupEndTimeListener;
-
-
     } else if (audioRef.current) {
-        // If no music URL for this story, pause and reset
         audioRef.current.pause();
         audioRef.current.currentTime = 0;
         audioRef.current.src = '';
         console.log("No music for this story, pausing and clearing audio source.");
     }
 
-
-    // Set timeout to go to next story or close
     storyTimeoutRef.current = setTimeout(() => {
       const currentIndex = stories.findIndex(s => s.id === activeStory.id);
       if (currentIndex < stories.length - 1) {
@@ -178,49 +175,45 @@ export function StoryViewer({ stories }: StoryViewerProps) {
       }
     }, 5000); // 5 seconds per story
 
-    // Combined cleanup for timeout and progress bar
     return () => {
       if (storyTimeoutRef.current) clearTimeout(storyTimeoutRef.current);
       if (progressRef.current) {
           progressRef.current.style.transition = 'none';
        }
-        // Pause audio when story *changes* but don't clear src yet
        if (audioRef.current) {
            audioRef.current.pause();
            console.log("Story changing, pausing audio.");
        }
     };
-  // Dependency array includes activeStory and stories to handle changes
-  }, [activeStory, stories, isMuted, attemptAudioPlay, resolvedMusicUrl]); // Keep resolvedMusicUrl dependency
+  }, [activeStory, stories, isMuted, attemptAudioPlay, resolvedMusicUrl]);
 
   const handleOpenStory = (story: PostSerializable) => {
     setHasInteracted(true); // User interaction detected
     const index = stories.findIndex(s => s.id === story.id);
     setCurrentStoryIndex(index);
     setOpenStory(story);
-     // Attempt to play immediately on open if not muted
      const storyMusicUrl = resolveMediaUrl(story.musicUrl);
      if (!isMuted && storyMusicUrl) {
-        // Use a small delay to ensure the audio element is ready
         setTimeout(attemptAudioPlay, 100);
      }
   };
 
   const handleCloseStory = () => {
     setOpenStory(null);
+    setIsDeleting(false); // Reset deleting state on close
     setHasInteracted(false); // Reset interaction state
     if (storyTimeoutRef.current) clearTimeout(storyTimeoutRef.current);
     if(audioRef.current) {
-        audioRef.current.pause(); // Ensure audio stops on close
+        audioRef.current.pause();
         audioRef.current.currentTime = 0;
-        audioRef.current.src = ''; // Clear source
+        audioRef.current.src = '';
         console.log("Story viewer explicitly closed, audio stopped and reset.");
     }
   };
 
   const handleNextStory = (e?: React.MouseEvent) => {
-     e?.stopPropagation(); // Prevent closing if clicking overlay
-     setHasInteracted(true); // Ensure interaction is registered
+     e?.stopPropagation();
+     setHasInteracted(true);
      const currentIndex = stories.findIndex(s => s.id === activeStory?.id);
      if (currentIndex < stories.length - 1) {
         setOpenStory(stories[currentIndex + 1]);
@@ -231,7 +224,7 @@ export function StoryViewer({ stories }: StoryViewerProps) {
 
   const handlePrevStory = (e?: React.MouseEvent) => {
      e?.stopPropagation();
-     setHasInteracted(true); // Ensure interaction is registered
+     setHasInteracted(true);
      const currentIndex = stories.findIndex(s => s.id === activeStory?.id);
      if (currentIndex > 0) {
         setOpenStory(stories[currentIndex - 1]);
@@ -239,17 +232,16 @@ export function StoryViewer({ stories }: StoryViewerProps) {
   };
 
    const toggleMute = (e: React.MouseEvent) => {
-     e.stopPropagation(); // Prevent interfering with story navigation
-     setHasInteracted(true); // Mute toggle counts as interaction
+     e.stopPropagation();
+     setHasInteracted(true);
      setIsMuted(prev => {
          const newMutedState = !prev;
          if (audioRef.current) {
              audioRef.current.muted = newMutedState;
              if (!newMutedState && resolvedMusicUrl) {
-                 // If unmuting and there's music, try to play
                  console.log("User unmuted, attempting to play audio.");
-                 attemptAudioPlay(); // Use the helper function
-             } else if (newMutedState) { // Only explicitly pause if muting
+                 attemptAudioPlay();
+             } else if (newMutedState) {
                   audioRef.current.pause();
                   console.log("User muted, audio paused.");
              }
@@ -258,6 +250,29 @@ export function StoryViewer({ stories }: StoryViewerProps) {
      });
    };
 
+   // Handle story deletion
+    const handleDeleteStory = async () => {
+        if (!activeStory || !isOwner || isDeleting || !userId) return;
+
+        setIsDeleting(true);
+        const storyToDeleteId = activeStory.id; // Capture the ID before potentially closing the modal
+
+        try {
+            await deletePost(storyToDeleteId, userId);
+            handleCloseStory(); // Close the modal after deletion
+            onDelete(storyToDeleteId); // Notify parent component
+            // Toast confirmation handled by parent
+        } catch (error: any) {
+            console.error("Error deleting story:", error);
+            toast({
+                title: "Deletion Failed",
+                description: error.message || "Could not delete the story.",
+                variant: "destructive",
+            });
+            setIsDeleting(false); // Only reset delete state on failure
+        }
+    };
+
 
   return (
     <div>
@@ -265,7 +280,6 @@ export function StoryViewer({ stories }: StoryViewerProps) {
       {/* Horizontal scrollable list of story previews */}
       <div className="flex space-x-3 overflow-x-auto pb-4 -mb-4">
         {stories.map((story) => {
-           // Use image if available, otherwise video as preview source
            const previewImageUrl = resolveMediaUrl(story.imageUrl || story.videoUrl);
            return (
              <button
@@ -336,7 +350,7 @@ export function StoryViewer({ stories }: StoryViewerProps) {
                       </div>
                        <div className="flex items-center gap-1 flex-shrink-0">
                            {/* Mute/Unmute Button */}
-                           {resolvedMusicUrl && ( // Show mute button if there is a music URL
+                           {resolvedMusicUrl && (
                               <Button
                                 variant="ghost" size="icon" onClick={toggleMute}
                                 className="h-8 w-8 rounded-full bg-black/30 text-white hover:bg-black/50 hover:text-white"
@@ -344,6 +358,43 @@ export function StoryViewer({ stories }: StoryViewerProps) {
                               >
                                 {isMuted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
                               </Button>
+                           )}
+                           {/* Delete Button (only for owner) */}
+                           {isOwner && (
+                               <AlertDialog>
+                                  <AlertDialogTrigger asChild>
+                                     <Button
+                                         variant="ghost" size="icon"
+                                         className="h-8 w-8 rounded-full bg-black/30 text-destructive hover:bg-destructive/80 hover:text-white"
+                                         disabled={isDeleting}
+                                         onClick={(e) => e.stopPropagation()} // Prevent story navigation
+                                         aria-label="Delete story"
+                                     >
+                                        {isDeleting ? <Loader2 className="h-4 w-4 animate-spin"/> : <Trash2 className="h-5 w-5" />}
+                                     </Button>
+                                  </AlertDialogTrigger>
+                                   <AlertDialogContent onClick={(e) => e.stopPropagation()}> {/* Prevent closing modal on content click */}
+                                      <AlertDialogHeader>
+                                         <AlertDialogTitleComponent className="flex items-center gap-2">
+                                            <AlertTriangle className="text-destructive"/> Confirm Deletion
+                                         </AlertDialogTitleComponent>
+                                         <AlertDialogDescription>
+                                            Are you sure you want to delete this story? This action cannot be undone.
+                                         </AlertDialogDescription>
+                                      </AlertDialogHeader>
+                                      <AlertDialogFooter>
+                                         <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+                                          <AlertDialogAction
+                                             onClick={handleDeleteStory}
+                                             disabled={isDeleting}
+                                             className={cn("bg-destructive text-destructive-foreground hover:bg-destructive/90")}
+                                          >
+                                             {isDeleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                                             Delete Story
+                                          </AlertDialogAction>
+                                      </AlertDialogFooter>
+                                   </AlertDialogContent>
+                               </AlertDialog>
                            )}
                            {/* Close Button */}
                            <Button
@@ -374,7 +425,7 @@ export function StoryViewer({ stories }: StoryViewerProps) {
                             src={resolvedVideoUrl}
                             autoPlay
                             playsInline
-                            muted // Mute video if music might play
+                            muted={!isMuted} // Mute video based on the general mute state
                             loop={!resolvedMusicUrl} // Loop video only if there's no music
                             className="w-full h-full object-contain"
                             onEnded={handleNextStory}

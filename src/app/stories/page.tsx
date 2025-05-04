@@ -12,6 +12,7 @@ import { Loader2, Film, Frown } from 'lucide-react'; // Use Film icon for storie
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
+import { useToast } from '@/hooks/use-toast';
 
 export default function StoriesPage() {
   const [stories, setStories] = React.useState<PostSerializable[]>([]);
@@ -19,6 +20,7 @@ export default function StoriesPage() {
   const [error, setError] = React.useState<string | null>(null);
   const { user, loading: authLoading } = useAuth();
   const initialLoadComplete = React.useRef(false); // Track initial load
+  const { toast } = useToast(); // Added toast
 
   const loadStories = React.useCallback(async () => {
     if (!initialLoadComplete.current) {
@@ -62,8 +64,12 @@ export default function StoriesPage() {
      setStories(prevStories => [serializableStory, ...prevStories]);
   };
 
-   // Note: Story deletion might be handled differently (e.g., automatic expiry)
-   // or you might add a delete handler similar to posts if needed.
+  // Handle story deletion from the list
+  const handleStoryDeleted = (deletedStoryId: string) => {
+      setStories(prevStories => prevStories.filter(story => story.id !== deletedStoryId));
+       toast({ title: "Story Removed", description: "The story has been deleted." }); // Add toast confirmation
+  };
+
 
   return (
     <div className="flex flex-col items-center min-h-screen bg-secondary py-8 px-4 sm:px-6 lg:px-8">
@@ -140,14 +146,12 @@ export default function StoriesPage() {
           )}
 
           {/* Display Stories */}
-          {/* You might use a different component like StoryViewer here */}
           {!loadingStories && !error && stories.length > 0 && (
-             <StoryViewer stories={stories} />
-             /* Or map through stories and render them differently:
-             stories.map((story) => (
-                 <div key={story.id}> Render story representation </div>
-             ))
-             */
+             <StoryViewer
+                stories={stories}
+                userId={user?.uid ?? null} // Pass current user ID
+                onDelete={handleStoryDeleted} // Pass delete handler
+              />
           )}
         </div>
       </div>
