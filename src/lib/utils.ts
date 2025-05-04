@@ -63,6 +63,7 @@ export const resolveMediaUrl = (url: string | null | undefined): string | undefi
  * Basic check if a URL likely points directly to an audio file based on extension
  * or comes from a known streaming/storage source that might work with the <audio> tag.
  * This is a heuristic and might not cover all cases perfectly.
+ * It explicitly identifies certain known non-direct sources like SoundCloud, Files.fm, Mdundo, Audiomack, and YouTube.
  * @param url - The URL string to check.
  * @returns True if the URL likely points to a direct audio file or playable stream, false otherwise.
  */
@@ -77,39 +78,54 @@ export const isDirectAudioUrl = (url: string | null | undefined): boolean => {
 
         // 2. Parse the URL
         const parsedUrl = new URL(url);
+        const hostname = parsedUrl.hostname.toLowerCase();
+        const pathname = parsedUrl.pathname;
 
-        // 3. Check hostname for known direct-playable sources (add more as needed)
-        const knownDirectHosts = [
-            'firebasestorage.googleapis.com',
-            // Add specific CDN hostnames known to serve direct audio files
-            'storage.googleapis.com', // Google Cloud Storage
-             // Example: 'cdn.example-audio.com'
+        // 3. Check hostname for known NON-DIRECT sources
+        const knownNonDirectHosts = [
+            'soundcloud.com',
+            'files.fm',
+            'mdundo.com',
+            'audiomack.com',
+            'youtube.com',
+            'youtu.be',
+            // Add more domains known to host pages/widgets, not direct files
         ];
-        if (knownDirectHosts.some(host => parsedUrl.hostname.endsWith(host))) {
-            return true;
+        if (knownNonDirectHosts.some(host => hostname.endsWith(host))) {
+            // Exception: Sometimes SoundCloud offers direct stream links, but detecting them reliably is hard.
+            // For now, assume standard SoundCloud links are not direct.
+            // A very basic check for direct soundcloud api links (may not be exhaustive)
+            if (hostname.endsWith('soundcloud.com') && pathname.startsWith('/stream')) {
+                 console.log("Allowing SoundCloud stream URL:", url);
+                 return true;
+            }
+            console.log("URL identified as known non-direct host:", hostname);
+            return false;
         }
 
-        // 4. Allow localhost and specific media server
-        if (parsedUrl.hostname === 'localhost' ||
-            parsedUrl.hostname === '127.0.0.1' ||
-            parsedUrl.hostname === 'movies-server-plia.onrender.com') {
-             return true;
+        // 4. Check hostname for known DIRECT-playable sources
+        const knownDirectHosts = [
+            'firebasestorage.googleapis.com',
+            'storage.googleapis.com', // Google Cloud Storage
+            'movies-server-plia.onrender.com', // The specified media server
+             // Add specific CDN hostnames known to serve direct audio files
+             // Example: 'cdn.example-audio.com'
+        ];
+        if (hostname === 'localhost' || hostname === '127.0.0.1' || knownDirectHosts.some(host => hostname.endsWith(host))) {
+             console.log("URL identified as known direct host or localhost:", hostname);
+            return true;
         }
 
         // 5. Simple check based on file extension in the pathname
         // This is less reliable as URLs might not have extensions.
-        const hasAudioExtension = /\.(mp3|wav|ogg|aac|m4a|opus)$/i.test(parsedUrl.pathname);
+        const hasAudioExtension = /\.(mp3|wav|ogg|aac|m4a|opus|webm)$/i.test(pathname);
         if (hasAudioExtension) {
+            console.log("URL has direct audio file extension:", pathname);
             return true;
         }
 
-        // 6. Check for known streaming service patterns that might work (example: SoundCloud)
-        // Note: These are fragile and might break if the services change their URL structures.
-        // const isSoundCloudStream = parsedUrl.hostname.endsWith('soundcloud.com') && parsedUrl.pathname.includes('/stream');
-        // if (isSoundCloudStream) return true;
-
-        // 7. If none of the above, assume it's likely not a direct audio link
-        // This will include pages like files.fm, mdundo.com, audiomack.com etc.
+        // 6. If none of the above, assume it's likely not a direct audio link
+        console.log("URL did not match known direct patterns:", url);
         return false;
 
     } catch (e) {
@@ -118,3 +134,6 @@ export const isDirectAudioUrl = (url: string | null | undefined): boolean => {
         return false;
     }
 };
+
+
+    
