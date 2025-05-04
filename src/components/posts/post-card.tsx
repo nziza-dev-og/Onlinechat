@@ -7,7 +7,7 @@ import { formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import Image from 'next/image';
-import { cn } from '@/lib/utils';
+import { cn, resolveMediaUrl, getInitials } from '@/lib/utils'; // Import resolveMediaUrl and getInitials
 import { User, Image as ImageIcon, Video, Heart, MessageCircle, Trash2, AlertTriangle, Loader2 } from 'lucide-react'; // Add Heart, MessageCircle, Trash2, AlertTriangle, Loader2
 import { Button, buttonVariants } from '@/components/ui/button'; // Import buttonVariants
 import { useAuth } from '@/hooks/use-auth';
@@ -36,18 +36,6 @@ interface PostCardProps {
   onPostDeleted?: (postId: string) => void; // Callback for deletion
 }
 
-// Consistent Helper function to get initials
-const getInitials = (name: string | null | undefined): string => {
-    if (!name) return '?';
-    const nameParts = name.trim().split(' ').filter(part => part.length > 0);
-    if (nameParts.length > 1) {
-      return `${nameParts[0][0]}${nameParts[nameParts.length - 1][0]}`.toUpperCase();
-    } else if (nameParts.length === 1 && nameParts[0].length > 0) {
-      return nameParts[0][0].toUpperCase();
-    }
-    return '?';
-};
-
 // Function to safely format timestamp from ISO string
 const formatTimestamp = (timestampISO: string | null | undefined): string => {
     if (!timestampISO) {
@@ -71,6 +59,10 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
   const [isDeleting, setIsDeleting] = React.useState(false); // State for delete operation
   const [showComments, setShowComments] = React.useState(false); // State to toggle comments
   const isOwner = user?.uid === post.uid; // Check if the current user owns the post
+
+  // Resolve media URLs
+  const resolvedImageUrl = resolveMediaUrl(post.imageUrl);
+  const resolvedVideoUrl = resolveMediaUrl(post.videoUrl);
 
   // Update local state if the likedBy prop changes externally
   React.useEffect(() => {
@@ -211,10 +203,10 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
                <p className="text-base text-foreground whitespace-pre-wrap break-words">{post.text}</p>
              )}
 
-             {post.imageUrl && (
+             {resolvedImageUrl && (
                <div className="relative aspect-video w-full rounded-lg overflow-hidden border shadow-inner">
                  <Image
-                   src={post.imageUrl}
+                   src={resolvedImageUrl} // Use resolved URL
                    alt={post.text ? `Image for post: ${post.text.substring(0,30)}...` : "Post image"}
                    fill
                    style={{ objectFit: 'cover' }}
@@ -225,22 +217,22 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
                </div>
              )}
 
-             {post.videoUrl && (
+             {resolvedVideoUrl && (
                 <div className="aspect-video w-full rounded-lg overflow-hidden border bg-black shadow-inner">
                      <video
-                        src={post.videoUrl}
+                        src={resolvedVideoUrl} // Use resolved URL
                         controls
                         className="w-full h-full object-contain bg-black"
                         preload="metadata"
                         data-ai-hint="user post video"
                         title={post.text ? `Video for post: ${post.text.substring(0,30)}...` : "Post video"}
                      >
-                        Your browser does not support the video tag. <a href={post.videoUrl} target="_blank" rel="noopener noreferrer">Watch video</a>
+                        Your browser does not support the video tag. <a href={resolvedVideoUrl} target="_blank" rel="noopener noreferrer">Watch video</a>
                     </video>
                 </div>
              )}
 
-             {!post.text && !post.imageUrl && !post.videoUrl && (
+             {!post.text && !resolvedImageUrl && !resolvedVideoUrl && (
                   <p className="text-sm text-muted-foreground italic">[Empty post]</p>
               )}
 

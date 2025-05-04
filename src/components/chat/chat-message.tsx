@@ -1,7 +1,7 @@
 
 import type { Message } from '@/types';
 import { useAuth } from '@/hooks/use-auth';
-import { cn } from '@/lib/utils';
+import { cn, resolveMediaUrl, getInitials } from '@/lib/utils'; // Import resolveMediaUrl and getInitials
 import { format, formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -16,17 +16,6 @@ interface ChatMessageProps {
   message: Message;
   onReply: (message: Message) => void;
 }
-
-const getInitials = (name: string | null | undefined): string => {
-    if (!name) return '?';
-    const nameParts = name.trim().split(' ').filter(part => part.length > 0);
-    if (nameParts.length > 1) {
-      return `${nameParts[0][0]}${nameParts[nameParts.length - 1][0]}`.toUpperCase();
-    } else if (nameParts.length === 1 && nameParts[0].length > 0) {
-      return nameParts[0][0].toUpperCase();
-    }
-    return '?';
-};
 
 // Helper to safely format Firestore Timestamp or ISO string
 const formatTimestamp = (timestamp: any, formatString: string): string => {
@@ -84,6 +73,12 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
   const [isImageViewerOpen, setIsImageViewerOpen] = React.useState(false); // State for image viewer
   const [isCopied, setIsCopied] = React.useState(false); // State for copy button
 
+  // Resolve media URLs
+  const resolvedImageUrl = resolveMediaUrl(message.imageUrl);
+  const resolvedVideoUrl = resolveMediaUrl(message.videoUrl);
+  const resolvedAudioUrl = resolveMediaUrl(message.audioUrl);
+  const resolvedFileUrl = resolveMediaUrl(message.fileUrl);
+
   const handleReplyClick = (e: React.MouseEvent) => {
       e.stopPropagation(); // Prevent triggering other click events if needed
       onReply(message);
@@ -91,7 +86,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
 
   const handleImageClick = (e: React.MouseEvent) => {
       e.stopPropagation(); // Prevent triggering reply etc.
-      if (message.imageUrl) {
+      if (resolvedImageUrl) {
           setIsImageViewerOpen(true);
       }
   };
@@ -127,7 +122,14 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
   // Event listeners for audio state changes
   React.useEffect(() => {
     const audioElement = audioRef.current;
-    if (!audioElement || !message.audioUrl) return; // Only run if audio exists
+    if (!audioElement || !resolvedAudioUrl) return; // Only run if audio exists
+
+    // Update src if it changed
+    if (audioElement.currentSrc !== resolvedAudioUrl) {
+        console.log(`Setting new audio src: ${resolvedAudioUrl}`);
+        audioElement.src = resolvedAudioUrl;
+        audioElement.load(); // Load new source
+    }
 
     const handlePlay = () => setIsPlaying(true);
     const handlePause = () => setIsPlaying(false);
@@ -165,8 +167,6 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
     audioElement.addEventListener('timeupdate', handleTimeUpdate);
     audioElement.addEventListener('error', handleError);
 
-    // If the src changes, ensure we reset state and listeners
-     audioElement.load(); // Explicitly load metadata when src might change
 
     console.log(`Audio listeners attached for message ${message.id}`);
 
@@ -187,7 +187,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
         setAudioDuration(null);
         setCurrentTime(0);
     };
-  }, [message.id, message.audioUrl]); // Re-run effect if message ID or audio URL changes
+  }, [message.id, resolvedAudioUrl]); // Re-run effect if message ID or resolved audio URL changes
   // --- End Audio Playback Handling ---
 
   // --- Code Block Handling ---
@@ -241,13 +241,13 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
             ? "bg-accent text-accent-foreground rounded-br-sm"
             : "bg-card text-card-foreground rounded-bl-sm",
            // Apply padding only if it's NOT just a code block without other content
-           !(codeContent && !nonCodeText && !message.imageUrl && !message.audioUrl && !message.videoUrl && !message.fileUrl)
+           !(codeContent && !nonCodeText && !resolvedImageUrl && !resolvedAudioUrl && !resolvedVideoUrl && !resolvedFileUrl)
              ? 'px-3 py-2 sm:px-3.5 sm:py-2.5'
              : 'p-0 overflow-hidden' // Remove padding if it's only a code block
         )}
       >
         {/* Show sender name only if not sender and NOT just a code block */}
-        {!isSender && message.displayName && !(codeContent && !nonCodeText && !message.imageUrl && !message.audioUrl && !message.videoUrl && !message.fileUrl) && (
+        {!isSender && message.displayName && !(codeContent && !nonCodeText && !resolvedImageUrl && !resolvedAudioUrl && !resolvedVideoUrl && !resolvedFileUrl) && (
            <p className="text-xs font-medium text-muted-foreground mb-1">{message.displayName}</p>
         )}
 
@@ -263,8 +263,8 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
             </div>
          )}
 
-         {/* Display Audio Player if audioUrl exists */}
-         {message.audioUrl && (
+         {/* Display Audio Player if resolvedAudioUrl exists */}
+         {resolvedAudioUrl && (
              <div className={cn(
                  "my-2 p-2 rounded-md flex items-center gap-2 sm:gap-3", // Responsive gap
                  isSender ? "bg-accent/80" : "bg-muted/60" // Slightly different background
@@ -275,13 +275,14 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
                      onClick={togglePlay}
                      className="h-8 w-8 sm:h-9 sm:w-9 text-foreground/80 hover:text-foreground flex-shrink-0" // Responsive button size
                      aria-label={isPlaying ? "Pause voice note" : "Play voice note"}
-                     disabled={!message.audioUrl} // Disable only if URL is missing
+                     disabled={!resolvedAudioUrl} // Disable only if URL is missing
                  >
                       {/* Show loading state? */}
                      {isPlaying ? <Pause className="h-4 w-4 sm:h-5 sm:w-5" /> : <Play className="h-4 w-4 sm:h-5 sm:w-5" />}
                  </Button>
                  {/* Hidden audio element */}
-                 <audio ref={audioRef} src={message.audioUrl} preload="metadata" className="hidden">
+                 {/* Key added to force re-render when src changes significantly */}
+                 <audio key={resolvedAudioUrl} ref={audioRef} src={resolvedAudioUrl} preload="metadata" className="hidden">
                      Your browser does not support the audio element.
                  </audio>
                  {/* Display Time */}
@@ -292,14 +293,14 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
          )}
 
         {/* Display Image - Wrapped in Button */}
-         {message.imageUrl && (
+         {resolvedImageUrl && (
           <Button
               variant="ghost"
               className="relative aspect-video w-40 sm:w-48 max-w-full my-2 p-0 h-auto rounded-md overflow-hidden border block cursor-pointer" // Responsive width
               onClick={handleImageClick}
           >
              <Image
-                 src={message.imageUrl}
+                 src={resolvedImageUrl} // Use resolved URL
                  alt="Chat image"
                  fill
                  style={{ objectFit: 'cover' }}
@@ -311,10 +312,10 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
          )}
 
          {/* Display Video */}
-          {message.videoUrl && (
+          {resolvedVideoUrl && (
              <div className="relative aspect-video w-full max-w-sm sm:max-w-md my-2 rounded-lg overflow-hidden border shadow-inner"> {/* Responsive max-width */}
                  <video
-                     src={message.videoUrl}
+                     src={resolvedVideoUrl} // Use resolved URL
                      controls
                      preload="metadata" // Load metadata to get duration/dimensions if possible
                      className="w-full h-full object-contain bg-black" // contain ensures the whole video fits
@@ -322,7 +323,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
                      title={message.text ? `Video: ${message.text.substring(0, 30)}...` : "Chat video"}
                  >
                      Your browser does not support the video tag.
-                     <a href={message.videoUrl} target="_blank" rel="noopener noreferrer" className="text-primary underline p-2 block">
+                     <a href={resolvedVideoUrl} target="_blank" rel="noopener noreferrer" className="text-primary underline p-2 block">
                          Watch video
                      </a>
                  </video>
@@ -330,7 +331,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
           )}
 
           {/* Display Generic File */}
-           {message.fileUrl && (
+           {resolvedFileUrl && (
                 <div className={cn(
                     "my-2 p-3 rounded-md flex items-center gap-2 sm:gap-3 border", // Responsive gap
                     isSender ? "bg-accent/70 border-accent/80" : "bg-muted/50 border-muted/60"
@@ -351,7 +352,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
                          asChild // Use asChild to make it a link
                          className="h-8 w-8 text-primary flex-shrink-0"
                      >
-                         <a href={message.fileUrl} target="_blank" rel="noopener noreferrer" download={message.fileName || true} aria-label="Download file">
+                         <a href={resolvedFileUrl} target="_blank" rel="noopener noreferrer" download={message.fileName || true} aria-label="Download file">
                              <Download className="h-4 w-4 sm:h-5 sm:w-5" />
                          </a>
                      </Button>
@@ -387,7 +388,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
          )}
 
          {/* Show timestamp only if it's NOT just a code block without other content */}
-         {!(codeContent && !nonCodeText && !message.imageUrl && !message.audioUrl && !message.videoUrl && !message.fileUrl) && (
+         {!(codeContent && !nonCodeText && !resolvedImageUrl && !resolvedAudioUrl && !resolvedVideoUrl && !resolvedFileUrl) && (
            <TooltipProvider delayDuration={300}>
               <Tooltip>
                   <TooltipTrigger asChild>
@@ -429,9 +430,9 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
 
     </div>
     {/* Full Screen Image Viewer Modal */}
-     {isImageViewerOpen && message.imageUrl && (
+     {isImageViewerOpen && resolvedImageUrl && (
          <FullScreenImageViewer
-             imageUrl={message.imageUrl}
+             imageUrl={resolvedImageUrl} // Use resolved URL
              altText={message.text || 'Chat image'}
              onClose={() => setIsImageViewerOpen(false)}
          />
@@ -439,4 +440,3 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
     </>
   );
 }
-

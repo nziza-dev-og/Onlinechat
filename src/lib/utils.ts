@@ -24,3 +24,33 @@ export const getInitials = (name: string | null | undefined): string => {
     }
     return '?'; // Fallback for empty or invalid names
 };
+
+// Base URL for the media server
+const MEDIA_BASE_URL = 'https://movies-server-plia.onrender.com';
+
+/**
+ * Resolves a potentially relative media URL by prepending the base media server URL.
+ * If the input URL is already absolute, it's returned as is.
+ *
+ * @param url - The URL string to resolve (can be relative starting with '/' or absolute).
+ * @returns The absolute URL or undefined if the input was null/undefined.
+ */
+export const resolveMediaUrl = (url: string | null | undefined): string | undefined => {
+  if (!url) {
+    return undefined;
+  }
+  try {
+    // Check if it's already an absolute URL
+    new URL(url);
+    return url; // It's absolute, use it as is
+  } catch (_) {
+    // It's likely a relative path (or invalid, but we'll prepend anyway)
+    // Only prepend if it starts with '/' to avoid modifying potential filenames or other relative paths
+    if (url.startsWith('/')) {
+      return `${MEDIA_BASE_URL}${url}`;
+    }
+    // If it's not absolute and not starting with '/', return it as is.
+    // It might be a relative path not intended for the media server or an invalid input.
+    return url;
+  }
+};

@@ -7,7 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import Image from 'next/image';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
-import { getInitials } from '@/lib/utils'; // Assuming getInitials is moved to utils
+import { getInitials, resolveMediaUrl } from '@/lib/utils'; // Assuming getInitials is moved to utils, import resolveMediaUrl
 import { Dialog, DialogContent, DialogTrigger, DialogTitle } from "@/components/ui/dialog"; // Import DialogTitle
 import { X, Volume2, VolumeX } from 'lucide-react'; // Added Volume icons
 import { Button } from '../ui/button';
@@ -38,17 +38,22 @@ export function StoryViewer({ stories }: StoryViewerProps) {
 
   const activeStory = openStory ? stories.find(s => s.id === openStory.id) : null;
 
+  // Resolve media URLs for the active story
+  const resolvedImageUrl = activeStory ? resolveMediaUrl(activeStory.imageUrl) : undefined;
+  const resolvedVideoUrl = activeStory ? resolveMediaUrl(activeStory.videoUrl) : undefined;
+  const resolvedMusicUrl = activeStory ? resolveMediaUrl(activeStory.musicUrl) : undefined;
+
   // Function to attempt playing audio, handling potential errors
   const attemptAudioPlay = React.useCallback(() => {
-    if (audioRef.current && activeStory?.musicUrl && !isMuted && hasInteracted) {
-        console.log("Attempting to play audio:", activeStory.musicUrl);
+    if (audioRef.current && resolvedMusicUrl && !isMuted && hasInteracted) {
+        console.log("Attempting to play audio:", resolvedMusicUrl);
         audioRef.current.play().catch(e => console.warn("Audio play failed (likely autoplay restriction):", e));
     } else {
-         if (!activeStory?.musicUrl) console.log("No music URL for current story.");
+         if (!resolvedMusicUrl) console.log("No music URL for current story.");
          if (isMuted) console.log("Audio muted.");
          if (!hasInteracted) console.log("Audio waiting for user interaction.");
     }
-  }, [activeStory, isMuted, hasInteracted]);
+  }, [resolvedMusicUrl, isMuted, hasInteracted]);
 
   // Handle story progression and music
   React.useEffect(() => {
@@ -63,7 +68,7 @@ export function StoryViewer({ stories }: StoryViewerProps) {
        return;
     }
 
-    console.log("Active story changed:", activeStory.id, "Music:", activeStory.musicUrl);
+    console.log("Active story changed:", activeStory.id, "Music:", resolvedMusicUrl);
 
     // Reset progress animation
     if (progressRef.current) {
@@ -81,10 +86,10 @@ export function StoryViewer({ stories }: StoryViewerProps) {
     }
 
     // Handle music playback
-    if (activeStory.musicUrl && audioRef.current) {
-        if (audioRef.current.src !== activeStory.musicUrl) {
-            console.log("Setting new audio source:", activeStory.musicUrl);
-            audioRef.current.src = activeStory.musicUrl;
+    if (resolvedMusicUrl && audioRef.current) {
+        if (audioRef.current.src !== resolvedMusicUrl) {
+            console.log("Setting new audio source:", resolvedMusicUrl);
+            audioRef.current.src = resolvedMusicUrl;
             audioRef.current.load(); // Load new source
             // Apply start/end times if they exist
              audioRef.current.onloadedmetadata = () => {
@@ -162,7 +167,7 @@ export function StoryViewer({ stories }: StoryViewerProps) {
            // Don't reset src here, let the next effect handle it
        }
     };
-  }, [activeStory, stories, isMuted, attemptAudioPlay, hasInteracted]);
+  }, [activeStory, stories, isMuted, attemptAudioPlay, hasInteracted, resolvedMusicUrl]); // Include resolvedMusicUrl
 
   const handleOpenStory = (story: PostSerializable) => {
     setHasInteracted(true); // User interaction detected
@@ -217,7 +222,7 @@ export function StoryViewer({ stories }: StoryViewerProps) {
          const newMutedState = !prev;
          if (audioRef.current) {
              audioRef.current.muted = newMutedState;
-             if (!newMutedState && activeStory?.musicUrl) {
+             if (!newMutedState && resolvedMusicUrl) {
                  // If unmuting and there's music, try to play
                  console.log("User unmuted, attempting to play audio.");
                  attemptAudioPlay(); // Use the helper function
@@ -236,34 +241,37 @@ export function StoryViewer({ stories }: StoryViewerProps) {
       <h2 className="text-lg font-semibold mb-3 text-foreground">Recent Stories</h2>
       {/* Horizontal scrollable list of story previews */}
       <div className="flex space-x-3 overflow-x-auto pb-4 -mb-4">
-        {stories.map((story) => (
-           // DialogTrigger now just opens the modal via handleOpenStory
-           <button
-             key={story.id}
-             onClick={() => handleOpenStory(story)}
-             className="relative flex-shrink-0 w-20 h-32 rounded-lg overflow-hidden focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 group"
-             aria-label={`View story by ${story.displayName}`}
-           >
-             {story.imageUrl || story.videoUrl ? (
-               <Image
-                 src={story.imageUrl || story.videoUrl || ''} // Prioritize image for preview
-                 alt={`Story preview by ${story.displayName}`}
-                 fill
-                 style={{ objectFit: 'cover' }}
-                 className="bg-muted group-hover:scale-105 transition-transform duration-200"
-                 sizes="(max-width: 768px) 20vw, 10vw"
-                 data-ai-hint="story preview image"
-               />
-             ) : (
-               <div className="w-full h-full bg-muted flex items-center justify-center text-muted-foreground">?</div>
-             )}
-             <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent"></div>
-             <Avatar className="absolute bottom-1.5 left-1.5 h-6 w-6 border-2 border-background">
-               <AvatarImage src={story.photoURL || undefined} />
-               <AvatarFallback className="text-xs">{getInitials(story.displayName)}</AvatarFallback>
-             </Avatar>
-           </button>
-        ))}
+        {stories.map((story) => {
+           const previewImageUrl = resolveMediaUrl(story.imageUrl || story.videoUrl); // Resolve preview URL
+           return (
+             // DialogTrigger now just opens the modal via handleOpenStory
+             <button
+               key={story.id}
+               onClick={() => handleOpenStory(story)}
+               className="relative flex-shrink-0 w-20 h-32 rounded-lg overflow-hidden focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 group"
+               aria-label={`View story by ${story.displayName}`}
+             >
+               {previewImageUrl ? (
+                 <Image
+                   src={previewImageUrl} // Use resolved URL
+                   alt={`Story preview by ${story.displayName}`}
+                   fill
+                   style={{ objectFit: 'cover' }}
+                   className="bg-muted group-hover:scale-105 transition-transform duration-200"
+                   sizes="(max-width: 768px) 20vw, 10vw"
+                   data-ai-hint="story preview image"
+                 />
+               ) : (
+                 <div className="w-full h-full bg-muted flex items-center justify-center text-muted-foreground">?</div>
+               )}
+               <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent"></div>
+               <Avatar className="absolute bottom-1.5 left-1.5 h-6 w-6 border-2 border-background">
+                 <AvatarImage src={story.photoURL || undefined} />
+                 <AvatarFallback className="text-xs">{getInitials(story.displayName)}</AvatarFallback>
+               </Avatar>
+             </button>
+           )
+        })}
       </div>
 
        {/* Full-screen Story Viewer Modal - Rendered only once */}
@@ -306,7 +314,7 @@ export function StoryViewer({ stories }: StoryViewerProps) {
                       </div>
                        <div className="flex items-center gap-1 flex-shrink-0"> {/* Added flex-shrink-0 */}
                            {/* Mute/Unmute Button */}
-                           {activeStory.musicUrl && (
+                           {resolvedMusicUrl && (
                               <Button
                                 variant="ghost" size="icon" onClick={toggleMute}
                                 className="h-8 w-8 rounded-full bg-black/30 text-white hover:bg-black/50 hover:text-white"
@@ -328,9 +336,9 @@ export function StoryViewer({ stories }: StoryViewerProps) {
 
                    {/* Media Content */}
                    <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
-                      {activeStory.imageUrl && (
+                      {resolvedImageUrl && (
                          <Image
-                            src={activeStory.imageUrl}
+                            src={resolvedImageUrl} // Use resolved URL
                             alt={activeStory.text || `Story by ${activeStory.displayName}`}
                             fill
                             style={{ objectFit: 'contain' }} // Use contain to see the whole image/video
@@ -338,13 +346,13 @@ export function StoryViewer({ stories }: StoryViewerProps) {
                             data-ai-hint="story full view image"
                          />
                       )}
-                      {activeStory.videoUrl && !activeStory.imageUrl && ( // Only show video if no image
+                      {resolvedVideoUrl && !resolvedImageUrl && ( // Only show video if no image
                          <video
-                            src={activeStory.videoUrl}
+                            src={resolvedVideoUrl} // Use resolved URL
                             autoPlay
                             playsInline
                             muted // Video should always be muted if music might play
-                            loop={!activeStory.musicUrl} // Loop video only if there's no music
+                            loop={!resolvedMusicUrl} // Loop video only if there's no music
                             className="w-full h-full object-contain"
                             onEnded={handleNextStory} // Go to next story when video ends
                             data-ai-hint="story full view video"
