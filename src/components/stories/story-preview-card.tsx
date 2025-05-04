@@ -1,4 +1,3 @@
-
 "use client";
 
 import * as React from 'react';
@@ -62,3 +61,4 @@ export const StoryPreviewCardSkeleton = () => (
      <Skeleton className="h-3 w-16" />
    </div>
 );
+

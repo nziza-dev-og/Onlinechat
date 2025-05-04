@@ -1,4 +1,3 @@
-
 "use client";
 
 import * as React from 'react';
@@ -18,7 +17,7 @@ import {
     AlertDialog,
     AlertDialogAction,
     AlertDialogCancel,
-    AlertDialogContent,
+    AlertDialogContent as AlertDialogPrimitiveContent, // Use alias to avoid conflict
     AlertDialogDescription,
     AlertDialogFooter,
     AlertDialogHeader,
@@ -104,6 +103,16 @@ export function StoryModalViewer({
     }
   }, []);
 
+  // Mount/Unmount tracking
+  const isMountedRef = React.useRef(true);
+  React.useEffect(() => {
+      isMountedRef.current = true;
+      return () => {
+          isMountedRef.current = false;
+          stopMediaAndTimers(); // Clean up timers on unmount
+      };
+  }, [stopMediaAndTimers]);
+
   const startProgress = React.useCallback((durationSeconds: number) => {
     stopMediaAndTimers(); // Clear previous timers/intervals
     setProgress(0);
@@ -124,7 +133,7 @@ export function StoryModalViewer({
 
   const handleMediaLoaded = React.useCallback(() => {
     const mediaElement = mediaRef.current;
-    if (!mediaElement) return;
+    if (!mediaElement || !isMountedRef.current) return; // Check mount status
 
     // Apply music trimming if applicable
     if (activeStory?.musicUrl && mediaElement instanceof HTMLAudioElement) {
@@ -189,8 +198,11 @@ export function StoryModalViewer({
           // Remove previous listeners before adding new ones
          mediaElement.removeEventListener('loadedmetadata', handleMediaLoaded);
          mediaElement.removeEventListener('ended', goToNextStory); // Use goToNextStory for 'ended'
-         mediaElement.removeEventListener('play', () => setIsPaused(false));
-         mediaElement.removeEventListener('pause', () => setIsPaused(true));
+         mediaElement.removeEventListener('play', () => {if (isMountedRef.current) setIsPaused(false)});
+         mediaElement.removeEventListener('pause', () => {if (isMountedRef.current) setIsPaused(true)});
+         mediaElement.removeEventListener('error', (e) => {
+              console.error("Media Error Event:", e, mediaElement?.error); // Log more details
+         });
 
           // Add listeners for the current media
          mediaElement.addEventListener('loadedmetadata', handleMediaLoaded);
@@ -198,6 +210,9 @@ export function StoryModalViewer({
          mediaElement.addEventListener('ended', goToNextStory); // Go next when media finishes naturally
          mediaElement.addEventListener('play', () => {if (isMountedRef.current) setIsPaused(false)});
          mediaElement.addEventListener('pause', () => {if (isMountedRef.current) setIsPaused(true)});
+         mediaElement.addEventListener('error', (e) => {
+              console.error("Media Error Event:", e, mediaElement?.error); // Log more details
+         });
 
          // Try playing (might require prior user interaction)
           mediaElement.play().catch(e => console.warn("Autoplay prevented on story change:", e));
@@ -227,26 +242,30 @@ export function StoryModalViewer({
         // Restart progress calculation from current point
         const mediaElement = mediaRef.current;
         let remainingDuration = STORY_DURATION_SECONDS; // Default for images
+        let progressAlreadyElapsed = progress; // Percentage
+
         if (mediaElement && isFinite(mediaElement.duration)) {
             const currentTime = mediaElement.currentTime;
             const endTime = (mediaElement instanceof HTMLAudioElement && activeStory?.musicEndTime !== null) ? activeStory.musicEndTime : mediaElement.duration;
-            if (endTime > currentTime) {
+             const totalMediaDuration = endTime - (mediaElement instanceof HTMLAudioElement ? (activeStory?.musicStartTime ?? 0) : 0);
+
+            if (endTime > currentTime && totalMediaDuration > 0) {
                 remainingDuration = endTime - currentTime;
+                progressAlreadyElapsed = ((currentTime - (mediaElement instanceof HTMLAudioElement ? (activeStory?.musicStartTime ?? 0) : 0)) / totalMediaDuration) * 100;
+            } else {
+                // Edge case: If somehow currentTime >= endTime, advance immediately
+                 goToNextStory();
+                 return;
             }
         }
-        startProgress(remainingDuration);
+
+        // Adjust startProgress to account for already elapsed progress
+        const remainingDurationSeconds = (remainingDuration * (100 - progressAlreadyElapsed)) / 100;
+         startProgress(remainingDurationSeconds > 0 ? remainingDurationSeconds : 0.1); // Start with remaining time
+
+
     }
   };
-
-   // Mount/Unmount tracking
-   const isMountedRef = React.useRef(true);
-   React.useEffect(() => {
-       isMountedRef.current = true;
-       return () => {
-           isMountedRef.current = false;
-           stopMediaAndTimers(); // Clean up timers on unmount
-       };
-   }, [stopMediaAndTimers]);
 
 
   // Delete handler
@@ -294,15 +313,16 @@ export function StoryModalViewer({
   }
 
   return (
-    // Use AnimatePresence for smooth modal transition (optional)
-    // <AnimatePresence>
       <Dialog open={true} onOpenChange={(open) => !open && onClose()}>
         {/* Add DialogTitle for accessibility */}
         <DialogTitle className={cn("sr-only")}>
             Story by {activeStory.displayName || 'User'}
         </DialogTitle>
-        {/* Make content responsive and aspect ratio controlled */}
-        <DialogContent className="p-0 max-w-md sm:max-w-lg md:max-w-md lg:max-w-md w-[90vw] h-auto aspect-[9/16] overflow-hidden border-0 shadow-2xl bg-black rounded-lg flex items-center justify-center">
+        {/* Adjust content size for medium modal */}
+        <DialogContent className="p-0 max-w-md w-[90vw] border-0 shadow-2xl bg-black rounded-lg flex flex-col overflow-hidden aspect-[9/16]" // Apply aspect ratio
+             onInteractOutside={(e) => e.preventDefault()} // Prevent closing on outside click
+             onEscapeKeyDown={onClose} // Allow closing with Esc
+        >
           {/* Ensure inner div takes full height */}
           <div
             className="relative w-full h-full flex flex-col text-white select-none"
@@ -360,7 +380,7 @@ export function StoryModalViewer({
              <div className="absolute inset-y-0 right-0 w-1/3 z-30" onClick={(e) => { e.stopPropagation(); goToNextStory(); }}></div>
 
             {/* Media Content */}
-            <div className="flex-1 flex items-center justify-center overflow-hidden relative">
+            <div className="flex-1 flex items-center justify-center overflow-hidden relative bg-black"> {/* Ensure background is black */}
               {resolvedVideoUrl ? (
                 <video
                   ref={mediaRef as React.RefObject<HTMLVideoElement>}
@@ -370,6 +390,7 @@ export function StoryModalViewer({
                   muted={isMuted}
                   playsInline
                   loop={!resolvedMusicUrl} // Loop video only if no separate music
+                  preload="auto" // Preload video
                 />
               ) : resolvedImageUrl ? (
                 <Image
@@ -397,6 +418,7 @@ export function StoryModalViewer({
                        muted={isMuted}
                        loop // Music usually loops unless trimmed
                        playsInline
+                       preload="auto" // Preload audio
                    > Your browser does not support the audio element. </audio>
                )}
             </div>
@@ -428,7 +450,7 @@ export function StoryModalViewer({
                              <Trash2 className="w-5 h-5" />
                           </Button>
                        </AlertDialogTrigger>
-                       <AlertDialogContent onClick={(e) => e.stopPropagation()}> {/* Prevent closing modal */}
+                       <AlertDialogPrimitiveContent onClick={(e) => e.stopPropagation()}> {/* Use alias */}
                           <AlertDialogHeader>
                              <AlertDialogTitleComponent className="flex items-center gap-2">
                                 <AlertTriangle className="text-destructive"/> Delete this story?
@@ -446,7 +468,7 @@ export function StoryModalViewer({
                                 Delete
                              </AlertDialogAction>
                           </AlertDialogFooter>
-                       </AlertDialogContent>
+                       </AlertDialogPrimitiveContent>
                     </AlertDialog>
                  )}
                  {!isOwner && <div />} {/* Placeholder */}
@@ -462,6 +484,6 @@ export function StoryModalViewer({
           </div>
         </DialogContent>
       </Dialog>
-    // </AnimatePresence>
   );
 }
+
