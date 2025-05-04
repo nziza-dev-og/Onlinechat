@@ -170,7 +170,7 @@ export type SignalingMessage = SignalingOffer | SignalingAnswer | SignalingCandi
 
 // --- Platform Configuration Types ---
 export interface MusicPlaylistItem {
-    id: string; // Unique ID for the track (can be Firestore doc ID)
+    id: string; // Unique ID for the track (can be Firestore doc ID or hardcoded ID)
     title: string;
     url: string;
     // Add optional duration if you pre-process files, helps with trimming UI
@@ -180,7 +180,7 @@ export interface MusicPlaylistItem {
 export interface PlatformConfig {
   allowEmoji?: boolean;
   allowFileUploads?: boolean;
-  musicPlaylist?: MusicPlaylistItem[]; // Add music playlist
+  musicPlaylist: MusicPlaylistItem[]; // Playlist is now required and always included
   // Add other config fields here (e.g., theme, logoUrl)
 }
 // --- End Platform Configuration Types ---
@@ -202,5 +202,3 @@ export type UserProfileUpdateData = {
     createdAt?: never;
     isAdmin?: never; // Explicitly prevent isAdmin updates via this general function
 };
-
-    

@@ -4,34 +4,34 @@
 import * as React from 'react';
 import { useAuth } from '@/hooks/use-auth';
 import { getPasswordChangeRequests, reviewPasswordChangeRequest } from '@/lib/user-profile.service';
-import type { UserProfile, AdminMessage, User, PostSerializable, MusicPlaylistItem } from '@/types'; // Added MusicPlaylistItem
+import type { UserProfile, AdminMessage, User, PostSerializable, MusicPlaylistItem } from '@/types';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Loader2, ShieldAlert, CheckCircle, XCircle, UserCheck, UserX, BarChart2, Bell, Settings, ShieldCheck, Send, Ban, MessageSquare, Users as UsersIcon, User as UserIcon, Clapperboard, Trash2, Film, Music, PlusCircle } from 'lucide-react'; // Added Music, PlusCircle
+import { Loader2, ShieldAlert, CheckCircle, XCircle, UserCheck, UserX, BarChart2, Bell, Settings, ShieldCheck, Send, Ban, MessageSquare, Users as UsersIcon, User as UserIcon, Clapperboard, Trash2, Film, PlusCircle } from 'lucide-react'; // Removed Music, PlusCircle icons
 import { useToast } from '@/hooks/use-toast';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
-import { getFirestore, doc, getDoc, type Firestore, collection, query, where, onSnapshot, type Unsubscribe, orderBy, limit, Timestamp } from 'firebase/firestore'; // Added collection, query, where, onSnapshot, Unsubscribe, orderBy, limit, Timestamp
+import { getFirestore, doc, getDoc, type Firestore, collection, query, where, onSnapshot, type Unsubscribe, orderBy, limit, Timestamp } from 'firebase/firestore';
 import { app } from '@/lib/firebase';
-import { getOnlineUsersCount, getAdminMessages } from '@/lib/admin.service'; // Added getAdminMessages import
-import { sendGlobalNotification, sendTargetedNotification, sendAdminReply } from '@/lib/notification.service'; // Import specific notification services, added sendAdminReply
-import { Textarea } from '@/components/ui/textarea'; // Import Textarea
-import { Label } from '@/components/ui/label'; // Import Label
-import { Switch } from "@/components/ui/switch"; // Import Switch for settings/security
-import { Input } from "@/components/ui/input"; // Import Input for settings/security, music playlist
-import { blockIpAddress, logSuspiciousActivity } from '@/lib/security.service'; // Import security services
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"; // Import RadioGroup
+import { getOnlineUsersCount, getAdminMessages } from '@/lib/admin.service';
+import { sendGlobalNotification, sendTargetedNotification, sendAdminReply } from '@/lib/notification.service';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import { Switch } from "@/components/ui/switch";
+import { Input } from "@/components/ui/input";
+import { blockIpAddress, logSuspiciousActivity } from '@/lib/security.service';
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"; // Import Select for user targeting
-import { fetchPosts, deletePost } from '@/lib/posts.service'; // Import fetchPosts, deletePost
-import { PostCard } from '@/components/posts/post-card'; // Import PostCard for displaying stories? Or create a dedicated StoryCard
+} from "@/components/ui/select";
+import { fetchPosts, deletePost } from '@/lib/posts.service';
+import { PostCard } from '@/components/posts/post-card';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -42,8 +42,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from "@/components/ui/alert-dialog"; // Import AlertDialog
-import { getPlatformConfig, addMusicTrack, removeMusicTrack } from '@/lib/config.service'; // Import config services
+} from "@/components/ui/alert-dialog";
+import { getPlatformConfig, updatePlatformCoreConfig } from '@/lib/config.service'; // Removed add/removeMusicTrack imports
 
 // Helper to get initials
 const getInitials = (name: string | null | undefined): string => {
@@ -164,7 +164,7 @@ export default function AdminPage() {
   const [loadingUserList, setLoadingUserList] = React.useState(false);
   // --- End Notification States ---
 
-  // Placeholder states for Settings
+  // Config States
   const [allowEmoji, setAllowEmoji] = React.useState(true);
   const [allowFileUploads, setAllowFileUploads] = React.useState(true);
   const [isSavingSettings, setIsSavingSettings] = React.useState(false);
@@ -185,13 +185,13 @@ export default function AdminPage() {
   const [stories, setStories] = React.useState<PostSerializable[]>([]);
   const [loadingStories, setLoadingStories] = React.useState(true);
 
-  // Music Playlist State
-  const [musicPlaylist, setMusicPlaylist] = React.useState<MusicPlaylistItem[]>([]);
-  const [loadingPlaylist, setLoadingPlaylist] = React.useState(true);
-  const [newTrackTitle, setNewTrackTitle] = React.useState('');
-  const [newTrackUrl, setNewTrackUrl] = React.useState('');
-  const [isAddingTrack, setIsAddingTrack] = React.useState(false);
-  const [deletingTrackId, setDeletingTrackId] = React.useState<string | null>(null);
+  // Music Playlist State Removed - Playlist is predefined now
+  // const [musicPlaylist, setMusicPlaylist] = React.useState<MusicPlaylistItem[]>([]);
+  // const [loadingPlaylist, setLoadingPlaylist] = React.useState(true);
+  // const [newTrackTitle, setNewTrackTitle] = React.useState('');
+  // const [newTrackUrl, setNewTrackUrl] = React.useState('');
+  // const [isAddingTrack, setIsAddingTrack] = React.useState(false);
+  // const [deletingTrackId, setDeletingTrackId] = React.useState<string | null>(null);
 
   const { toast } = useToast();
   const userListListenerUnsubscribeRef = React.useRef<Unsubscribe | null>(null); // Ref for user list listener
@@ -212,7 +212,7 @@ export default function AdminPage() {
             setLoadingAdminMessages(false);
             setLoadingUserList(false);
             setLoadingStories(false);
-            setLoadingPlaylist(false); // Set playlist loading false
+            // setLoadingPlaylist(false); // Remove playlist loading
         }
     }, []);
 
@@ -227,13 +227,13 @@ export default function AdminPage() {
       setLoadingAdminMessages(true);
       setLoadingUserList(true);
       setLoadingStories(true);
-      setLoadingPlaylist(true); // Set playlist loading true
+      // setLoadingPlaylist(true); // Remove playlist loading
       setRequests([]);
       setOnlineUsers(null);
       setAdminMessages([]);
       setUserList([]);
       setStories([]);
-      setMusicPlaylist([]); // Reset playlist
+      // setMusicPlaylist([]); // Reset playlist removed
       return;
     }
     if (!user) {
@@ -244,14 +244,14 @@ export default function AdminPage() {
       setLoadingAdminMessages(false);
       setLoadingUserList(false);
       setLoadingStories(false);
-      setLoadingPlaylist(false); // Set playlist loading false
+      // setLoadingPlaylist(false); // Remove playlist loading
       setRequests([]);
       setError("Please log in to access the admin page.");
       setOnlineUsers(null);
       setAdminMessages([]);
       setUserList([]);
        setStories([]);
-       setMusicPlaylist([]); // Reset playlist
+       // setMusicPlaylist([]); // Reset playlist removed
       return;
     }
 
@@ -274,13 +274,13 @@ export default function AdminPage() {
         setLoadingAdminMessages(true);
         setLoadingUserList(true);
         setLoadingStories(true);
-        setLoadingPlaylist(true); // Set playlist loading true
+        // setLoadingPlaylist(true); // Remove playlist loading
         setError(null);
         setOnlineUsers(null);
         setAdminMessages([]);
         setUserList([]);
         setStories([]);
-        setMusicPlaylist([]); // Reset playlist
+        // setMusicPlaylist([]); // Reset playlist removed
 
         try {
              const profile = await getDoc(doc(firestoreInstance, 'users', user.uid));
@@ -293,7 +293,7 @@ export default function AdminPage() {
                 const requestsPromise = getPasswordChangeRequests(user.uid).catch(err => { console.error("Req Fetch Err:", err); throw err; });
                 const analyticsPromise = getOnlineUsersCount().catch(err => { console.error("Analytics Err:", err); throw err; });
                 const storiesPromise = fetchPosts(100).then(posts => posts.filter(p => p.type === 'story')).catch(err => { console.error("Stories Fetch Err:", err); throw err; });
-                 // Fetch Platform Config (including music)
+                 // Fetch Platform Config (excluding playlist now)
                  const configPromise = getPlatformConfig().catch(err => { console.error("Config Fetch Err:", err); throw err; });
 
 
@@ -357,8 +357,8 @@ export default function AdminPage() {
                       // Set config states
                       setAllowEmoji(platformConfig.allowEmoji ?? true);
                       setAllowFileUploads(platformConfig.allowFileUploads ?? true);
-                      // Ensure "No Music" is always first, then add fetched playlist
-                      setMusicPlaylist([{ id: 'none', title: "No Music", url: "none" }, ...(platformConfig.musicPlaylist || [])]);
+                      // Music playlist is no longer fetched/set here
+                      // setMusicPlaylist([{ id: 'none', title: "No Music", url: "none" }, ...(platformConfig.musicPlaylist || [])]);
 
                  } catch (batchError: any) {
                      console.error("Error fetching initial admin data batch:", batchError);
@@ -366,31 +366,32 @@ export default function AdminPage() {
                      if (!requests.length) setRequests([]);
                      if (onlineUsers === null) setOnlineUsers(0);
                      if (!stories.length) setStories([]);
-                     if (!musicPlaylist.length) setMusicPlaylist([{ id: 'none', title: "No Music", url: "none" }]); // Default playlist on error
+                     // Default playlist on error removed
+                     // if (!musicPlaylist.length) setMusicPlaylist([{ id: 'none', title: "No Music", url: "none" }]);
                  } finally {
                     setLoadingRequests(false);
                     setLoadingAnalytics(false);
                     setLoadingStories(false);
-                    setLoadingPlaylist(false); // Set playlist loading false
+                    // setLoadingPlaylist(false); // Remove playlist loading
                  }
 
              } else {
                  console.log("AdminPage: User is not admin.");
                 setError("You do not have permission to access this page.");
-                setRequests([]); setOnlineUsers(null); setAdminMessages([]); setUserList([]); setStories([]); setMusicPlaylist([]);
-                setLoadingRequests(false); setLoadingAnalytics(false); setLoadingAdminMessages(false); setLoadingUserList(false); setLoadingStories(false); setLoadingPlaylist(false);
+                setRequests([]); setOnlineUsers(null); setAdminMessages([]); setUserList([]); setStories([]); // setMusicPlaylist([]); removed
+                setLoadingRequests(false); setLoadingAnalytics(false); setLoadingAdminMessages(false); setLoadingUserList(false); setLoadingStories(false); // setLoadingPlaylist(false); removed
              }
         } catch (err: any) {
             console.error("Error checking admin status or fetching data:", err);
             setError(err.message || "Failed to load admin data.");
             setIsAdmin(false);
-            setRequests([]); setOnlineUsers(null); setAdminMessages([]); setUserList([]); setStories([]); setMusicPlaylist([]);
-            setLoadingRequests(false); setLoadingAnalytics(false); setLoadingAdminMessages(false); setLoadingUserList(false); setLoadingStories(false); setLoadingPlaylist(false);
+            setRequests([]); setOnlineUsers(null); setAdminMessages([]); setUserList([]); setStories([]); // setMusicPlaylist([]); removed
+            setLoadingRequests(false); setLoadingAnalytics(false); setLoadingAdminMessages(false); setLoadingUserList(false); setLoadingStories(false); // setLoadingPlaylist(false); removed
         } finally {
              setLoadingUserList(false);
              setLoadingAdminMessages(false);
              setLoadingStories(false);
-             setLoadingPlaylist(false); // Ensure playlist loading is false
+             // setLoadingPlaylist(false); // Ensure playlist loading is false removed
         }
     };
 
@@ -455,14 +456,14 @@ export default function AdminPage() {
         }
    };
 
-   // Handle saving settings (placeholder) - TODO: Implement real saving
+   // Handle saving settings
    const handleSaveSettings = async () => {
       setIsSavingSettings(true);
       try {
           console.log("Saving settings:", { allowEmoji, allowFileUploads });
-          // await updatePlatformCoreConfig({ allowEmoji, allowFileUploads }, user.uid); // Call real service
-          await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate network delay
-          toast({ title: 'Settings Saved (Placeholder)' });
+          await updatePlatformCoreConfig({ allowEmoji, allowFileUploads }, user.uid); // Call real service
+          // await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate network delay removed
+          toast({ title: 'Settings Saved' });
       } catch (error: any) {
           toast({ title: 'Save Failed', description: error.message, variant: 'destructive' });
       } finally {
@@ -513,46 +514,10 @@ export default function AdminPage() {
         setStories(prevStories => prevStories.filter(story => story.id !== deletedStoryId));
    };
 
-   // --- Music Playlist Handlers ---
-   const handleAddMusicTrack = async (e: React.FormEvent) => {
-       e.preventDefault();
-       if (!user || !newTrackTitle.trim() || !newTrackUrl.trim() || isAddingTrack) return;
-
-       setIsAddingTrack(true);
-       const trackData = { title: newTrackTitle.trim(), url: newTrackUrl.trim() };
-       try {
-           const newTrackId = await addMusicTrack(trackData, user.uid);
-           toast({ title: 'Music Track Added', description: `"${trackData.title}" added to playlist.` });
-           // Optimistically add to local state
-           setMusicPlaylist(prev => [...prev, { id: newTrackId, ...trackData }]);
-           setNewTrackTitle(''); setNewTrackUrl('');
-       } catch (error: any) {
-           toast({ title: 'Add Track Failed', description: error.message || 'Could not add music track.', variant: 'destructive' });
-       } finally {
-           setIsAddingTrack(false);
-       }
-   };
-
-   const handleRemoveMusicTrack = async (trackId: string) => {
-       if (!user || deletingTrackId) return;
-       if (trackId === 'none') { // Prevent deleting the "No Music" option
-           toast({ title: "Cannot Delete", description: "The 'No Music' option cannot be removed.", variant: "destructive" });
-           return;
-       }
-
-       setDeletingTrackId(trackId);
-       try {
-           await removeMusicTrack(trackId, user.uid);
-           toast({ title: 'Music Track Removed' });
-           // Optimistically remove from local state
-           setMusicPlaylist(prev => prev.filter(track => track.id !== trackId));
-       } catch (error: any) {
-           toast({ title: 'Remove Track Failed', description: error.message || 'Could not remove music track.', variant: 'destructive' });
-       } finally {
-           setDeletingTrackId(null);
-       }
-   };
-   // --- End Music Playlist Handlers ---
+   // --- Music Playlist Handlers Removed ---
+   // const handleAddMusicTrack = async (...) => { ... };
+   // const handleRemoveMusicTrack = async (...) => { ... };
+   // --- End Music Playlist Handlers Removed ---
 
 
   // --- Render Logic ---
@@ -592,14 +557,14 @@ export default function AdminPage() {
         </div>
 
         <Tabs defaultValue="requests" className="w-full">
-           {/* Adjusted grid columns for more tabs */}
-          <TabsList className="grid w-full grid-cols-4 sm:grid-cols-8 gap-1 mb-4 sm:mb-6">
+           {/* Adjusted grid columns for fewer tabs */}
+          <TabsList className="grid w-full grid-cols-3 sm:grid-cols-6 gap-1 mb-4 sm:mb-6">
             <TabsTrigger value="requests"><ShieldCheck className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Requests</TabsTrigger>
             <TabsTrigger value="analytics"><BarChart2 className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Analytics</TabsTrigger>
             <TabsTrigger value="messages"><MessageSquare className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Messages</TabsTrigger>
             <TabsTrigger value="stories"><Film className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Stories</TabsTrigger>
             <TabsTrigger value="notifications"><Bell className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Notifications</TabsTrigger>
-            <TabsTrigger value="music"><Music className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Music</TabsTrigger> {/* Added Music Trigger */}
+            {/* <TabsTrigger value="music"><Music className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Music</TabsTrigger> Removed Music Trigger */}
             <TabsTrigger value="settings"><Settings className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Settings</TabsTrigger>
             <TabsTrigger value="security"><ShieldAlert className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Security</TabsTrigger>
           </TabsList>
@@ -764,70 +729,15 @@ export default function AdminPage() {
               </Card>
            </TabsContent>
 
-           {/* Music Playlist Tab - New */}
+           {/* Music Playlist Tab - Removed */}
+           {/*
            <TabsContent value="music">
                <Card className="shadow-lg mt-4 w-full">
-                   <CardHeader>
-                       <CardTitle>Manage Story Music</CardTitle>
-                       <CardDescription>Add or remove background music options for stories.</CardDescription>
-                   </CardHeader>
-                   <CardContent className="space-y-6">
-                       {/* Add New Track Form */}
-                       <form onSubmit={handleAddMusicTrack} className="border p-4 rounded-md space-y-4 bg-muted/30">
-                           <h4 className="font-medium text-lg">Add New Track</h4>
-                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                               <div className="space-y-2">
-                                   <Label htmlFor="newTrackTitle">Track Title</Label>
-                                   <Input id="newTrackTitle" value={newTrackTitle} onChange={(e) => setNewTrackTitle(e.target.value)} placeholder="Song Title" required disabled={isAddingTrack} />
-                               </div>
-                               <div className="space-y-2">
-                                   <Label htmlFor="newTrackUrl">Track URL</Label>
-                                   <Input id="newTrackUrl" type="url" value={newTrackUrl} onChange={(e) => setNewTrackUrl(e.target.value)} placeholder="https://example.com/song.mp3" required disabled={isAddingTrack} />
-                               </div>
-                           </div>
-                           <Button type="submit" disabled={!newTrackTitle.trim() || !newTrackUrl.trim() || isAddingTrack}>
-                               {isAddingTrack ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlusCircle className="mr-2 h-4 w-4" />} Add Track
-                           </Button>
-                       </form>
-
-                       {/* Current Playlist */}
-                       <div>
-                           <h4 className="font-medium text-lg mb-3">Current Playlist</h4>
-                           {loadingPlaylist && (
-                               <div className="space-y-2"> <Skeleton className="h-10 w-full" /> <Skeleton className="h-10 w-full" /> </div>
-                           )}
-                           {!loadingPlaylist && musicPlaylist.length <= 1 && ( // Only "No Music"
-                               <p className="text-muted-foreground text-center p-4 italic">No music tracks added yet.</p>
-                           )}
-                           {!loadingPlaylist && musicPlaylist.filter(t => t.id !== 'none').map((track) => ( // Exclude "No Music" option
-                               <div key={track.id} className="flex items-center justify-between p-3 border rounded-md mb-2 bg-card">
-                                   <div className="min-w-0">
-                                       <p className="text-sm font-medium truncate">{track.title}</p>
-                                       <p className="text-xs text-muted-foreground truncate">{track.url}</p>
-                                   </div>
-                                   <AlertDialog>
-                                       <AlertDialogTrigger asChild>
-                                           <Button variant="ghost" size="icon" className="text-destructive hover:bg-destructive/10 flex-shrink-0 h-8 w-8" disabled={deletingTrackId === track.id}>
-                                                {deletingTrackId === track.id ? <Loader2 className="h-4 w-4 animate-spin"/> : <Trash2 className="h-4 w-4"/>}
-                                                <span className="sr-only">Remove Track</span>
-                                           </Button>
-                                       </AlertDialogTrigger>
-                                       <AlertDialogContent>
-                                            <AlertDialogHeader> <AlertDialogTitle>Confirm Removal</AlertDialogTitle> <AlertDialogDescription> Are you sure you want to remove "{track.title}" from the playlist? </AlertDialogDescription> </AlertDialogHeader>
-                                            <AlertDialogFooter>
-                                                <AlertDialogCancel disabled={deletingTrackId === track.id}>Cancel</AlertDialogCancel>
-                                                <AlertDialogAction onClick={() => handleRemoveMusicTrack(track.id)} disabled={deletingTrackId === track.id} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                                                     {deletingTrackId === track.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : null} Remove Track
-                                                </AlertDialogAction>
-                                            </AlertDialogFooter>
-                                       </AlertDialogContent>
-                                   </AlertDialog>
-                               </div>
-                           ))}
-                       </div>
-                   </CardContent>
+                    <CardHeader> <CardTitle>Manage Story Music</CardTitle> <CardDescription>Add or remove background music options for stories.</CardDescription> </CardHeader>
+                    <CardContent> Playlist Management UI Removed </CardContent>
                </Card>
            </TabsContent>
+           */}
 
            {/* Settings Tab */}
            <TabsContent value="settings">
@@ -878,5 +788,3 @@ export default function AdminPage() {
     </div>
   );
 }
-
-    
