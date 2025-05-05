@@ -154,29 +154,28 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
    }, []);
 
    const handlePreviewToggle = React.useCallback(() => {
-        // Prioritize custom URL for preview
         const audioUrl = effectiveMusicUrl;
         if (!audioUrl) return;
 
-        // Warn user for potentially non-direct URLs
+        // Check if URL is likely direct *before* creating audio element
         if (!isDirectAudioUrl(audioUrl)) {
             toast({
-                title: "Preview Might Fail",
+                title: "Preview Unavailable",
                  description: (
                     <div className="flex items-start gap-2">
                        <AlertCircle className="h-5 w-5 text-yellow-500 flex-shrink-0 mt-0.5" />
                        <span>
-                        This doesn't look like a direct audio file link (e.g., .mp3). Preview might not work for streaming sites or pages.
+                          Preview is only available for direct audio file links (like .mp3, .wav). URLs from streaming sites (SoundCloud, YouTube, etc.) or file sharing pages cannot be previewed directly.
                        </span>
                     </div>
                  ),
-                duration: 7000,
+                duration: 8000,
             });
-            console.warn("Attempting audio preview for potentially non-direct URL:", audioUrl);
-            // Allow attempt but warn user
+            console.warn("Audio preview skipped: URL is not a recognized direct audio link:", audioUrl);
+            return; // Stop processing if URL is not direct
         }
 
-        // Proceed with playing/creating the audio element
+        // Proceed with playing/creating the audio element only if it's likely direct
         if (!previewAudioRef.current) {
             try {
                  console.log("Creating new Audio element for:", audioUrl);
@@ -187,24 +186,24 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
                  };
                  previewAudioRef.current.onerror = (e) => {
                      const mediaError = previewAudioRef.current?.error;
-                     const errorCode = mediaError?.code; // Get error code (e.g., 4 for MEDIA_ERR_SRC_NOT_SUPPORTED)
-                     const errorMessage = mediaError?.message || 'Unknown audio error'; // Get error message
-                     console.error(`Audio preview error event. Code: ${errorCode}, Message: ${errorMessage}`, e); // Log code and message
+                     const errorCode = mediaError?.code;
+                     const errorMessage = mediaError?.message || 'Unknown audio error';
+                     console.error(`Audio preview error event. Code: ${errorCode}, Message: ${errorMessage}`, e);
                      toast({
                          variant: "destructive",
                          title: "Preview Error",
-                         description: `Could not play audio preview. Ensure the URL is a direct link to an audio file and accessible. Error: ${errorMessage}` // Use error message from MediaError
+                         description: `Could not play audio preview. Ensure the URL is correct and accessible. Error: ${errorMessage}`
                      });
                      setIsPreviewPlaying(false);
                  };
                  previewAudioRef.current.onpause = () => {
-                      if (isPreviewPlaying) { // Only update state if it was previously playing
+                      if (isPreviewPlaying) {
                          console.log("Audio preview paused (onpause event).");
                          setIsPreviewPlaying(false);
                       }
                  };
                  previewAudioRef.current.onplay = () => {
-                      if (!isPreviewPlaying) { // Only update state if it wasn't previously playing
+                      if (!isPreviewPlaying) {
                          console.log("Audio preview playing (onplay event).");
                          setIsPreviewPlaying(true);
                       }
@@ -216,26 +215,22 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
             }
 
         } else if (previewAudioRef.current.src !== audioUrl) {
-             // Update src if it changed
              console.log("Updating Audio element src to:", audioUrl);
              previewAudioRef.current.src = audioUrl;
-             stopPreview(); // Stop and reset state before loading new source
-             previewAudioRef.current.load(); // Load new source
+             stopPreview();
+             previewAudioRef.current.load();
         }
 
         // Toggle play/pause
         if (isPreviewPlaying) {
             console.log("User clicked pause preview.");
             previewAudioRef.current.pause();
-            // onpause listener should set isPreviewPlaying to false
         } else {
-            // Attempt to play and catch potential errors immediately
              if (previewAudioRef.current) {
-                previewAudioRef.current.currentTime = 0; // Start from beginning
+                previewAudioRef.current.currentTime = 0;
                 console.log("Attempting to play preview...");
                 previewAudioRef.current.play().then(() => {
                      console.log("Audio preview play() successful.");
-                     // onplay listener should set isPreviewPlaying to true
                 }).catch(e => {
                     console.error("Preview play() error:", e);
                     toast({
@@ -243,19 +238,18 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
                         title: "Preview Error",
                         description: `Could not start audio preview. ${e.message || 'Interaction might be required.'}`
                     });
-                    setIsPreviewPlaying(false); // Ensure state is false if play fails
+                    setIsPreviewPlaying(false);
                 });
              }
         }
 
-   }, [effectiveMusicUrl, isPreviewPlaying, toast, stopPreview]); // Keep dependencies
+   }, [effectiveMusicUrl, isPreviewPlaying, toast, stopPreview]);
 
    // Cleanup preview audio when component unmounts or effective URL changes
    React.useEffect(() => {
-     stopPreview(); // Stop preview when selected music/custom URL changes
+     stopPreview();
 
      return () => {
-       // Cleanup on unmount
        stopPreview();
        if (previewAudioRef.current) {
            previewAudioRef.current.onended = null;
@@ -336,7 +330,6 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
 
    const watchedImageUrl = form.watch('imageUrl');
    const watchedVideoUrl = form.watch('videoUrl');
-   // Include customMusicUrl in submit check if needed, but form validation handles the primary logic
    const canSubmit = (!!watchedImageUrl?.trim() || !!watchedVideoUrl?.trim()) && form.formState.isValid;
 
 
@@ -401,16 +394,14 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
                          value={field.value ?? "none"}
                          onValueChange={(value) => {
                               field.onChange(value);
-                              // If a playlist track is selected, clear the custom URL
                               if (value !== 'none') form.setValue('customMusicUrl', '');
-                              stopPreview(); // Stop preview when selection changes
-                              // Reset trim times if music is set to none
+                              stopPreview();
                               if (value === 'none' && !customMusicUrlValue?.trim()) {
                                   form.setValue('musicStartTime', '');
                                   form.setValue('musicEndTime', '');
                               }
                          }}
-                         disabled={isSubmitting || loadingPlaylist || !!customMusicUrlValue?.trim()} // Disable if custom URL is entered
+                         disabled={isSubmitting || loadingPlaylist || !!customMusicUrlValue?.trim()}
                        >
                          <SelectTrigger id="musicSelectStory" className="flex-1">
                             <SelectValue placeholder={loadingPlaylist ? "Loading playlist..." : "Select from playlist..."} />
@@ -419,7 +410,7 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
                             {loadingPlaylist && <SelectItem value="loading" disabled>Loading...</SelectItem>}
                             {!loadingPlaylist && musicPlaylist.length === 1 && <SelectItem value="no-music" disabled>No music available</SelectItem>}
                             {!loadingPlaylist && musicPlaylist.map((song) => (
-                              <SelectItem key={song.id || 'none'} value={song.url || 'none'}>
+                              <SelectItem key={song.id || 'none'} value={song.url}> {/* Ensure value is never empty */}
                                 {song.title}
                               </SelectItem>
                             ))}
@@ -427,20 +418,24 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
                        </Select>
                     )}
                  />
-                 {/* Preview Button - enabled if either selected or custom URL is valid */}
+                 {/* Preview Button - enabled if it's a direct URL */}
                   <Button
                     type="button"
                     variant="outline"
                     size="icon"
                     onClick={handlePreviewToggle}
-                    disabled={isSubmitting || loadingPlaylist || !effectiveMusicUrl}
-                    className={cn("flex-shrink-0 h-10 w-10", isPreviewPlaying && "bg-accent text-accent-foreground")}
+                    disabled={isSubmitting || loadingPlaylist || !effectiveMusicUrl || !isDirectAudioUrl(effectiveMusicUrl)} // Disable if not direct URL
+                    className={cn(
+                        "flex-shrink-0 h-10 w-10",
+                        isPreviewPlaying && "bg-accent text-accent-foreground",
+                        effectiveMusicUrl && !isDirectAudioUrl(effectiveMusicUrl) && "opacity-50 cursor-not-allowed" // Visually indicate disabled state for non-direct URLs
+                    )}
                     aria-label={isPreviewPlaying ? "Stop preview" : "Preview music"}
                   >
                     {isPreviewPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
                   </Button>
                </div>
-              <p className="text-xs text-muted-foreground">Select a song OR enter a custom URL below. Preview may not work for all URL types.</p>
+              <p className="text-xs text-muted-foreground">Select a song OR enter a custom URL below. Preview requires a direct audio file link (.mp3, .wav, etc.).</p>
            </div>
 
             {/* Custom Music URL Input */}
@@ -453,13 +448,11 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
                     type="url"
                     placeholder="https://example.com/your-audio.mp3"
                     {...form.register('customMusicUrl')}
-                    disabled={isSubmitting || (!!selectedMusicTrackUrl && selectedMusicTrackUrl !== 'none')} // Disable if playlist track selected
+                    disabled={isSubmitting || (!!selectedMusicTrackUrl && selectedMusicTrackUrl !== 'none')}
                     onChange={(e) => {
                          form.setValue('customMusicUrl', e.target.value);
-                         // If custom URL is entered, clear the playlist selection
                          if (e.target.value.trim()) form.setValue('selectedMusicUrl', 'none');
                          stopPreview();
-                         // Reset trim times if custom URL is cleared and no playlist track selected
                          if (!e.target.value.trim() && form.getValues('selectedMusicUrl') === 'none') {
                              form.setValue('musicStartTime', '');
                              form.setValue('musicEndTime', '');
@@ -482,7 +475,7 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
                         <Input
                             id="musicStartTime"
                             type="number"
-                            step="0.1" // Allow decimal seconds
+                            step="0.1"
                             min="0"
                             placeholder="e.g., 0"
                             {...form.register('musicStartTime')}
@@ -547,4 +540,3 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
     </Card>
   );
 }
-
