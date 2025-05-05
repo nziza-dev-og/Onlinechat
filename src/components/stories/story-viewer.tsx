@@ -1,3 +1,4 @@
+
 "use client";
 
 import * as React from 'react';
@@ -6,25 +7,25 @@ import Image from 'next/image';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { getInitials, resolveMediaUrl, cn } from '@/lib/utils';
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"; // Corrected import
-import { X, Volume2, VolumeX, Trash2, Loader2, AlertTriangle, ChevronLeft, ChevronRight, Pause, Play as PlayIcon, MessageCircle } from 'lucide-react'; // Added Chevrons, Pause, Play, MessageCircle
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { X, Volume2, VolumeX, Trash2, Loader2, AlertTriangle, ChevronLeft, ChevronRight, Pause, Play as PlayIcon, MessageCircle } from 'lucide-react';
 import { Button } from '../ui/button';
 import { AnimatePresence, motion } from "framer-motion";
 import { deletePost } from '@/lib/posts.service';
 import { useToast } from '@/hooks/use-toast';
-import { Progress } from "@/components/ui/progress"; // Import Progress
+import { Progress } from "@/components/ui/progress";
 import {
     AlertDialog,
     AlertDialogAction,
     AlertDialogCancel,
-    AlertDialogContent as AlertDialogPrimitiveContent, // Use alias to avoid conflict
+    AlertDialogContent as AlertDialogPrimitiveContent,
     AlertDialogDescription,
     AlertDialogFooter,
     AlertDialogHeader,
-    AlertDialogTitle as AlertDialogTitleComponent, // Rename imported component
+    AlertDialogTitle as AlertDialogTitleComponent,
     AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { CommentSection } from '@/components/posts/comment-section'; // Import CommentSection
+import { CommentSection } from '@/components/posts/comment-section';
 
 interface StoryModalViewerProps {
   userStories: PostSerializable[]; // Array of stories for the selected user
@@ -141,19 +142,29 @@ export function StoryModalViewer({
   }, [stopMediaAndTimers, isPaused, goToNextStory, showComments]); // Add showComments dependency
 
  const handleMediaError = React.useCallback((e: Event) => {
-     const mediaElement = mediaRef.current;
-     const error = mediaElement?.error;
+     // Use e.target to get the element that fired the event
+     const mediaElement = e.target as HTMLMediaElement;
+     const error = mediaElement?.error; // Get error from the element
+
+     // Log more detailed info from the error object if available
      console.error(
        `Media Error Event: Code ${error?.code}, Message: ${error?.message}`,
        e // Log the original event object too
      );
-     // Log the error but don't advance automatically, let the user navigate
-      toast({ variant: "destructive", title: "Media Error", description: `Could not load story media. ${error?.message || ''}` });
-      // Instead of auto-advancing, pause the story
-      setIsPaused(true);
-      stopMediaAndTimers();
-      setProgress(100); // Show progress as complete to indicate issue
-  }, [stopMediaAndTimers, toast]);
+
+     // Provide a slightly more informative toast, mentioning the element type
+     const elementType = mediaElement instanceof HTMLVideoElement ? 'video' : (mediaElement instanceof HTMLAudioElement ? 'audio' : 'media');
+     toast({
+         variant: "destructive",
+         title: "Media Error",
+         description: `Could not load story ${elementType}. ${error?.message || 'Check console for details.'}`
+     });
+
+     // Pause the story instead of auto-advancing
+     setIsPaused(true);
+     stopMediaAndTimers();
+     setProgress(100); // Show progress as complete
+ }, [stopMediaAndTimers, toast, setIsPaused, setProgress]); // Added setIsPaused, setProgress dependencies
 
   const handleMediaLoaded = React.useCallback(() => {
     const mediaElement = mediaRef.current;
@@ -315,7 +326,7 @@ export function StoryModalViewer({
     // Pause story while confirming delete
     handleInteractionStart();
     try {
-      await deletePost(activeStory.id, currentUserId || '');
+      await deletePost(activeStory.id, currentUserId || ''); // Pass currentUserId for potential ownership check in service
       toast({ title: "Story Deleted", description: "The story has been removed." });
       onDelete(activeStory.id); // Notify parent to remove from its state
       // Decide how to proceed after delete: go next or close
@@ -578,3 +589,4 @@ export function StoryModalViewer({
       </Dialog>
   );
 }
+
