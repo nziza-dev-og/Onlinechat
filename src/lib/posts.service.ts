@@ -1,6 +1,6 @@
 'use server';
 
-import { db, auth } from '@/lib/firebase';
+import { db } from '@/lib/firebase';
 import {
   collection,
   addDoc,
@@ -283,26 +283,35 @@ export const addComment = async (commentData: CommentInput): Promise<string> => 
 
 /**
  * Deletes a post and all its associated comments.
- * Simplified version: Only requires postId, does not check ownership.
- * Use with caution, ideally triggered only by authorized users/logic.
+ * Checks if the provided userId matches the post's author uid before deleting.
  *
  * @param postId - The ID of the post to delete.
- * @param _userId - (Optional, Ignored) Kept for potential future auth checks.
+ * @param userId - The UID of the user attempting to delete the post.
  * @returns Promise<void>
- * @throws Error if db is not initialized or deletion fails.
+ * @throws Error if db is not initialized, post not found, user is not authorized, or deletion fails.
  */
-export const deletePost = async (postId: string, _userId?: string): Promise<void> => {
+export const deletePost = async (postId: string, userId: string): Promise<void> => {
     if (!db) throw new Error("Database service not available.");
     if (!postId) throw new Error("Post ID is required.");
+    if (!userId) throw new Error("User ID is required for authorization."); // Require userId for deletion
 
     const postRef = doc(db, 'posts', postId);
     const commentsRef = collection(db, 'posts', postId, 'comments');
 
     try {
-        // Optional: Add authorization check here if needed in the future
-        // const postSnap = await getDoc(postRef);
-        // if (!postSnap.exists()) throw new Error("Post not found.");
-        // if (postSnap.data()?.uid !== userId) throw new Error("Unauthorized");
+        // --- Authorization Check ---
+        const postSnap = await getDoc(postRef);
+        if (!postSnap.exists()) {
+             console.warn(`Attempted to delete non-existent post: ${postId}`);
+             // Depending on UI, might not need to throw, but good for backend logic
+             throw new Error("Post not found.");
+        }
+        const postData = postSnap.data();
+        if (postData?.uid !== userId) {
+            console.warn(`Unauthorized delete attempt on post ${postId} by user ${userId}. Author: ${postData?.uid}`);
+            throw new Error("Unauthorized: You can only delete your own posts.");
+        }
+        // --- End Authorization Check ---
 
         // Delete comments using a batch write
         const batch = writeBatch(db);
@@ -310,6 +319,7 @@ export const deletePost = async (postId: string, _userId?: string): Promise<void
         commentsQuerySnapshot.forEach((commentDoc) => {
             batch.delete(commentDoc.ref);
         });
+        console.log(`Firestore: Queued deletion of ${commentsQuerySnapshot.size} comments for post ${postId}.`);
 
         // Delete the post document itself
         batch.delete(postRef);
@@ -317,9 +327,13 @@ export const deletePost = async (postId: string, _userId?: string): Promise<void
         // Commit the batch
         await batch.commit();
 
-        console.log(`Firestore: Post ${postId} and its ${commentsQuerySnapshot.size} comments deleted.`);
+        console.log(`Firestore: Post ${postId} and its comments deleted successfully by owner ${userId}.`);
 
     } catch (error: any) {
+        // Avoid double logging if it's an authorization or not found error caught above
+        if (error.message.includes("Unauthorized") || error.message.includes("Post not found")) {
+             throw error; // Re-throw the specific error
+        }
         const detailedErrorMessage = `Failed to delete post ${postId}. Error: ${error.message || 'Unknown Firestore error'}${error.code ? ` (Code: ${error.code})` : ''}`;
         console.error("🔴 Detailed Firestore Error:", detailedErrorMessage, error);
         // Re-throw a more specific error if possible, or the detailed one

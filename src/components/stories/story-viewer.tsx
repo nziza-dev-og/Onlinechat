@@ -18,7 +18,7 @@ import {
     AlertDialog,
     AlertDialogAction,
     AlertDialogCancel,
-    AlertDialogContent as AlertDialogPrimitiveContent,
+    AlertDialogContent as AlertDialogPrimitiveContent, // Use Primitive Content for unstyled base
     AlertDialogDescription,
     AlertDialogFooter,
     AlertDialogHeader,
@@ -161,9 +161,13 @@ export function StoryModalViewer({
      });
 
      // Pause the story instead of auto-advancing
-     setIsPaused(true);
+     if (isMountedRef.current) {
+         setIsPaused(true);
+     }
      stopMediaAndTimers();
-     setProgress(100); // Show progress as complete
+     if (isMountedRef.current) {
+         setProgress(100); // Show progress as complete
+     }
  }, [stopMediaAndTimers, toast, setIsPaused, setProgress]); // Added setIsPaused, setProgress dependencies
 
   const handleMediaLoaded = React.useCallback(() => {
@@ -321,7 +325,7 @@ export function StoryModalViewer({
 
   // Delete handler
   const handleDeleteClick = async () => {
-    if (!activeStory || isDeleting) return;
+    if (!activeStory || isDeleting || !isOwner) return; // Ensure ownership and not already deleting
     setIsDeleting(true);
     // Pause story while confirming delete
     handleInteractionStart();
@@ -329,17 +333,30 @@ export function StoryModalViewer({
       await deletePost(activeStory.id, currentUserId || ''); // Pass currentUserId for potential ownership check in service
       toast({ title: "Story Deleted", description: "The story has been removed." });
       onDelete(activeStory.id); // Notify parent to remove from its state
+
+      // Find the index of the deleted story *before* the parent updates the list
+      const deletedIndex = userStories.findIndex(s => s.id === activeStory.id);
+
       // Decide how to proceed after delete: go next or close
       if (userStories.length <= 1) {
          onClose();
       } else {
-         // Adjust index carefully after deletion
-          const nextIndex = currentIndex >= userStories.length - 1 ? currentIndex - 1 : currentIndex;
-          // It seems the parent update might re-render with the correct stories,
-          // so we might just need to reset the index if it's now out of bounds.
-          setCurrentIndex(Math.max(0, Math.min(nextIndex, userStories.length - 2))); // Ensure valid index
-          setProgress(0); // Reset progress for the new story at the adjusted index
-          setShowComments(false); // Ensure comments are hidden
+         // If the deleted story was the last one, go to the previous one
+         const nextIndexToShow = deletedIndex >= userStories.length - 1 ? deletedIndex - 1 : deletedIndex;
+         // Update the current index *after* parent state update (or rely on parent re-render)
+         // Let's reset progress and comments locally, parent will handle the list update
+         setProgress(0);
+         setShowComments(false);
+         // The parent's `onDelete` should trigger a re-render with the updated list,
+         // and the `currentIndex` might need recalculation if it's out of bounds.
+         // A safer approach might be to close and let the user reopen if needed,
+         // or pass a callback to the parent to set the next index.
+         // For now, let's just close if it was the only story.
+         // If not the only story, the parent re-render *should* handle showing the story
+         // now at the `currentIndex` (or the one before if last was deleted).
+         // If issues persist, pass a `setNextIndex` callback from parent.
+         setCurrentIndex(Math.max(0, Math.min(nextIndexToShow, userStories.length - 2)));
+
       }
     } catch (error: any) {
       console.error("Error deleting story:", error);
@@ -373,7 +390,9 @@ export function StoryModalViewer({
 
 
   if (!activeStory) {
-    return null; // Should not happen if Dialog's open state is managed correctly
+    // This might happen briefly if stories list becomes empty after delete
+    // Return null or a loading/empty state
+    return null;
   }
 
   return (
@@ -525,6 +544,7 @@ export function StoryModalViewer({
                              onClick={(e) => e.stopPropagation()} // Prevent pausing
                              className="text-red-400 hover:bg-red-500/20 hover:text-red-300"
                              aria-label="Delete story"
+                             disabled={isDeleting} // Disable trigger if already deleting
                           >
                              <Trash2 className="w-5 h-5" />
                           </Button>
