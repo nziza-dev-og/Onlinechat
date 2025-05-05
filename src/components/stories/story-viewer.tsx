@@ -1,4 +1,3 @@
-
 "use client";
 
 import * as React from 'react';
@@ -142,45 +141,33 @@ export function StoryModalViewer({
   }, [stopMediaAndTimers, isPaused, goToNextStory, showComments]); // Add showComments dependency
 
  const handleMediaError = React.useCallback((e: Event) => {
-     // Use e.target to get the element that fired the event
-     const mediaElement = e.target as HTMLMediaElement;
-     const error = mediaElement?.error; // Get error from the element
-
-     // Log more detailed info from the error object if available
+     const mediaElement = mediaRef.current;
+     const error = mediaElement?.error;
      console.error(
        `Media Error Event: Code ${error?.code}, Message: ${error?.message}`,
        e // Log the original event object too
      );
-
-     // Provide a slightly more informative toast, mentioning the element type
      const elementType = mediaElement instanceof HTMLVideoElement ? 'video' : (mediaElement instanceof HTMLAudioElement ? 'audio' : 'media');
      toast({
          variant: "destructive",
          title: "Media Error",
          description: `Could not load story ${elementType}. ${error?.message || 'Check console for details.'}`
      });
-
-     // Pause the story instead of auto-advancing
      if (isMountedRef.current) {
          setIsPaused(true);
-     }
-     stopMediaAndTimers();
-     if (isMountedRef.current) {
          setProgress(100); // Show progress as complete
      }
- }, [stopMediaAndTimers, toast, setIsPaused, setProgress]); // Added setIsPaused, setProgress dependencies
+     stopMediaAndTimers();
+ }, [stopMediaAndTimers, toast, setIsPaused, setProgress]);
 
   const handleMediaLoaded = React.useCallback(() => {
     const mediaElement = mediaRef.current;
-    if (!mediaElement || !isMountedRef.current) return; // Check mount status
+    if (!mediaElement || !isMountedRef.current) return;
 
-    // Apply music trimming if applicable
     if (activeStory?.musicUrl && mediaElement instanceof HTMLAudioElement) {
          const startTime = activeStory.musicStartTime ?? 0;
          mediaElement.currentTime = startTime;
          console.log(`Audio starting at: ${startTime}s`);
-
-         // If there's an end time, set up a listener to pause/advance
          if (activeStory.musicEndTime !== null && activeStory.musicEndTime > startTime) {
              const durationToPlay = (activeStory.musicEndTime - startTime) * 1000;
              if (timerRef.current) clearTimeout(timerRef.current);
@@ -190,89 +177,74 @@ export function StoryModalViewer({
                      goToNextStory();
                  }
              }, durationToPlay);
-              startProgress((activeStory.musicEndTime - startTime)); // Start progress bar for trim duration
+              startProgress((activeStory.musicEndTime - startTime));
          } else {
-            // No end time, use full audio duration for progress (if finite)
              if (isFinite(mediaElement.duration)) {
                 const remainingDuration = mediaElement.duration - startTime;
-                startProgress(remainingDuration > 0 ? remainingDuration : 0.1); // Ensure duration is positive
+                startProgress(remainingDuration > 0 ? remainingDuration : 0.1);
              } else {
                  console.warn("Audio duration is infinite/NaN, cannot use for progress.");
-                  startProgress(STORY_DURATION_SECONDS); // Fallback duration
+                  startProgress(STORY_DURATION_SECONDS);
              }
          }
     } else if (mediaElement instanceof HTMLVideoElement && isFinite(mediaElement.duration)) {
-        // For video, use its duration
         startProgress(mediaElement.duration);
     } else {
-        // For images or media with unknown duration, use default
         startProgress(STORY_DURATION_SECONDS);
     }
+    mediaElement.play().catch(e => console.warn("Autoplay prevented:", e));
 
-    // Attempt to play after metadata is loaded (requires user interaction first)
-     mediaElement.play().catch(e => console.warn("Autoplay prevented:", e));
+  }, [activeStory, startProgress, isPaused, goToNextStory]);
 
-  }, [activeStory, startProgress, isPaused, goToNextStory]); // Added goToNextStory
-
-  // Reset and play media when story index changes
    React.useEffect(() => {
      stopMediaAndTimers();
      setProgress(0);
      const mediaElement = mediaRef.current;
 
      if (mediaElement) {
-         // Check if source needs updating (important for video/audio)
          const newSrc = resolvedVideoUrl || resolvedMusicUrl;
          if (newSrc && mediaElement.currentSrc !== newSrc) {
              mediaElement.src = newSrc;
-             mediaElement.load(); // Important to load the new source
+             mediaElement.load();
          } else if (!newSrc && mediaElement.currentSrc) {
-              // If there's no media for the new story, clear the src
               mediaElement.src = '';
          }
 
-         mediaElement.muted = isMuted; // Apply mute state
-         mediaElement.currentTime = activeStory?.musicStartTime ?? 0; // Apply start time
+         mediaElement.muted = isMuted;
+         mediaElement.currentTime = activeStory?.musicStartTime ?? 0;
 
-          // Remove previous listeners before adding new ones
          mediaElement.removeEventListener('loadedmetadata', handleMediaLoaded);
-         mediaElement.removeEventListener('ended', goToNextStory); // Use goToNextStory for 'ended'
+         mediaElement.removeEventListener('ended', goToNextStory);
          mediaElement.removeEventListener('play', () => {if (isMountedRef.current) setIsPaused(false)});
          mediaElement.removeEventListener('pause', () => {if (isMountedRef.current) setIsPaused(true)});
-         mediaElement.removeEventListener('error', handleMediaError); // Use specific error handler
+         mediaElement.removeEventListener('error', handleMediaError);
 
-          // Add listeners for the current media
          mediaElement.addEventListener('loadedmetadata', handleMediaLoaded);
-         // Use ended event primarily for untrimmed media or video loops
-         mediaElement.addEventListener('ended', goToNextStory); // Go next when media finishes naturally
+         mediaElement.addEventListener('ended', goToNextStory);
          mediaElement.addEventListener('play', () => {if (isMountedRef.current) setIsPaused(false)});
          mediaElement.addEventListener('pause', () => {if (isMountedRef.current) setIsPaused(true)});
-         mediaElement.addEventListener('error', handleMediaError); // Use specific error handler
+         mediaElement.addEventListener('error', handleMediaError);
 
-         // Try playing (might require prior user interaction)
-         // Only play if comments are not shown
           if (!showComments) {
              mediaElement.play().catch(e => console.warn("Autoplay prevented on story change:", e));
           } else {
-             mediaElement.pause(); // Ensure media is paused if comments are shown
+             mediaElement.pause();
              setIsPaused(true);
           }
      } else if (resolvedImageUrl) {
-         // Handle image-only stories
           if (!showComments) {
              startProgress(STORY_DURATION_SECONDS);
           } else {
-            stopMediaAndTimers(); // Stop progress timer if comments shown
+            stopMediaAndTimers();
             setIsPaused(true);
           }
      }
 
-   }, [currentIndex, activeStory, resolvedVideoUrl, resolvedMusicUrl, resolvedImageUrl, stopMediaAndTimers, handleMediaLoaded, startProgress, isMuted, goToNextStory, handleMediaError, showComments]); // Add showComments dependency
+   }, [currentIndex, activeStory, resolvedVideoUrl, resolvedMusicUrl, resolvedImageUrl, stopMediaAndTimers, handleMediaLoaded, startProgress, isMuted, goToNextStory, handleMediaError, showComments]);
 
 
-  // Pause/Resume logic
   const handleInteractionStart = () => {
-    if (!isPaused && !showComments) { // Only pause if not already paused and comments are hidden
+    if (!isPaused && !showComments) {
         setIsPaused(true);
          if (mediaRef.current) mediaRef.current.pause();
          if (timerRef.current) clearTimeout(timerRef.current);
@@ -281,14 +253,12 @@ export function StoryModalViewer({
   };
 
   const handleInteractionEnd = () => {
-    if (isPaused && !showComments) { // Only resume if paused and comments are hidden
+    if (isPaused && !showComments) {
         setIsPaused(false);
-        // Resume media and progress
         if (mediaRef.current) mediaRef.current.play().catch(e => console.warn("Resume play prevented:", e));
-        // Restart progress calculation from current point
         const mediaElement = mediaRef.current;
-        let remainingDuration = STORY_DURATION_SECONDS; // Default for images
-        let progressAlreadyElapsed = progress; // Percentage
+        let remainingDuration = STORY_DURATION_SECONDS;
+        let progressAlreadyElapsed = progress;
 
         if (mediaElement && isFinite(mediaElement.duration)) {
             const currentTime = mediaElement.currentTime;
@@ -300,89 +270,62 @@ export function StoryModalViewer({
                 remainingDuration = endTime - currentTime;
                 progressAlreadyElapsed = ((currentTime - startTime) / totalMediaDuration) * 100;
             } else {
-                 // If somehow currentTime >= endTime, or duration is invalid, advance
                  goToNextStory();
                  return;
             }
         }
-
-        // Calculate remaining duration in seconds based on current progress percentage
         const remainingDurationFromProgress = (durationSeconds: number) => (durationSeconds * (100 - progress)) / 100;
-
         let resumeDuration = STORY_DURATION_SECONDS;
         if (mediaElement && isFinite(mediaElement.duration)) {
              const startTime = mediaElement instanceof HTMLAudioElement ? (activeStory?.musicStartTime ?? 0) : 0;
              const endTime = (mediaElement instanceof HTMLAudioElement && activeStory?.musicEndTime !== null) ? activeStory.musicEndTime : mediaElement.duration;
              resumeDuration = endTime - startTime;
         }
-
         const remainingSeconds = remainingDurationFromProgress(resumeDuration > 0 ? resumeDuration : STORY_DURATION_SECONDS);
-         startProgress(remainingSeconds > 0 ? remainingSeconds : 0.1); // Start with remaining time
-
+         startProgress(remainingSeconds > 0 ? remainingSeconds : 0.1);
     }
   };
 
 
-  // Delete handler
   const handleDeleteClick = async () => {
-    if (!activeStory || isDeleting || !isOwner) return; // Ensure ownership and not already deleting
+    if (!activeStory || isDeleting || !isOwner) return;
     setIsDeleting(true);
-    // Pause story while confirming delete
-    handleInteractionStart();
+    handleInteractionStart(); // Pause story
     try {
-      await deletePost(activeStory.id, currentUserId || ''); // Pass currentUserId for potential ownership check in service
+      // Call the delete service, ensuring currentUserId is passed correctly
+      await deletePost(activeStory.id, currentUserId || '');
       toast({ title: "Story Deleted", description: "The story has been removed." });
-      onDelete(activeStory.id); // Notify parent to remove from its state
+      onDelete(activeStory.id);
 
-      // Find the index of the deleted story *before* the parent updates the list
-      const deletedIndex = userStories.findIndex(s => s.id === activeStory.id);
-
-      // Decide how to proceed after delete: go next or close
       if (userStories.length <= 1) {
          onClose();
       } else {
-         // If the deleted story was the last one, go to the previous one
+         const deletedIndex = userStories.findIndex(s => s.id === activeStory.id);
          const nextIndexToShow = deletedIndex >= userStories.length - 1 ? deletedIndex - 1 : deletedIndex;
-         // Update the current index *after* parent state update (or rely on parent re-render)
-         // Let's reset progress and comments locally, parent will handle the list update
          setProgress(0);
          setShowComments(false);
-         // The parent's `onDelete` should trigger a re-render with the updated list,
-         // and the `currentIndex` might need recalculation if it's out of bounds.
-         // A safer approach might be to close and let the user reopen if needed,
-         // or pass a callback to the parent to set the next index.
-         // For now, let's just close if it was the only story.
-         // If not the only story, the parent re-render *should* handle showing the story
-         // now at the `currentIndex` (or the one before if last was deleted).
-         // If issues persist, pass a `setNextIndex` callback from parent.
          setCurrentIndex(Math.max(0, Math.min(nextIndexToShow, userStories.length - 2)));
-
       }
     } catch (error: any) {
       console.error("Error deleting story:", error);
       toast({ title: "Delete Failed", description: error.message || "Could not delete the story.", variant: "destructive" });
-       // Resume story if delete fails
-      handleInteractionEnd();
+      handleInteractionEnd(); // Resume story on failure
     } finally {
-       // Ensure deleting state is reset even if component unmounts quickly
        if(isMountedRef.current) setIsDeleting(false);
     }
   };
 
-  // Toggle comments section
   const toggleComments = (e: React.MouseEvent) => {
-      e.stopPropagation(); // Prevent pausing/resuming story
+      e.stopPropagation();
       setShowComments(prev => {
            const nextState = !prev;
            if (nextState) {
-               // Pause story when comments are shown
                setIsPaused(true);
                if (mediaRef.current) mediaRef.current.pause();
                if (timerRef.current) clearTimeout(timerRef.current);
                if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
            } else {
-               // Resume story when comments are hidden
-               handleInteractionEnd(); // Use the resume logic
+               handleInteractionEnd();
            }
            return nextState;
       });
@@ -390,35 +333,28 @@ export function StoryModalViewer({
 
 
   if (!activeStory) {
-    // This might happen briefly if stories list becomes empty after delete
-    // Return null or a loading/empty state
     return null;
   }
 
   return (
       <Dialog open={true} onOpenChange={(open) => !open && onClose()}>
-        {/* Adjust content size for medium modal */}
         <DialogContent
-            className="p-0 max-w-md w-[90vw] h-[85vh] border-0 shadow-2xl bg-black rounded-lg flex flex-col overflow-hidden" // Medium size, adjusted height
-             onInteractOutside={(e) => e.preventDefault()} // Prevent closing on outside click
-             onEscapeKeyDown={onClose} // Allow closing with Esc
+            className="p-0 max-w-md w-[90vw] h-[85vh] border-0 shadow-2xl bg-black rounded-lg flex flex-col overflow-hidden"
+             onInteractOutside={(e) => e.preventDefault()}
+             onEscapeKeyDown={onClose}
         >
-            {/* Visually Hidden Title for Accessibility */}
             <DialogTitle className={cn("sr-only")}>
                Story by {activeStory.displayName || 'User'}
             </DialogTitle>
 
-          {/* Ensure inner div takes full height */}
           <div
             className="relative w-full h-full flex flex-col text-white select-none"
-             // Add mouse/touch handlers for pausing (only active when comments are hidden)
              onMouseDown={!showComments ? handleInteractionStart : undefined}
              onTouchStart={!showComments ? handleInteractionStart : undefined}
              onMouseUp={!showComments ? handleInteractionEnd : undefined}
              onTouchEnd={!showComments ? handleInteractionEnd : undefined}
-             onMouseLeave={!showComments ? handleInteractionEnd : undefined} // Resume if mouse leaves while held down
+             onMouseLeave={!showComments ? handleInteractionEnd : undefined}
            >
-            {/* Progress Bar Container */}
             <div className="absolute top-0 left-0 right-0 p-2 z-20">
               <div className="flex items-center gap-1 h-1 w-full">
                 {userStories.map((_, index) => (
@@ -429,12 +365,11 @@ export function StoryModalViewer({
                       animate={{
                         width: index < currentIndex ? '100%' : (index === currentIndex ? `${progress}%` : '0%')
                       }}
-                      transition={{ duration: index === currentIndex ? 0.05 : 0, ease: "linear" }} // Fast update for current bar
+                      transition={{ duration: index === currentIndex ? 0.05 : 0, ease: "linear" }}
                     />
                   </div>
                 ))}
               </div>
-               {/* Header Info (Avatar, Name, Time, Close) */}
                <div className="flex items-center justify-between mt-2">
                  <div className="flex items-center gap-2">
                      <Avatar className="h-8 w-8">
@@ -451,7 +386,7 @@ export function StoryModalViewer({
                  <Button
                      variant="ghost"
                      size="icon"
-                     onClick={(e) => { e.stopPropagation(); onClose(); }} // Prevent pausing
+                     onClick={(e) => { e.stopPropagation(); onClose(); }}
                      className="h-8 w-8 text-white/80 hover:bg-white/20 hover:text-white"
                      aria-label="Close story viewer"
                  >
@@ -460,22 +395,20 @@ export function StoryModalViewer({
                </div>
             </div>
 
-            {/* Clickable Navigation Areas */}
              <div className="absolute inset-y-0 left-0 w-1/3 z-30" onClick={(e) => { e.stopPropagation(); goToPrevStory(); }}></div>
              <div className="absolute inset-y-0 right-0 w-1/3 z-30" onClick={(e) => { e.stopPropagation(); goToNextStory(); }}></div>
 
-            {/* Media Content */}
-            <div className="flex-1 flex items-center justify-center overflow-hidden relative bg-gray-900"> {/* Darker bg for media area */}
+            <div className="flex-1 flex items-center justify-center overflow-hidden relative bg-gray-900">
               {resolvedVideoUrl ? (
                 <video
                   ref={mediaRef as React.RefObject<HTMLVideoElement>}
-                  key={activeStory.id + '-video'} // Key to force re-render on story change
+                  key={activeStory.id + '-video'}
                   src={resolvedVideoUrl}
                   className="max-w-full max-h-full object-contain pointer-events-none"
                   muted={isMuted}
                   playsInline
-                  loop={!resolvedMusicUrl} // Loop video only if no separate music
-                  preload="auto" // Preload video
+                  loop={!resolvedMusicUrl}
+                  preload="auto"
                 />
               ) : resolvedImageUrl ? (
                 <Image
@@ -483,10 +416,10 @@ export function StoryModalViewer({
                   src={resolvedImageUrl}
                   alt={`Story by ${activeStory.displayName}`}
                   fill
-                  style={{ objectFit: 'contain' }} // Contain ensures full image is visible
+                  style={{ objectFit: 'contain' }}
                   className="pointer-events-none"
-                  priority={currentIndex === initialIndex} // Prioritize loading first image
-                  unoptimized // Good for external URLs
+                  priority={currentIndex === initialIndex}
+                  unoptimized
                 />
               ) : (
                 <div className="p-6 text-center text-gray-300 flex flex-col items-center gap-2">
@@ -494,23 +427,20 @@ export function StoryModalViewer({
                     <span>No media found for this story.</span>
                 </div>
               )}
-              {/* Separate Audio element for music */}
-              {resolvedMusicUrl && ( // Play music always if present
+              {resolvedMusicUrl && (
                    <audio
                        ref={mediaRef as React.RefObject<HTMLAudioElement>}
                        key={activeStory.id + '-music'}
                        src={resolvedMusicUrl}
                        muted={isMuted}
-                       loop={activeStory.musicEndTime === null} // Loop only if not trimmed
+                       loop={activeStory.musicEndTime === null}
                        playsInline
-                       preload="auto" // Preload audio
+                       preload="auto"
                    > Your browser does not support the audio element. </audio>
                )}
             </div>
 
-             {/* Footer with Mute/Comment/Delete */}
              <div className="absolute bottom-0 left-0 right-0 p-3 flex items-center justify-between z-20 bg-gradient-to-t from-black/50 to-transparent">
-                {/* Mute/Unmute Button */}
                 {(resolvedVideoUrl || resolvedMusicUrl) ? (
                      <Button
                          variant="ghost"
@@ -521,9 +451,8 @@ export function StoryModalViewer({
                      >
                        {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
                      </Button>
-                ) : <div />} {/* Placeholder to keep other buttons aligned */}
+                ) : <div />}
 
-                {/* Comment Button */}
                 <Button
                     variant="ghost"
                     onClick={toggleComments}
@@ -534,14 +463,13 @@ export function StoryModalViewer({
                   <MessageCircle className="w-5 h-5" />
                 </Button>
 
-                {/* Delete Button */}
-                 {isOwner && (
+                 {isOwner ? (
                     <AlertDialog>
                        <AlertDialogTrigger asChild>
                           <Button
                              variant="ghost"
                              size="icon"
-                             onClick={(e) => e.stopPropagation()} // Prevent pausing
+                             onClick={(e) => e.stopPropagation()} // Prevent pausing when clicking trigger
                              className="text-red-400 hover:bg-red-500/20 hover:text-red-300"
                              aria-label="Delete story"
                              disabled={isDeleting} // Disable trigger if already deleting
@@ -549,7 +477,7 @@ export function StoryModalViewer({
                              <Trash2 className="w-5 h-5" />
                           </Button>
                        </AlertDialogTrigger>
-                       <AlertDialogPrimitiveContent onClick={(e) => e.stopPropagation()}> {/* Prevent pausing */}
+                       <AlertDialogPrimitiveContent onClick={(e) => e.stopPropagation()}> {/* Prevent pausing when clicking content */}
                           <AlertDialogHeader>
                              <AlertDialogTitleComponent className="flex items-center gap-2">
                                 <AlertTriangle className="text-destructive"/> Delete this story?
@@ -557,7 +485,11 @@ export function StoryModalViewer({
                              <AlertDialogDescription>This action cannot be undone and will permanently remove your story.</AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>
-                             <AlertDialogCancel disabled={isDeleting} onClick={(e) => {e.stopPropagation(); handleInteractionEnd(); }}>Cancel</AlertDialogCancel>
+                             {/* Cancel button should stop propagation and possibly resume story */}
+                             <AlertDialogCancel
+                                disabled={isDeleting}
+                                onClick={(e) => {e.stopPropagation(); handleInteractionEnd(); }}>Cancel</AlertDialogCancel>
+                             {/* Action button should stop propagation and call delete handler */}
                              <AlertDialogAction
                                 onClick={(e) => {e.stopPropagation(); handleDeleteClick();}}
                                 disabled={isDeleting}
@@ -569,18 +501,15 @@ export function StoryModalViewer({
                           </AlertDialogFooter>
                        </AlertDialogPrimitiveContent>
                     </AlertDialog>
-                 )}
-                 {!isOwner && <div />} {/* Placeholder */}
+                 ) : <div />} {/* Placeholder if not owner */}
              </div>
 
-             {/* Optional Caption Overlay */}
-             {!showComments && activeStory.text && ( // Hide caption if comments are shown
+             {!showComments && activeStory.text && (
                   <div className="absolute bottom-16 left-4 right-4 z-10 text-center pointer-events-none">
                       <p className="text-sm bg-black/60 px-2 py-1 rounded inline-block">{activeStory.text}</p>
                   </div>
               )}
 
-             {/* Comments Section Overlay */}
              <AnimatePresence>
                 {showComments && (
                     <motion.div
@@ -588,8 +517,8 @@ export function StoryModalViewer({
                         animate={{ y: 0 }}
                         exit={{ y: "100%" }}
                         transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                        className="absolute inset-x-0 bottom-0 z-40 bg-background text-foreground max-h-[60%] rounded-t-lg shadow-lg flex flex-col" // Positioned at bottom
-                        onClick={(e) => e.stopPropagation()} // Prevent story interaction
+                        className="absolute inset-x-0 bottom-0 z-40 bg-background text-foreground max-h-[60%] rounded-t-lg shadow-lg flex flex-col"
+                        onClick={(e) => e.stopPropagation()}
                     >
                         <div className="flex justify-between items-center p-2 border-b">
                             <h4 className="text-sm font-semibold">Comments</h4>
@@ -597,7 +526,7 @@ export function StoryModalViewer({
                                 <X className="w-4 h-4" />
                              </Button>
                         </div>
-                        <div className="flex-1 overflow-hidden"> {/* Container for CommentSection */}
+                        <div className="flex-1 overflow-hidden">
                           <CommentSection postId={activeStory.id} />
                         </div>
                     </motion.div>
@@ -609,4 +538,3 @@ export function StoryModalViewer({
       </Dialog>
   );
 }
-
