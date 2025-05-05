@@ -7,7 +7,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { getInitials, resolveMediaUrl, cn } from '@/lib/utils';
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"; // Corrected import
-import { X, Volume2, VolumeX, Trash2, Loader2, AlertTriangle, ChevronLeft, ChevronRight, Pause, Play as PlayIcon } from 'lucide-react'; // Added Chevrons, Pause, Play
+import { X, Volume2, VolumeX, Trash2, Loader2, AlertTriangle, ChevronLeft, ChevronRight, Pause, Play as PlayIcon, MessageCircle } from 'lucide-react'; // Added Chevrons, Pause, Play, MessageCircle
 import { Button } from '../ui/button';
 import { AnimatePresence, motion } from "framer-motion";
 import { deletePost } from '@/lib/posts.service';
@@ -24,6 +24,7 @@ import {
     AlertDialogTitle as AlertDialogTitleComponent, // Rename imported component
     AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { CommentSection } from '@/components/posts/comment-section'; // Import CommentSection
 
 interface StoryModalViewerProps {
   userStories: PostSerializable[]; // Array of stories for the selected user
@@ -58,6 +59,7 @@ export function StoryModalViewer({
   const [isMuted, setIsMuted] = React.useState(false);
   const [progress, setProgress] = React.useState(0);
   const [isDeleting, setIsDeleting] = React.useState(false);
+  const [showComments, setShowComments] = React.useState(false); // State for comments visibility
 
   const mediaRef = React.useRef<HTMLVideoElement | HTMLAudioElement | null>(null); // Can be video or audio
   const timerRef = React.useRef<NodeJS.Timeout | null>(null);
@@ -75,6 +77,7 @@ export function StoryModalViewer({
   const goToNextStory = React.useCallback(() => {
     setCurrentIndex((prevIndex) => {
       if (prevIndex < userStories.length - 1) {
+        setShowComments(false); // Hide comments when moving to next story
         return prevIndex + 1;
       }
       onClose(); // Close modal if it's the last story
@@ -83,7 +86,13 @@ export function StoryModalViewer({
   }, [userStories.length, onClose]);
 
   const goToPrevStory = () => {
-    setCurrentIndex((prevIndex) => Math.max(0, prevIndex - 1));
+    setCurrentIndex((prevIndex) => {
+        const newIndex = Math.max(0, prevIndex - 1);
+        if (newIndex !== prevIndex) {
+             setShowComments(false); // Hide comments when moving to previous story
+        }
+        return newIndex;
+    });
   };
 
   // --- Media & Progress Handling ---
@@ -121,7 +130,7 @@ export function StoryModalViewer({
     let currentStep = 0;
 
     progressIntervalRef.current = setInterval(() => {
-      if (isPaused || !isMountedRef.current) return; // Check isPaused and mount status
+      if (isPaused || !isMountedRef.current || showComments) return; // Pause progress if comments are shown
       currentStep++;
       const currentProgress = (currentStep / totalSteps) * 100;
       setProgress(currentProgress);
@@ -129,7 +138,7 @@ export function StoryModalViewer({
         goToNextStory();
       }
     }, intervalTime);
-  }, [stopMediaAndTimers, isPaused, goToNextStory]);
+  }, [stopMediaAndTimers, isPaused, goToNextStory, showComments]); // Add showComments dependency
 
  const handleMediaError = React.useCallback((e: Event) => {
      const mediaElement = mediaRef.current;
@@ -138,10 +147,13 @@ export function StoryModalViewer({
        `Media Error Event: Code ${error?.code}, Message: ${error?.message}`,
        e // Log the original event object too
      );
-      // Optionally show a toast or advance to the next story on error
-      // toast({ variant: "destructive", title: "Media Error", description: `Could not load story media. ${error?.message || ''}` });
-      goToNextStory(); // Decide if you want to auto-advance on error
-  }, [goToNextStory]); // Add goToNextStory as a dependency
+     // Log the error but don't advance automatically, let the user navigate
+      toast({ variant: "destructive", title: "Media Error", description: `Could not load story media. ${error?.message || ''}` });
+      // Instead of auto-advancing, pause the story
+      setIsPaused(true);
+      stopMediaAndTimers();
+      setProgress(100); // Show progress as complete to indicate issue
+  }, [stopMediaAndTimers, toast]);
 
   const handleMediaLoaded = React.useCallback(() => {
     const mediaElement = mediaRef.current;
@@ -223,18 +235,29 @@ export function StoryModalViewer({
          mediaElement.addEventListener('error', handleMediaError); // Use specific error handler
 
          // Try playing (might require prior user interaction)
-          mediaElement.play().catch(e => console.warn("Autoplay prevented on story change:", e));
+         // Only play if comments are not shown
+          if (!showComments) {
+             mediaElement.play().catch(e => console.warn("Autoplay prevented on story change:", e));
+          } else {
+             mediaElement.pause(); // Ensure media is paused if comments are shown
+             setIsPaused(true);
+          }
      } else if (resolvedImageUrl) {
          // Handle image-only stories
-         startProgress(STORY_DURATION_SECONDS);
+          if (!showComments) {
+             startProgress(STORY_DURATION_SECONDS);
+          } else {
+            stopMediaAndTimers(); // Stop progress timer if comments shown
+            setIsPaused(true);
+          }
      }
 
-   }, [currentIndex, activeStory, resolvedVideoUrl, resolvedMusicUrl, resolvedImageUrl, stopMediaAndTimers, handleMediaLoaded, startProgress, isMuted, goToNextStory, handleMediaError]); // Ensure all dependencies
+   }, [currentIndex, activeStory, resolvedVideoUrl, resolvedMusicUrl, resolvedImageUrl, stopMediaAndTimers, handleMediaLoaded, startProgress, isMuted, goToNextStory, handleMediaError, showComments]); // Add showComments dependency
 
 
   // Pause/Resume logic
   const handleInteractionStart = () => {
-    if (!isPaused) {
+    if (!isPaused && !showComments) { // Only pause if not already paused and comments are hidden
         setIsPaused(true);
          if (mediaRef.current) mediaRef.current.pause();
          if (timerRef.current) clearTimeout(timerRef.current);
@@ -243,7 +266,7 @@ export function StoryModalViewer({
   };
 
   const handleInteractionEnd = () => {
-    if (isPaused) {
+    if (isPaused && !showComments) { // Only resume if paused and comments are hidden
         setIsPaused(false);
         // Resume media and progress
         if (mediaRef.current) mediaRef.current.play().catch(e => console.warn("Resume play prevented:", e));
@@ -292,7 +315,6 @@ export function StoryModalViewer({
     // Pause story while confirming delete
     handleInteractionStart();
     try {
-      // Assuming deletePost only needs postId, adjust if userId is required
       await deletePost(activeStory.id, currentUserId || '');
       toast({ title: "Story Deleted", description: "The story has been removed." });
       onDelete(activeStory.id); // Notify parent to remove from its state
@@ -300,18 +322,13 @@ export function StoryModalViewer({
       if (userStories.length <= 1) {
          onClose();
       } else {
-         // Move to the next story, adjusting index if necessary
-         // This logic needs refinement if deleting from middle
-         if (currentIndex >= userStories.length - 2) { // If it was the last or second to last
-             goToPrevStory(); // Go to previous (which might become the new last)
-         } else {
-              // If not the last, the next story will shift into the current index
-              // Force a re-render/reload of the current index if needed,
-              // or simply let the parent's state update handle it.
-              // Let's stay at current index (which now holds the next story)
-              // and reset progress. The main useEffect will handle starting the new story.
-              setProgress(0);
-         }
+         // Adjust index carefully after deletion
+          const nextIndex = currentIndex >= userStories.length - 1 ? currentIndex - 1 : currentIndex;
+          // It seems the parent update might re-render with the correct stories,
+          // so we might just need to reset the index if it's now out of bounds.
+          setCurrentIndex(Math.max(0, Math.min(nextIndex, userStories.length - 2))); // Ensure valid index
+          setProgress(0); // Reset progress for the new story at the adjusted index
+          setShowComments(false); // Ensure comments are hidden
       }
     } catch (error: any) {
       console.error("Error deleting story:", error);
@@ -324,6 +341,25 @@ export function StoryModalViewer({
     }
   };
 
+  // Toggle comments section
+  const toggleComments = (e: React.MouseEvent) => {
+      e.stopPropagation(); // Prevent pausing/resuming story
+      setShowComments(prev => {
+           const nextState = !prev;
+           if (nextState) {
+               // Pause story when comments are shown
+               setIsPaused(true);
+               if (mediaRef.current) mediaRef.current.pause();
+               if (timerRef.current) clearTimeout(timerRef.current);
+               if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+           } else {
+               // Resume story when comments are hidden
+               handleInteractionEnd(); // Use the resume logic
+           }
+           return nextState;
+      });
+  };
+
 
   if (!activeStory) {
     return null; // Should not happen if Dialog's open state is managed correctly
@@ -333,7 +369,7 @@ export function StoryModalViewer({
       <Dialog open={true} onOpenChange={(open) => !open && onClose()}>
         {/* Adjust content size for medium modal */}
         <DialogContent
-            className="p-0 max-w-md w-[90vw] h-[80vh] border-0 shadow-2xl bg-black rounded-lg flex flex-col overflow-hidden" // Medium size, fixed height
+            className="p-0 max-w-md w-[90vw] h-[85vh] border-0 shadow-2xl bg-black rounded-lg flex flex-col overflow-hidden" // Medium size, adjusted height
              onInteractOutside={(e) => e.preventDefault()} // Prevent closing on outside click
              onEscapeKeyDown={onClose} // Allow closing with Esc
         >
@@ -345,12 +381,12 @@ export function StoryModalViewer({
           {/* Ensure inner div takes full height */}
           <div
             className="relative w-full h-full flex flex-col text-white select-none"
-             // Add mouse/touch handlers for pausing
-             onMouseDown={handleInteractionStart}
-             onTouchStart={handleInteractionStart}
-             onMouseUp={handleInteractionEnd}
-             onTouchEnd={handleInteractionEnd}
-             onMouseLeave={handleInteractionEnd} // Resume if mouse leaves while held down
+             // Add mouse/touch handlers for pausing (only active when comments are hidden)
+             onMouseDown={!showComments ? handleInteractionStart : undefined}
+             onTouchStart={!showComments ? handleInteractionStart : undefined}
+             onMouseUp={!showComments ? handleInteractionEnd : undefined}
+             onTouchEnd={!showComments ? handleInteractionEnd : undefined}
+             onMouseLeave={!showComments ? handleInteractionEnd : undefined} // Resume if mouse leaves while held down
            >
             {/* Progress Bar Container */}
             <div className="absolute top-0 left-0 right-0 p-2 z-20">
@@ -442,8 +478,9 @@ export function StoryModalViewer({
                )}
             </div>
 
-             {/* Footer with Mute/Delete */}
+             {/* Footer with Mute/Comment/Delete */}
              <div className="absolute bottom-0 left-0 right-0 p-3 flex items-center justify-between z-20 bg-gradient-to-t from-black/50 to-transparent">
+                {/* Mute/Unmute Button */}
                 {(resolvedVideoUrl || resolvedMusicUrl) ? (
                      <Button
                          variant="ghost"
@@ -454,8 +491,20 @@ export function StoryModalViewer({
                      >
                        {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
                      </Button>
-                ) : <div />} {/* Placeholder to keep delete button on the right */}
+                ) : <div />} {/* Placeholder to keep other buttons aligned */}
 
+                {/* Comment Button */}
+                <Button
+                    variant="ghost"
+                    onClick={toggleComments}
+                    size="icon"
+                    className="text-white/80 hover:bg-white/20 hover:text-white"
+                    aria-label={showComments ? "Hide comments" : "Show comments"}
+                >
+                  <MessageCircle className="w-5 h-5" />
+                </Button>
+
+                {/* Delete Button */}
                  {isOwner && (
                     <AlertDialog>
                        <AlertDialogTrigger asChild>
@@ -469,7 +518,7 @@ export function StoryModalViewer({
                              <Trash2 className="w-5 h-5" />
                           </Button>
                        </AlertDialogTrigger>
-                       <AlertDialogPrimitiveContent onClick={(e) => e.stopPropagation()}> {/* Use alias */}
+                       <AlertDialogPrimitiveContent onClick={(e) => e.stopPropagation()}> {/* Prevent pausing */}
                           <AlertDialogHeader>
                              <AlertDialogTitleComponent className="flex items-center gap-2">
                                 <AlertTriangle className="text-destructive"/> Delete this story?
@@ -494,11 +543,35 @@ export function StoryModalViewer({
              </div>
 
              {/* Optional Caption Overlay */}
-             {activeStory.text && (
+             {!showComments && activeStory.text && ( // Hide caption if comments are shown
                   <div className="absolute bottom-16 left-4 right-4 z-10 text-center pointer-events-none">
                       <p className="text-sm bg-black/60 px-2 py-1 rounded inline-block">{activeStory.text}</p>
                   </div>
               )}
+
+             {/* Comments Section Overlay */}
+             <AnimatePresence>
+                {showComments && (
+                    <motion.div
+                        initial={{ y: "100%" }}
+                        animate={{ y: 0 }}
+                        exit={{ y: "100%" }}
+                        transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                        className="absolute inset-x-0 bottom-0 z-40 bg-background text-foreground max-h-[60%] rounded-t-lg shadow-lg flex flex-col" // Positioned at bottom
+                        onClick={(e) => e.stopPropagation()} // Prevent story interaction
+                    >
+                        <div className="flex justify-between items-center p-2 border-b">
+                            <h4 className="text-sm font-semibold">Comments</h4>
+                             <Button variant="ghost" size="icon" onClick={toggleComments} className="h-7 w-7">
+                                <X className="w-4 h-4" />
+                             </Button>
+                        </div>
+                        <div className="flex-1 overflow-hidden"> {/* Container for CommentSection */}
+                          <CommentSection postId={activeStory.id} />
+                        </div>
+                    </motion.div>
+                )}
+             </AnimatePresence>
 
           </div>
         </DialogContent>

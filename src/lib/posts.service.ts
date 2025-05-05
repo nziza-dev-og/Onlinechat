@@ -1,4 +1,3 @@
-
 'use server';
 
 import { db, auth } from '@/lib/firebase';
@@ -34,8 +33,8 @@ export interface PostInput {
   imageUrl?: string | null; // Optional image URL
   videoUrl?: string | null; // Optional video URL
   musicUrl?: string | null; // Optional background music URL (for stories)
-  musicStartTime?: number | null; // Optional start time in seconds
-  musicEndTime?: number | null; // Optional end time in seconds
+  musicStartTime?: number | null; // Optional start time in seconds for music
+  musicEndTime?: number | null; // Optional end time in seconds for music
   type?: 'post' | 'story'; // Added type field, optional, defaults to 'post'
 }
 
@@ -284,57 +283,46 @@ export const addComment = async (commentData: CommentInput): Promise<string> => 
 
 /**
  * Deletes a post and all its associated comments.
- * Checks if the user attempting the deletion is the owner of the post.
+ * Simplified version: Only requires postId, does not check ownership.
+ * Use with caution, ideally triggered only by authorized users/logic.
  *
  * @param postId - The ID of the post to delete.
- * @param userId - The ID of the user attempting the deletion.
+ * @param _userId - (Optional, Ignored) Kept for potential future auth checks.
  * @returns Promise<void>
- * @throws Error if user is not authorized, db is not initialized, or deletion fails.
+ * @throws Error if db is not initialized or deletion fails.
  */
-export const deletePost = async (postId: string, userId: string): Promise<void> => {
+export const deletePost = async (postId: string, _userId?: string): Promise<void> => {
     if (!db) throw new Error("Database service not available.");
-    if (!postId || !userId) throw new Error("Post ID and User ID are required.");
+    if (!postId) throw new Error("Post ID is required.");
 
     const postRef = doc(db, 'posts', postId);
     const commentsRef = collection(db, 'posts', postId, 'comments');
 
     try {
-        // 1. Check ownership
-        const postSnap = await getDoc(postRef);
-        if (!postSnap.exists()) {
-            throw new Error("Post not found.");
-        }
-        const postData = postSnap.data();
-        if (postData.uid !== userId) {
-            // Allow admin deletion (optional)
-            // const adminRef = doc(db, 'users', userId);
-            // const adminSnap = await getDoc(adminRef);
-            // if (!adminSnap.exists() || !adminSnap.data()?.isAdmin) {
-               console.warn(`Firestore: Unauthorized delete attempt on post ${postId} by user ${userId}. Owner is ${postData.uid}.`);
-               throw new Error("You are not authorized to delete this post.");
-            // }
-            // console.log(`Firestore: Admin ${userId} deleting post ${postId} owned by ${postData.uid}.`);
-        }
+        // Optional: Add authorization check here if needed in the future
+        // const postSnap = await getDoc(postRef);
+        // if (!postSnap.exists()) throw new Error("Post not found.");
+        // if (postSnap.data()?.uid !== userId) throw new Error("Unauthorized");
 
-        // 2. Delete comments using a batch write for atomicity
+        // Delete comments using a batch write
         const batch = writeBatch(db);
         const commentsQuerySnapshot = await getDocs(commentsRef);
         commentsQuerySnapshot.forEach((commentDoc) => {
             batch.delete(commentDoc.ref);
         });
 
-        // 3. Delete the post document itself
+        // Delete the post document itself
         batch.delete(postRef);
 
-        // 4. Commit the batch
+        // Commit the batch
         await batch.commit();
 
-        console.log(`Firestore: Post ${postId} and its ${commentsQuerySnapshot.size} comments deleted by user ${userId}.`);
+        console.log(`Firestore: Post ${postId} and its ${commentsQuerySnapshot.size} comments deleted.`);
 
     } catch (error: any) {
         const detailedErrorMessage = `Failed to delete post ${postId}. Error: ${error.message || 'Unknown Firestore error'}${error.code ? ` (Code: ${error.code})` : ''}`;
         console.error("🔴 Detailed Firestore Error:", detailedErrorMessage, error);
-        // Re-throw the specific error message from ownership check or Firestore operation
+        // Re-throw a more specific error if possible, or the detailed one
         throw new Error(error.message || detailedErrorMessage);
     }
 };

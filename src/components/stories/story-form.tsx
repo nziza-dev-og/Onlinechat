@@ -1,4 +1,3 @@
-
 "use client";
 
 import * as React from 'react';
@@ -24,7 +23,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"; // Import Select components
 import { getPlatformConfig } from '@/lib/config.service'; // Import service to get config
-import { cn, isDirectAudioUrl } from '@/lib/utils'; // Only need isDirectAudioUrl
+import { cn } from '@/lib/utils'; // Removed isDirectAudioUrl import
 
 // Validation schema specifically for stories
 // Add validation for start/end times and custom music URL
@@ -149,39 +148,29 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
      if (previewAudioRef.current) {
        previewAudioRef.current.pause();
        previewAudioRef.current.currentTime = 0;
+       // Optional: Remove the audio element or just reset src to stop background loading
+       // previewAudioRef.current.src = '';
      }
      setIsPreviewPlaying(false);
    }, []);
 
    const handlePreviewToggle = React.useCallback(() => {
         const audioUrl = effectiveMusicUrl;
-        if (!audioUrl) return;
-
-        // Check if URL is likely direct *before* creating audio element
-        if (!isDirectAudioUrl(audioUrl)) {
-            toast({
-                title: "Preview Unavailable",
-                 description: (
-                    <div className="flex items-start gap-2">
-                       <AlertCircle className="h-5 w-5 text-yellow-500 flex-shrink-0 mt-0.5" />
-                       <span>
-                          Preview is only available for direct audio file links (like .mp3, .wav). URLs from streaming sites (SoundCloud, YouTube, etc.) or file sharing pages cannot be previewed directly.
-                       </span>
-                    </div>
-                 ),
-                duration: 8000,
-            });
-            console.warn("Audio preview skipped: URL is not a recognized direct audio link:", audioUrl);
-            return; // Stop processing if URL is not direct
+        if (!audioUrl) {
+           console.warn("Preview toggled but no effective audio URL is set.");
+           return;
         }
 
-        // Proceed with playing/creating the audio element only if it's likely direct
+        // Simplified: Always try to play/pause, let browser handle errors
+
         if (!previewAudioRef.current) {
             try {
                  console.log("Creating new Audio element for:", audioUrl);
                  previewAudioRef.current = new Audio(audioUrl);
+
                  previewAudioRef.current.onended = () => {
                      console.log("Audio preview ended.");
+                      if (previewAudioRef.current) previewAudioRef.current.currentTime = 0; // Reset time
                      setIsPreviewPlaying(false);
                  };
                  previewAudioRef.current.onerror = (e) => {
@@ -192,22 +181,32 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
                      toast({
                          variant: "destructive",
                          title: "Preview Error",
-                         description: `Could not play audio preview. Ensure the URL is correct and accessible. Error: ${errorMessage}`
+                         description: `Could not play audio preview. Ensure the URL is correct and playable. Error: ${errorMessage}`
                      });
                      setIsPreviewPlaying(false);
                  };
-                 previewAudioRef.current.onpause = () => {
-                      if (isPreviewPlaying) {
-                         console.log("Audio preview paused (onpause event).");
-                         setIsPreviewPlaying(false);
-                      }
-                 };
+                  previewAudioRef.current.onpause = () => {
+                    // We only set isPreviewPlaying to false if the pause wasn't initiated by our stopPreview function
+                    // This check might be complex, maybe relying on a separate flag if needed.
+                    // For simplicity, let's update state directly but be aware it might conflict with stopPreview.
+                    // console.log("Audio preview paused (onpause event).");
+                    setIsPreviewPlaying(false);
+                  };
                  previewAudioRef.current.onplay = () => {
-                      if (!isPreviewPlaying) {
-                         console.log("Audio preview playing (onplay event).");
-                         setIsPreviewPlaying(true);
-                      }
+                    // console.log("Audio preview playing (onplay event).");
+                    setIsPreviewPlaying(true);
                  };
+                 previewAudioRef.current.onplaying = () => { // Alternative event
+                    // console.log("Audio preview playing (onplaying event).");
+                    setIsPreviewPlaying(true);
+                 }
+
+                 // Add event listener for 'canplay' or 'loadedmetadata' to confirm loading
+                 previewAudioRef.current.onloadedmetadata = () => {
+                    console.log("Audio metadata loaded, duration:", previewAudioRef.current?.duration);
+                 }
+
+
             } catch (error) {
                  console.error("Error creating Audio element:", error);
                  toast({ variant: "destructive", title: "Preview Error", description: "Could not initialize audio player."});
@@ -216,51 +215,67 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
 
         } else if (previewAudioRef.current.src !== audioUrl) {
              console.log("Updating Audio element src to:", audioUrl);
+             // Stop the previous audio cleanly
+             previewAudioRef.current.pause();
+             previewAudioRef.current.removeAttribute('src'); // Try removing src before setting new one
+             previewAudioRef.current.load(); // Reset internal state
+
              previewAudioRef.current.src = audioUrl;
-             stopPreview();
-             previewAudioRef.current.load();
+             setIsPreviewPlaying(false); // Reset playing state
+             previewAudioRef.current.load(); // Load the new source
+             console.log("New audio source loaded. Ready to play.");
         }
 
-        // Toggle play/pause
-        if (isPreviewPlaying) {
-            console.log("User clicked pause preview.");
-            previewAudioRef.current.pause();
-        } else {
-             if (previewAudioRef.current) {
-                previewAudioRef.current.currentTime = 0;
-                console.log("Attempting to play preview...");
-                previewAudioRef.current.play().then(() => {
-                     console.log("Audio preview play() successful.");
-                }).catch(e => {
-                    console.error("Preview play() error:", e);
+        // --- Toggle play/pause ---
+        const audioElement = previewAudioRef.current;
+        if (audioElement) {
+           if (isPreviewPlaying) {
+               console.log("User clicked pause preview.");
+               audioElement.pause();
+           } else {
+               // Reset time to 0 or start time if specified, before playing
+               const startTime = parseFloat(form.getValues('musicStartTime') || '0');
+               audioElement.currentTime = !isNaN(startTime) && startTime >= 0 ? startTime : 0;
+               console.log(`Attempting to play preview from ${audioElement.currentTime}s...`);
+               audioElement.play().then(() => {
+                   console.log("Audio preview play() successful.");
+                   // isPreviewPlaying state is set by the 'onplay' or 'onplaying' listener
+               }).catch(e => {
+                   console.error("Preview play() error:", e);
                     toast({
-                        variant: "destructive",
-                        title: "Preview Error",
-                        description: `Could not start audio preview. ${e.message || 'Interaction might be required.'}`
-                    });
-                    setIsPreviewPlaying(false);
-                });
-             }
+                       variant: "destructive",
+                       title: "Preview Error",
+                       description: `Could not start audio preview. ${e.message || 'Browser interaction might be required.'}`
+                   });
+                   setIsPreviewPlaying(false); // Ensure state is false on error
+               });
+           }
+        } else {
+           console.error("Preview toggle failed: Audio element ref is null.");
         }
 
-   }, [effectiveMusicUrl, isPreviewPlaying, toast, stopPreview]);
+   }, [effectiveMusicUrl, isPreviewPlaying, toast, form]); // Add form to dependencies for getValues
 
    // Cleanup preview audio when component unmounts or effective URL changes
    React.useEffect(() => {
-     stopPreview();
-
      return () => {
        stopPreview();
        if (previewAudioRef.current) {
+           // Remove listeners and nullify ref
            previewAudioRef.current.onended = null;
            previewAudioRef.current.onerror = null;
            previewAudioRef.current.onpause = null;
            previewAudioRef.current.onplay = null;
+           previewAudioRef.current.onplaying = null;
+           previewAudioRef.current.onloadedmetadata = null;
+           // Optional: Explicitly remove src and call load to release resources
+           previewAudioRef.current.removeAttribute('src');
+           previewAudioRef.current.load();
            previewAudioRef.current = null;
            console.log("Preview audio element cleaned up.");
        }
      };
-   }, [effectiveMusicUrl, stopPreview]);
+   }, [effectiveMusicUrl, stopPreview]); // Rerun cleanup if URL changes
    // --- End Audio Preview Logic ---
 
 
@@ -410,7 +425,7 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
                             {loadingPlaylist && <SelectItem value="loading" disabled>Loading...</SelectItem>}
                             {!loadingPlaylist && musicPlaylist.length === 1 && <SelectItem value="no-music" disabled>No music available</SelectItem>}
                             {!loadingPlaylist && musicPlaylist.map((song) => (
-                              <SelectItem key={song.id || 'none'} value={song.url}> {/* Ensure value is never empty */}
+                              <SelectItem key={song.id || 'none'} value={song.url}>
                                 {song.title}
                               </SelectItem>
                             ))}
@@ -418,24 +433,25 @@ export function StoryForm({ onStoryAdded }: StoryFormProps) {
                        </Select>
                     )}
                  />
-                 {/* Preview Button - enabled if it's a direct URL */}
+                 {/* Preview Button */}
                   <Button
                     type="button"
                     variant="outline"
                     size="icon"
                     onClick={handlePreviewToggle}
-                    disabled={isSubmitting || loadingPlaylist || !effectiveMusicUrl || !isDirectAudioUrl(effectiveMusicUrl)} // Disable if not direct URL
+                     // Disable button if submitting, loading, or no URL is effectively selected/entered
+                    disabled={isSubmitting || loadingPlaylist || !effectiveMusicUrl}
                     className={cn(
                         "flex-shrink-0 h-10 w-10",
-                        isPreviewPlaying && "bg-accent text-accent-foreground",
-                        effectiveMusicUrl && !isDirectAudioUrl(effectiveMusicUrl) && "opacity-50 cursor-not-allowed" // Visually indicate disabled state for non-direct URLs
+                         // Style based on playing state only if it's enabled
+                         isPreviewPlaying && effectiveMusicUrl && "bg-accent text-accent-foreground"
                     )}
                     aria-label={isPreviewPlaying ? "Stop preview" : "Preview music"}
                   >
                     {isPreviewPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
                   </Button>
                </div>
-              <p className="text-xs text-muted-foreground">Select a song OR enter a custom URL below. Preview requires a direct audio file link (.mp3, .wav, etc.).</p>
+              <p className="text-xs text-muted-foreground">Select a song OR enter a custom URL below. Audio preview might not work for all URL types.</p>
            </div>
 
             {/* Custom Music URL Input */}
