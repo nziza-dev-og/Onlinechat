@@ -6,18 +6,31 @@ import { useAuth } from '@/hooks/use-auth';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Loader2, Users, MessageSquareText, Image as ImageIcon, User as UserIcon, LogOut, Settings, BarChart2, Bell, Check, Palette, Clapperboard } from 'lucide-react'; // Added Clapperboard
+import { Loader2, Users, MessageSquareText, Image as ImageIcon, User as UserIcon, LogOut, Settings, BarChart2, Bell, Check, Palette, Clapperboard, Film, Trash2 } from 'lucide-react'; // Added Film, Trash2
 import Link from 'next/link';
-import { getOnlineUsersCount } from '@/lib/admin.service'; // Re-using admin service for count
+import { getOnlineUsersCount } from '@/lib/admin.service';
 import { useToast } from '@/hooks/use-toast';
 import { Skeleton } from '@/components/ui/skeleton';
-import { db } from '@/lib/firebase'; // Import db
-import { collection, query, where, orderBy, limit, onSnapshot, Timestamp, type Unsubscribe } from 'firebase/firestore'; // Import firestore functions
-import type { NotificationSerializable } from '@/lib/notification.service'; // Import type
-import { formatDistanceToNowStrict } from 'date-fns';
-import { ScrollArea } from '@/components/ui/scroll-area'; // Import ScrollArea
-import { cn } from '@/lib/utils'; // Import cn
-import { ThemeToggle } from '@/components/theme/theme-toggle'; // Import ThemeToggle
+import { db } from '@/lib/firebase';
+import { collection, query, where, orderBy, limit, onSnapshot, Timestamp, type Unsubscribe } from 'firebase/firestore';
+import type { NotificationSerializable } from '@/lib/notification.service';
+import { formatDistanceToNowStrict, parseISO } from 'date-fns';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { cn } from '@/lib/utils';
+import { ThemeToggle } from '@/components/theme/theme-toggle';
+import { fetchPosts, deletePost } from '@/lib/posts.service'; // Import fetchPosts and deletePost
+import type { PostSerializable } from '@/types'; // Import PostSerializable
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"; // Import AlertDialog
 
 // Helper to get initials
 const getInitials = (name: string | null | undefined): string => {
@@ -42,6 +55,64 @@ const formatRelativeTime = (timestampISO: string | null | undefined): string => 
     }
 };
 
+// User Story Preview Component for Dashboard
+const UserStoryPreview = ({ story, onDelete }: { story: PostSerializable; onDelete: (storyId: string) => Promise<void> }) => {
+    const [isDeleting, setIsDeleting] = React.useState(false);
+    const { toast } = useToast();
+
+     const handleDeleteClick = async () => {
+        setIsDeleting(true);
+        try {
+            await onDelete(story.id);
+            // Toast handled by parent after state update
+        } catch (error: any) {
+             toast({ title: "Delete Failed", description: error.message || "Could not delete story.", variant: "destructive" });
+             setIsDeleting(false); // Reset only on failure
+        }
+        // No finally here, parent handles UI removal which unmounts this
+     };
+
+    return (
+        <Card className="flex items-center justify-between p-3 gap-3 bg-card shadow-sm hover:shadow-md transition-shadow duration-200">
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+                 {/* Optional: Show story preview image/video icon */}
+                 {story.imageUrl && <ImageIcon className="h-5 w-5 text-muted-foreground flex-shrink-0"/>}
+                 {story.videoUrl && <Clapperboard className="h-5 w-5 text-muted-foreground flex-shrink-0"/>}
+                <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">
+                       {story.text || (story.imageUrl ? 'Image Story' : 'Video Story')}
+                    </p>
+                    <p className="text-xs text-muted-foreground truncate">
+                        Posted {formatRelativeTime(story.timestamp)}
+                    </p>
+                </div>
+            </div>
+             <AlertDialog>
+                 <AlertDialogTrigger asChild>
+                    <Button variant="ghost" size="icon" className="text-destructive hover:bg-destructive/10 flex-shrink-0 h-8 w-8" disabled={isDeleting}>
+                        {isDeleting ? <Loader2 className="h-4 w-4 animate-spin"/> : <Trash2 className="h-4 w-4"/>}
+                        <span className="sr-only">Delete Story</span>
+                    </Button>
+                 </AlertDialogTrigger>
+                 <AlertDialogContent>
+                    <AlertDialogHeader>
+                         <AlertDialogTitle>Confirm Deletion</AlertDialogTitle>
+                         <AlertDialogDescription>
+                            Are you sure you want to delete this story permanently? This action cannot be undone.
+                         </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                         <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+                         <AlertDialogAction onClick={handleDeleteClick} disabled={isDeleting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                             {isDeleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : null} Delete Story
+                         </AlertDialogAction>
+                    </AlertDialogFooter>
+                 </AlertDialogContent>
+             </AlertDialog>
+        </Card>
+    );
+};
+
 
 export default function DashboardPage() {
   const { user, loading: authLoading, signOut } = useAuth();
@@ -49,8 +120,10 @@ export default function DashboardPage() {
   const [loadingAnalytics, setLoadingAnalytics] = React.useState(true);
   const [notifications, setNotifications] = React.useState<NotificationSerializable[]>([]);
   const [loadingNotifications, setLoadingNotifications] = React.useState(true);
+  const [myStories, setMyStories] = React.useState<PostSerializable[]>([]); // State for user's stories
+  const [loadingMyStories, setLoadingMyStories] = React.useState(true); // Loading state for stories
   const { toast } = useToast();
-  const notificationListenersUnsubscribeRef = React.useRef<Unsubscribe | null>(null); // Ref to hold combined listener cleanup
+  const notificationListenersUnsubscribeRef = React.useRef<Unsubscribe | null>(null);
 
   // Fetch analytics data on mount
   React.useEffect(() => {
@@ -59,7 +132,7 @@ export default function DashboardPage() {
         return;
     }
     if (!user) {
-        setLoadingAnalytics(false); // No user, no analytics needed
+        setLoadingAnalytics(false);
         setOnlineUsers(null);
         return;
     }
@@ -71,8 +144,7 @@ export default function DashboardPage() {
             setOnlineUsers(onlineCount);
         } catch (analyticsError: any) {
              console.error("Error fetching analytics for dashboard:", analyticsError);
-             // Don't toast here, less critical for dashboard
-             setOnlineUsers(0); // Default to 0 on error
+             setOnlineUsers(0);
         } finally {
              setLoadingAnalytics(false);
         }
@@ -81,6 +153,42 @@ export default function DashboardPage() {
     fetchAnalytics();
 
   }, [user, authLoading]);
+
+  // Fetch user's own stories
+  React.useEffect(() => {
+      if (!user) {
+          setLoadingMyStories(false);
+          setMyStories([]);
+          return;
+      }
+
+      let isMounted = true;
+      const loadMyStories = async () => {
+          setLoadingMyStories(true);
+          try {
+              const allPosts = await fetchPosts(100); // Fetch recent posts/stories
+              const userStories = allPosts.filter(post => post.type === 'story' && post.uid === user.uid)
+                                          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()); // Sort newest first for display
+              if (isMounted) {
+                  setMyStories(userStories);
+              }
+          } catch (err) {
+              console.error("Error loading user's stories:", err);
+              if (isMounted) {
+                  toast({ title: "Error", description: "Could not load your stories.", variant: "destructive" });
+              }
+          } finally {
+              if (isMounted) {
+                  setLoadingMyStories(false);
+              }
+          }
+      };
+
+      loadMyStories();
+
+      return () => { isMounted = false; }; // Cleanup function to prevent state updates on unmounted component
+
+  }, [user, toast]);
 
 
   // Fetch notifications for the current user
@@ -210,6 +318,22 @@ export default function DashboardPage() {
       // setNotifications(prev => prev.map(n => n.id === notificationId ? { ...n, isRead: true } : n));
   };
 
+   // Handle deleting own story from dashboard
+   const handleDeleteMyStory = async (storyId: string) => {
+       if (!user) return;
+       console.log(`Dashboard: Attempting to delete story ${storyId}`);
+       try {
+           await deletePost(storyId, user.uid); // Call service function
+           // Optimistic UI update
+           setMyStories(prevStories => prevStories.filter(story => story.id !== storyId));
+           toast({ title: "Story Deleted", description: "Your story has been removed." });
+       } catch (error: any) {
+           console.error(`Error deleting story ${storyId}:`, error);
+           // Toast handled within the component, but log here too
+           throw error; // Re-throw to be caught by the UserStoryPreview component if needed
+       }
+   };
+
 
   // --- Render Logic ---
 
@@ -249,8 +373,8 @@ export default function DashboardPage() {
       <div className="w-full max-w-5xl space-y-8"> {/* Slightly wider */}
         {/* Welcome Card */}
         <Card className="shadow-lg overflow-hidden">
-          <CardHeader className="flex flex-row items-center gap-4 p-6 bg-card border-b">
-            <Avatar className="h-16 w-16 border">
+          <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center gap-4 p-6 bg-card border-b">
+            <Avatar className="h-16 w-16 border flex-shrink-0">
               <AvatarImage src={user.photoURL || undefined} alt={user.displayName || 'User'} data-ai-hint="user avatar large" />
               <AvatarFallback className="text-2xl">{getInitials(user.displayName)}</AvatarFallback>
             </Avatar>
@@ -262,7 +386,7 @@ export default function DashboardPage() {
                 Here's a quick overview and your recent notifications.
               </CardDescription>
             </div>
-            <div className="flex items-center gap-2 ml-auto">
+            <div className="flex items-center gap-2 ml-auto mt-4 sm:mt-0 self-start sm:self-center">
                 <ThemeToggle />
                 <Button variant="outline" size="sm" onClick={signOut}>
                   <LogOut className="mr-2 h-4 w-4" />
@@ -294,7 +418,7 @@ export default function DashboardPage() {
               </Button>
                <Button asChild variant="outline" className="w-full justify-start">
                 <Link href="/stories">
-                  <Clapperboard className="mr-2 h-4 w-4" /> View Stories
+                  <Clapperboard className="mr-2 h-4 w-4" /> View & Add Stories
                 </Link>
               </Button>
               <Button asChild variant="outline" className="w-full justify-start">
@@ -307,15 +431,6 @@ export default function DashboardPage() {
                    <Settings className="mr-2 h-4 w-4" /> Update Status
                 </Link>
               </Button>
-               {/* Add Theme Toggle to Quick Actions as well */}
-              {/* <div className="pt-3 border-t">
-                <div className="flex items-center justify-between">
-                   <Label htmlFor="theme-toggle-quick" className="text-sm font-medium flex items-center gap-2">
-                      <Palette className="h-4 w-4 text-muted-foreground"/> Theme
-                   </Label>
-                   <ThemeToggle id="theme-toggle-quick" />
-                </div>
-              </div> */}
             </CardContent>
           </Card>
 
@@ -395,7 +510,36 @@ export default function DashboardPage() {
            </Card>
         </div>
 
-        {/* Add a Settings Card maybe? */}
+        {/* Manage Your Stories Card */}
+         <Card className="shadow-md">
+            <CardHeader>
+               <CardTitle className="flex items-center gap-2">
+                  <Film className="h-5 w-5 text-primary"/> Your Active Stories
+               </CardTitle>
+               <CardDescription>View and manage your current stories (visible for ~8 hours).</CardDescription>
+            </CardHeader>
+             <CardContent className="space-y-3">
+                 {loadingMyStories && (
+                      <div className="space-y-3">
+                          <Skeleton className="h-14 w-full rounded-md" />
+                          <Skeleton className="h-14 w-full rounded-md" />
+                      </div>
+                  )}
+                  {!loadingMyStories && myStories.length === 0 && (
+                      <p className="text-sm text-center text-muted-foreground italic py-4">You haven't posted any stories recently.</p>
+                  )}
+                  {!loadingMyStories && myStories.map((story) => (
+                      <UserStoryPreview key={story.id} story={story} onDelete={handleDeleteMyStory} />
+                  ))}
+             </CardContent>
+              <CardFooter className="text-xs text-muted-foreground justify-center border-t pt-3">
+                   <Button variant="outline" size="sm" asChild>
+                       <Link href="/stories"><Clapperboard className="mr-2 h-4 w-4"/> Add New Story</Link>
+                   </Button>
+              </CardFooter>
+         </Card>
+
+        {/* Settings Card */}
         <Card className="shadow-md">
            <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -417,4 +561,3 @@ export default function DashboardPage() {
     </div>
   );
 }
-
