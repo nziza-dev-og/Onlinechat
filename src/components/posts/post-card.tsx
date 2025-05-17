@@ -1,20 +1,20 @@
 
-'use client'; // Need client component for state and interactions
+'use client';
 
 import * as React from 'react';
-import type { PostSerializable, CommentSerializable } from '@/types'; // Import CommentSerializable
+import type { PostSerializable } from '@/types';
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"; // Added CardTitle
 import Image from 'next/image';
-import { cn, resolveMediaUrl, getInitials } from '@/lib/utils'; // Import resolveMediaUrl and getInitials
-import { User, Image as ImageIcon, Video, Heart, MessageCircle, Trash2, AlertTriangle, Loader2 } from 'lucide-react'; // Add Heart, MessageCircle, Trash2, AlertTriangle, Loader2
-import { Button, buttonVariants } from '@/components/ui/button'; // Import buttonVariants
+import { cn, resolveMediaUrl, getInitials } from '@/lib/utils';
+import { Heart, MessageCircle, Send, Bookmark, Trash2, AlertTriangle, Loader2, MoreHorizontal } from 'lucide-react'; // Added Send, Bookmark, MoreHorizontal
+import { Button, buttonVariants } from '@/components/ui/button';
 import { useAuth } from '@/hooks/use-auth';
-import { likePost, unlikePost, deletePost } from '@/lib/posts.service'; // Import like/unlike/delete functions
+import { likePost, unlikePost, deletePost } from '@/lib/posts.service';
 import { useToast } from '@/hooks/use-toast';
-import { motion, AnimatePresence } from "framer-motion"; // Import animation library
-import { CommentSection } from './comment-section'; // Import CommentSection
+import { motion, AnimatePresence } from "framer-motion";
+import { CommentSection } from './comment-section';
 import {
     AlertDialog,
     AlertDialogAction,
@@ -23,30 +23,29 @@ import {
     AlertDialogDescription,
     AlertDialogFooter,
     AlertDialogHeader,
-    AlertDialogTitle,
+    AlertDialogTitle as AlertDialogTitleComponent, // Renamed to avoid conflict with CardTitle
     AlertDialogTrigger,
-} from "@/components/ui/alert-dialog"; // Import AlertDialog components
-
+} from "@/components/ui/alert-dialog";
+import { Separator } from '../ui/separator';
 
 interface PostCardProps {
-  post: PostSerializable; // Expect PostSerializable with string timestamp
-  // Optimistic update callbacks
+  post: PostSerializable;
   onLikeChange?: (postId: string, liked: boolean, newLikeCount: number) => void;
   onCommentAdded?: (postId: string, newCommentCount: number) => void;
-  onPostDeleted?: (postId: string) => void; // Callback for deletion
+  onPostDeleted?: (postId: string) => void;
 }
 
-// Function to safely format timestamp from ISO string
-const formatTimestamp = (timestampISO: string | null | undefined): string => {
+const formatTimestampForPost = (timestampISO: string | null | undefined): string => {
     if (!timestampISO) {
-        return 'just now'; // Fallback if no timestamp string
+        return 'JUST NOW'; // Fallback if no timestamp string
     }
     try {
         const date = parseISO(timestampISO);
-        return formatDistanceToNowStrict(date, { addSuffix: true });
+        // Format like "16 MINUTES AGO" or "2 HOURS AGO" etc.
+        return formatDistanceToNowStrict(date, { addSuffix: true }).toUpperCase();
     } catch (error) {
         console.error("Error formatting ISO timestamp:", error, timestampISO);
-        return 'Invalid date'; // Fallback for invalid date strings
+        return 'INVALID DATE';
     }
 };
 
@@ -55,33 +54,32 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
   const { toast } = useToast();
   const [isLiked, setIsLiked] = React.useState(post.likedBy?.includes(user?.uid ?? '') ?? false);
   const [likeCount, setLikeCount] = React.useState(post.likeCount ?? 0);
-  const [isLiking, setIsLiking] = React.useState(false); // Prevent double clicks
-  const [isDeleting, setIsDeleting] = React.useState(false); // State for delete operation
-  const [showComments, setShowComments] = React.useState(false); // State to toggle comments
-  const isOwner = user?.uid === post.uid; // Check if the current user owns the post
+  const [isLiking, setIsLiking] = React.useState(false);
+  const [isDeleting, setIsDeleting] = React.useState(false);
+  const [showComments, setShowComments] = React.useState(false);
+  const [currentCommentCount, setCurrentCommentCount] = React.useState(post.commentCount ?? 0);
 
-  // Resolve media URLs
+  const isOwner = user?.uid === post.uid;
+
   const resolvedImageUrl = resolveMediaUrl(post.imageUrl);
   const resolvedVideoUrl = resolveMediaUrl(post.videoUrl);
 
-  // Update local state if the likedBy prop changes externally
   React.useEffect(() => {
      setIsLiked(post.likedBy?.includes(user?.uid ?? '') ?? false);
      setLikeCount(post.likeCount ?? 0);
-  }, [post.likedBy, post.likeCount, user?.uid]);
+     setCurrentCommentCount(post.commentCount ?? 0);
+  }, [post.likedBy, post.likeCount, post.commentCount, user?.uid]);
 
   const handleLikeToggle = async () => {
     if (!user || isLiking) return;
-
     setIsLiking(true);
     const currentlyLiked = isLiked;
     const newLikeState = !currentlyLiked;
     const newLikeCount = currentlyLiked ? likeCount - 1 : likeCount + 1;
 
-    // Optimistic UI update
     setIsLiked(newLikeState);
     setLikeCount(newLikeCount);
-    onLikeChange?.(post.id, newLikeState, newLikeCount); // Notify parent
+    onLikeChange?.(post.id, newLikeState, newLikeCount);
 
     try {
       if (newLikeState) {
@@ -89,8 +87,6 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
       } else {
         await unlikePost(post.id, user.uid);
       }
-      // Optional: Success toast (can be noisy)
-      // toast({ title: newLikeState ? "Post Liked" : "Post Unliked" });
     } catch (error: any) {
       console.error("Error liking/unliking post:", error);
       toast({
@@ -98,10 +94,9 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
         description: `Could not ${currentlyLiked ? 'unlike' : 'like'} post. ${error.message}`,
         variant: "destructive",
       });
-      // Revert optimistic update on error
       setIsLiked(currentlyLiked);
       setLikeCount(currentlyLiked ? newLikeCount + 1 : newLikeCount - 1);
-       onLikeChange?.(post.id, currentlyLiked, currentlyLiked ? newLikeCount + 1 : newLikeCount - 1);
+      onLikeChange?.(post.id, currentlyLiked, currentlyLiked ? newLikeCount + 1 : newLikeCount - 1);
     } finally {
       setIsLiking(false);
     }
@@ -109,15 +104,12 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
 
   const handleDelete = async () => {
      if (!isOwner || isDeleting) return;
-
      setIsDeleting(true);
-     // Optimistic UI update - notify parent immediately
      onPostDeleted?.(post.id);
 
      try {
-         await deletePost(post.id, user.uid); // Call the delete service
+         await deletePost(post.id, user.uid);
          toast({ title: "Post Deleted", description: "Your post has been successfully removed." });
-         // No need to revert on success, parent already removed it
      } catch (error: any) {
          console.error("Error deleting post:", error);
          toast({
@@ -125,61 +117,63 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
              description: error.message || "Could not delete the post. Please try again.",
              variant: "destructive",
          });
-         // Note: Reverting optimistic delete is tricky as the parent state holds the list.
-         // A full refresh might be simpler, or the parent needs a way to re-add the post.
-         // For now, we'll just show the error. A manual refresh might be needed on failure.
-         setIsDeleting(false); // Reset deleting state on failure
+         setIsDeleting(false);
      }
-      // No finally block needed to set isDeleting to false here, as the component will unmount on success.
   };
-
 
   const toggleCommentSection = () => {
      setShowComments(prev => !prev);
   };
 
+  const handleCommentAddedInternal = (postId: string, newTotalComments: number) => {
+      setCurrentCommentCount(newTotalComments); // Update local comment count
+      onCommentAdded?.(postId, newTotalComments); // Bubble up to parent
+  };
+
+
   return (
      <motion.div
          initial={{ opacity: 0, y: 20 }}
          animate={{ opacity: 1, y: 0 }}
-         exit={{ opacity: 0, y: -20, transition: { duration: 0.2 } }} // Faster exit animation
+         exit={{ opacity: 0, y: -20, transition: { duration: 0.2 } }}
          transition={{ duration: 0.3 }}
-         layout // Animate layout changes (like removal)
+         layout
      >
-        <Card className="w-full shadow-lg rounded-lg overflow-hidden border border-border/50 bg-card transition-shadow duration-300 hover:shadow-xl"> {/* Hover effect */}
-          <CardHeader className="flex flex-row items-center gap-3 p-4 border-b bg-muted/20">
-            <Avatar className="h-10 w-10 border">
-              <AvatarImage src={post.photoURL || undefined} alt={post.displayName || 'User Avatar'} data-ai-hint="user post avatar"/>
-              <AvatarFallback className="bg-background text-muted-foreground">
-                 {getInitials(post.displayName)}
-              </AvatarFallback>
-            </Avatar>
-            <div className="flex-1 flex flex-col"> {/* Use flex-1 to push timestamp to the right */}
-              <span className="font-semibold text-sm text-card-foreground leading-tight">{post.displayName || 'Anonymous User'}</span>
-              <span className="text-xs text-muted-foreground leading-tight">{formatTimestamp(post.timestamp)}</span>
+        <Card className="w-full shadow-md rounded-none sm:rounded-lg overflow-hidden border-x-0 sm:border-x sm:border-y border-border/50 bg-card">
+          {/* Post Header */}
+          <CardHeader className="flex flex-row items-center justify-between gap-3 p-3 sm:p-4">
+            <div className="flex items-center gap-3">
+                <Avatar className="h-8 w-8 sm:h-9 sm:w-9 border">
+                  <AvatarImage src={post.photoURL || undefined} alt={post.displayName || 'User Avatar'} data-ai-hint="user post avatar"/>
+                  <AvatarFallback className="bg-muted text-muted-foreground text-sm">
+                     {getInitials(post.displayName)}
+                  </AvatarFallback>
+                </Avatar>
+                <span className="font-semibold text-sm text-card-foreground leading-tight truncate">
+                    {post.displayName || 'Anonymous User'}
+                </span>
             </div>
-             {/* Delete Button (only for owner) */}
-             {isOwner && (
+            {/* More Options / Delete Button */}
+            {isOwner && (
                  <AlertDialog>
                     <AlertDialogTrigger asChild>
                          <Button
                             variant="ghost"
                             size="icon"
-                            className="text-muted-foreground hover:text-destructive h-8 w-8"
+                            className="text-muted-foreground hover:text-destructive h-7 w-7 sm:h-8 sm:w-8"
                             disabled={isDeleting}
                          >
-                            {isDeleting ? <Loader2 className="h-4 w-4 animate-spin"/> : <Trash2 className="h-4 w-4" />}
-                            <span className="sr-only">Delete post</span>
+                            {isDeleting ? <Loader2 className="h-4 w-4 animate-spin"/> : <MoreHorizontal className="h-4 w-4 sm:h-5 sm:w-5" />}
+                            <span className="sr-only">Post options</span>
                         </Button>
                     </AlertDialogTrigger>
                     <AlertDialogContent>
                         <AlertDialogHeader>
-                             <AlertDialogTitle className="flex items-center gap-2">
-                                 <AlertTriangle className="text-destructive"/> Are you sure?
-                             </AlertDialogTitle>
+                             <AlertDialogTitleComponent className="flex items-center gap-2">
+                                 <AlertTriangle className="text-destructive"/> Confirm Deletion
+                             </AlertDialogTitleComponent>
                             <AlertDialogDescription>
-                                This action cannot be undone. This will permanently delete your post
-                                and all its comments.
+                                Are you sure you want to delete this post permanently? This action cannot be undone.
                             </AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter>
@@ -187,7 +181,7 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
                              <AlertDialogAction
                                 onClick={handleDelete}
                                 disabled={isDeleting}
-                                className={cn(buttonVariants({ variant: "destructive" }))} 
+                                className={cn(buttonVariants({ variant: "destructive" }))}
                             >
                                 {isDeleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                                 Delete Post
@@ -196,84 +190,125 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
                     </AlertDialogContent>
                  </AlertDialog>
              )}
+             {!isOwner && ( /* Placeholder for non-owner options if any needed later */
+                <Button variant="ghost" size="icon" className="text-muted-foreground h-7 w-7 sm:h-8 sm:w-8 invisible">
+                    <MoreHorizontal className="h-4 w-4 sm:h-5 sm:w-5" />
+                </Button>
+             )}
           </CardHeader>
 
-          <CardContent className="p-5 space-y-4">
-             {post.text && (
-               <p className="text-base text-foreground whitespace-pre-wrap break-words">{post.text}</p>
-             )}
-
+          {/* Post Media (Image or Video) */}
+          { (resolvedImageUrl || resolvedVideoUrl) && (
+            <div className="relative w-full bg-black aspect-square sm:aspect-auto sm:min-h-[300px] max-h-[75vh] overflow-hidden">
              {resolvedImageUrl && (
-               <div className="relative aspect-video w-full rounded-lg overflow-hidden border shadow-inner">
                  <Image
-                   src={resolvedImageUrl} 
+                   src={resolvedImageUrl}
                    alt={post.text ? `Image for post: ${post.text.substring(0,30)}...` : "Post image"}
                    fill
-                   style={{ objectFit: 'cover' }}
-                   className="bg-muted"
+                   style={{ objectFit: 'contain' }} // Changed to contain to show full image
+                   className="bg-black" // Ensure background is black for letterboxing
                    data-ai-hint="user post image"
-                   sizes="(max-width: 768px) 100vw, (max-width: 1200px) 80vw, 60vw"
+                   sizes="(max-width: 640px) 100vw, 50vw" // Adjusted sizes
                  />
-               </div>
              )}
-
              {resolvedVideoUrl && (
-                <div className="aspect-video w-full rounded-lg overflow-hidden border bg-black shadow-inner">
-                     <video
-                        src={resolvedVideoUrl} 
-                        controls
-                        className="w-full h-full object-contain bg-black"
-                        preload="metadata"
-                        data-ai-hint="user post video"
-                        title={post.text ? `Video for post: ${post.text.substring(0,30)}...` : "Post video"}
-                     >
-                        Your browser does not support the video tag. <a href={resolvedVideoUrl} target="_blank" rel="noopener noreferrer">Watch video</a>
-                    </video>
-                </div>
+                 <video
+                    src={resolvedVideoUrl}
+                    controls
+                    className="w-full h-full object-contain bg-black"
+                    preload="metadata"
+                    data-ai-hint="user post video"
+                    title={post.text ? `Video for post: ${post.text.substring(0,30)}...` : "Post video"}
+                 >
+                    Your browser does not support the video tag. <a href={resolvedVideoUrl} target="_blank" rel="noopener noreferrer">Watch video</a>
+                </video>
              )}
+            </div>
+          )}
+           {/* If no media and no text, show a placeholder */}
+           {!resolvedImageUrl && !resolvedVideoUrl && !post.text && (
+               <CardContent className="p-4 text-center text-muted-foreground italic">
+                 [Empty post content]
+               </CardContent>
+           )}
 
-             {!post.text && !resolvedImageUrl && !resolvedVideoUrl && (
-                  <p className="text-sm text-muted-foreground italic">[Empty post]</p>
-              )}
 
-          </CardContent>
-
-          <CardFooter className="p-3 border-t flex justify-between items-center bg-muted/20">
-              <div className="flex items-center gap-4">
-                  {/* Like Button */}
-                  <Button
-                      variant="ghost"
-                      size="sm"
-                      className="flex items-center gap-1.5 text-muted-foreground hover:text-destructive px-2"
-                      onClick={handleLikeToggle}
-                      disabled={!user || isLiking}
-                      aria-pressed={isLiked}
-                  >
-                      <Heart className={cn("h-4 w-4 transition-colors duration-200", isLiked ? "fill-destructive text-destructive" : "text-muted-foreground")} />
-                      <span className="text-xs font-medium">{likeCount}</span>
-                      <span className="sr-only">{isLiked ? 'Unlike' : 'Like'} post</span>
-                  </Button>
-
-                  {/* Comment Button */}
-                   <Button
+          {/* Post Actions & Details Section */}
+          <div className="p-3 sm:p-4 space-y-2">
+            {/* Action Buttons */}
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1 sm:gap-2">
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="text-muted-foreground hover:text-destructive h-8 w-8 sm:h-9 sm:w-9"
+                        onClick={handleLikeToggle}
+                        disabled={!user || isLiking}
+                        aria-pressed={isLiked}
+                    >
+                        <Heart className={cn("h-5 w-5 sm:h-6 sm:w-6 transition-colors duration-200", isLiked ? "fill-destructive text-destructive" : "text-muted-foreground")} />
+                        <span className="sr-only">{isLiked ? 'Unlike' : 'Like'}</span>
+                    </Button>
+                    <Button
                        variant="ghost"
-                       size="sm"
-                       className="flex items-center gap-1.5 text-muted-foreground hover:text-primary px-2"
+                       size="icon"
+                       className="text-muted-foreground hover:text-primary h-8 w-8 sm:h-9 sm:w-9"
                        onClick={toggleCommentSection}
                        aria-expanded={showComments}
                    >
-                       <MessageCircle className="h-4 w-4" />
-                       <span className="text-xs font-medium">{post.commentCount ?? 0}</span>
-                       <span className="sr-only">View comments</span>
+                       <MessageCircle className="h-5 w-5 sm:h-6 sm:w-6" />
+                       <span className="sr-only">Comment</span>
                    </Button>
-              </div>
+                   <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-primary h-8 w-8 sm:h-9 sm:w-9" onClick={() => toast({title: "Share: Coming Soon!"})}>
+                       <Send className="h-5 w-5 sm:h-6 sm:w-6" />
+                       <span className="sr-only">Share</span>
+                   </Button>
+                </div>
+                <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-primary h-8 w-8 sm:h-9 sm:w-9" onClick={() => toast({title: "Save: Coming Soon!"})}>
+                   <Bookmark className="h-5 w-5 sm:h-6 sm:w-6" />
+                   <span className="sr-only">Save</span>
+                </Button>
+            </div>
 
-              {/* Placeholder for share or other actions */}
-               {/* <Button variant="ghost" size="icon" className="text-muted-foreground h-8 w-8">
-                   <Share2 className="h-4 w-4" />
-                   <span className="sr-only">Share post</span>
-               </Button> */}
-          </CardFooter>
+            {/* Like Count */}
+            {likeCount > 0 && (
+                <p className="text-sm font-semibold text-card-foreground px-1">
+                    {likeCount} {likeCount === 1 ? 'like' : 'likes'}
+                </p>
+            )}
+
+            {/* Caption */}
+            {post.text && (
+              <div className="px-1 text-sm text-card-foreground">
+                <span className="font-semibold hover:underline cursor-pointer">{post.displayName || 'User'}</span>
+                <span className="whitespace-pre-wrap break-words"> {post.text}</span>
+              </div>
+            )}
+
+            {/* View Comments / Add Comment (Placeholder) */}
+            {currentCommentCount > 0 && !showComments && (
+                <button
+                    onClick={toggleCommentSection}
+                    className="px-1 text-sm text-muted-foreground hover:text-card-foreground cursor-pointer"
+                >
+                    View all {currentCommentCount} comments
+                </button>
+            )}
+             {!showComments && user && ( // Only show "Add a comment..." if comments are hidden AND user is logged in
+                 <p 
+                    className="px-1 text-sm text-muted-foreground cursor-pointer hover:text-card-foreground"
+                    onClick={toggleCommentSection} // Also toggle comments on click
+                 >
+                     Add a comment...
+                 </p>
+             )}
+
+            {/* Timestamp */}
+            <p className="px-1 text-xs text-muted-foreground uppercase tracking-wide">
+                {formatTimestampForPost(post.timestamp)}
+            </p>
+          </div>
+
 
            {/* Comment Section (Conditionally Rendered with Animation) */}
           <AnimatePresence>
@@ -285,7 +320,7 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
                      transition={{ duration: 0.3, ease: "easeInOut" }}
                      className="overflow-hidden border-t"
                  >
-                     <CommentSection postId={post.id} onCommentAdded={onCommentAdded} />
+                     <CommentSection postId={post.id} onCommentAdded={handleCommentAddedInternal} />
                  </motion.div>
              )}
           </AnimatePresence>
@@ -294,5 +329,3 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
      </motion.div>
   );
 }
-
-    
