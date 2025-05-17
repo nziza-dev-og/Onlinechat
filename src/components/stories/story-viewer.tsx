@@ -1,4 +1,3 @@
-
 "use client";
 
 import * as React from 'react';
@@ -18,24 +17,24 @@ import {
     AlertDialog,
     AlertDialogAction,
     AlertDialogCancel,
-    AlertDialogContent as AlertDialogPrimitiveContent, 
+    AlertDialogContent as AlertDialogPrimitiveContent, // Renamed to avoid conflict
     AlertDialogDescription,
     AlertDialogFooter,
     AlertDialogHeader,
-    AlertDialogTitle as AlertDialogTitleComponent,
+    AlertDialogTitle as AlertDialogTitleComponent, // Renamed to avoid conflict
     AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { CommentSection } from '@/components/posts/comment-section'; // Ensure this is imported
+import { CommentSection } from '@/components/posts/comment-section';
 
 interface StoryModalViewerProps {
-  userStories: PostSerializable[]; 
-  initialIndex?: number; 
-  currentUserId: string | null; 
-  onClose: () => void; 
-  onDelete: (storyId: string) => void; 
+  userStories: PostSerializable[];
+  initialIndex?: number;
+  currentUserId: string | null;
+  onClose: () => void;
+  onDelete: (storyId: string) => void;
 }
 
-const STORY_DURATION_SECONDS = 8; 
+const STORY_DURATION_SECONDS = 8;
 
 const formatStoryTimestamp = (timestampISO: string | null | undefined): string => {
     if (!timestampISO) return 'just now';
@@ -61,10 +60,11 @@ export function StoryModalViewer({
   const [isDeleting, setIsDeleting] = React.useState(false);
   const [showComments, setShowComments] = React.useState(false);
 
-  const mediaRef = React.useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
+  const audioMusicRef = React.useRef<HTMLAudioElement | null>(null); // Ref for background music
+  const videoMediaRef = React.useRef<HTMLVideoElement>(null); // Specific ref for video element
   const timerRef = React.useRef<NodeJS.Timeout | null>(null);
   const progressIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
-  const videoMediaRef = React.useRef<HTMLVideoElement>(null); // Specific ref for video element
+  const isMountedRef = React.useRef(true);
 
   const { toast } = useToast();
   const activeStory = userStories[currentIndex];
@@ -74,33 +74,46 @@ export function StoryModalViewer({
   const resolvedVideoUrl = activeStory?.videoUrl ? resolveMediaUrl(activeStory.videoUrl) : undefined;
   const resolvedMusicUrl = activeStory ? resolveMediaUrl(activeStory.musicUrl) : undefined;
 
+  React.useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+        isMountedRef.current = false;
+        stopMediaAndTimers();
+    };
+  }, []);
+
+
   const goToNextStory = React.useCallback(() => {
+    if (!isMountedRef.current) return;
     setCurrentIndex((prevIndex) => {
       if (prevIndex < userStories.length - 1) {
-        setShowComments(false); 
+        if (isMountedRef.current) setShowComments(false);
         return prevIndex + 1;
       }
-      onClose(); 
+      onClose();
       return prevIndex;
     });
   }, [userStories.length, onClose]);
 
   const goToPrevStory = () => {
+    if (!isMountedRef.current) return;
     setCurrentIndex((prevIndex) => {
         const newIndex = Math.max(0, prevIndex - 1);
-        if (newIndex !== prevIndex) {
-             setShowComments(false); 
+        if (newIndex !== prevIndex && isMountedRef.current) {
+             setShowComments(false);
         }
         return newIndex;
     });
   };
 
   const stopMediaAndTimers = React.useCallback(() => {
-    if (mediaRef.current) {
-      mediaRef.current.pause();
+    if (videoMediaRef.current) {
+      videoMediaRef.current.pause();
+      videoMediaRef.current.currentTime = 0; // Reset video
     }
-    if (videoMediaRef.current) { // Also pause video ref if it exists
-        videoMediaRef.current.pause();
+    if (audioMusicRef.current) {
+      audioMusicRef.current.pause();
+      audioMusicRef.current.currentTime = 0; // Reset audio
     }
     if (timerRef.current) {
       clearTimeout(timerRef.current);
@@ -112,27 +125,25 @@ export function StoryModalViewer({
     }
   }, []);
 
-  const isMountedRef = React.useRef(true);
-  React.useEffect(() => {
-      isMountedRef.current = true;
-      return () => {
-          isMountedRef.current = false;
-          stopMediaAndTimers(); 
-      };
-  }, [stopMediaAndTimers]);
 
   const startProgress = React.useCallback((durationSeconds: number) => {
-    stopMediaAndTimers(); 
+    if (!isMountedRef.current) return;
+    stopMediaAndTimers();
     setProgress(0);
-    const intervalTime = 50; 
+    const intervalTime = 50;
     const totalSteps = (durationSeconds * 1000) / intervalTime;
     let currentStep = 0;
 
+    if (totalSteps <= 0) { // Handle zero or negative duration
+        goToNextStory();
+        return;
+    }
+
     progressIntervalRef.current = setInterval(() => {
-      if (isPaused || !isMountedRef.current || showComments) return; 
+      if (isPaused || !isMountedRef.current || showComments) return;
       currentStep++;
       const currentProgress = (currentStep / totalSteps) * 100;
-      setProgress(currentProgress);
+      if (isMountedRef.current) setProgress(currentProgress);
       if (currentProgress >= 100) {
         goToNextStory();
       }
@@ -140,192 +151,255 @@ export function StoryModalViewer({
   }, [stopMediaAndTimers, isPaused, goToNextStory, showComments]);
 
  const handleMediaError = React.useCallback((e: Event, type: 'video' | 'audio') => {
-     const mediaElement = type === 'video' ? videoMediaRef.current : mediaRef.current;
+     const mediaElement = type === 'video' ? videoMediaRef.current : audioMusicRef.current;
      const error = mediaElement?.error;
      console.error(
-       `Media Error (${type}): Code ${error?.code}, Message: ${error?.message}`,
-       e 
+       `Media Error Event (${type}): Code ${error?.code}, Message: ${error?.message}`,
+       e, // Log the original event object too
+       error // Log the MediaError object
      );
+     if (!isMountedRef.current) return;
      toast({
          variant: "destructive",
          title: `${type.charAt(0).toUpperCase() + type.slice(1)} Error`,
          description: `Could not load story ${type}. ${error?.message || 'Check console for details.'}`
      });
-     if (isMountedRef.current) {
-         setIsPaused(true);
-         setProgress(100); 
-     }
+     setIsPaused(true);
+     setProgress(100); // Mark as finished to allow advancing or closing
      stopMediaAndTimers();
  }, [stopMediaAndTimers, toast]);
 
+
   const handleMediaLoaded = React.useCallback(() => {
-    const currentMediaRef = resolvedVideoUrl ? videoMediaRef.current : mediaRef.current; // Prioritize video ref
-    if (!currentMediaRef || !isMountedRef.current) return;
+    if (!isMountedRef.current || !activeStory) return;
 
     let duration = STORY_DURATION_SECONDS;
 
-    if (resolvedVideoUrl && currentMediaRef instanceof HTMLVideoElement && isFinite(currentMediaRef.duration)) {
-        duration = currentMediaRef.duration;
-        console.log(`Video story duration: ${duration}s`);
-    } else if (resolvedMusicUrl && currentMediaRef instanceof HTMLAudioElement) {
-         const startTime = activeStory?.musicStartTime ?? 0;
-         currentMediaRef.currentTime = startTime;
-         if (activeStory?.musicEndTime !== null && activeStory.musicEndTime > startTime && isFinite(activeStory.musicEndTime)) {
-             duration = activeStory.musicEndTime - startTime;
-         } else if (isFinite(currentMediaRef.duration)) {
-            const musicFullDuration = currentMediaRef.duration - startTime;
-            duration = musicFullDuration > 0 ? musicFullDuration : 0.1; // fallback if startTime is at or past duration
-         } else {
-             console.warn("Music duration is infinite/NaN, using default story duration.");
-         }
-         console.log(`Music story, effective duration: ${duration}s`);
+    if (resolvedVideoUrl && videoMediaRef.current && isFinite(videoMediaRef.current.duration)) {
+        duration = videoMediaRef.current.duration;
+        console.log(`Story Viewer: Video story, duration from video: ${duration}s`);
+        if (!showComments) videoMediaRef.current.play().catch(e => console.warn("Video autoplay prevented:", e));
+    } else if (resolvedMusicUrl && audioMusicRef.current && isFinite(audioMusicRef.current.duration)) {
+        const audioEl = audioMusicRef.current;
+        const startTime = activeStory.musicStartTime ?? 0;
+        audioEl.currentTime = startTime;
+        const endTime = activeStory.musicEndTime ?? audioEl.duration;
+        const musicEffectiveDuration = endTime > startTime ? endTime - startTime : audioEl.duration - startTime;
+        duration = musicEffectiveDuration > 0 ? musicEffectiveDuration : 0.1;
+        console.log(`Story Viewer: Music story, effective duration: ${duration}s`);
+        if (!showComments) audioEl.play().catch(e => console.warn("Music autoplay prevented:", e));
+    } else if (resolvedImageUrl && !resolvedVideoUrl && !resolvedMusicUrl) {
+        console.log(`Story Viewer: Image story, using default duration: ${STORY_DURATION_SECONDS}s`);
+        // Duration is already STORY_DURATION_SECONDS by default, progress starts below.
+    } else {
+         console.warn(`Story Viewer: Could not determine media duration, using default: ${STORY_DURATION_SECONDS}s`);
     }
-    
-    startProgress(duration > 0 ? duration : STORY_DURATION_SECONDS); // Ensure duration is positive
-    currentMediaRef.play().catch(e => console.warn("Autoplay prevented:", e));
 
-  }, [activeStory, startProgress, resolvedVideoUrl, resolvedMusicUrl]);
+    if (!showComments) startProgress(duration > 0 ? duration : STORY_DURATION_SECONDS);
+
+
+  }, [activeStory, startProgress, resolvedVideoUrl, resolvedMusicUrl, resolvedImageUrl, showComments]);
 
    React.useEffect(() => {
+     if (!activeStory || !isMountedRef.current) {
+        stopMediaAndTimers();
+        return;
+     }
+
      stopMediaAndTimers();
      setProgress(0);
-     
-     const videoElement = videoMediaRef.current;
-     const audioElement = mediaRef.current as HTMLAudioElement | null; // Assuming mediaRef is for audio
+     setIsPaused(false); // Reset pause state for new story
 
-     // Setup video
-     if (videoElement && resolvedVideoUrl) {
-         if (videoElement.currentSrc !== resolvedVideoUrl) {
-             videoElement.src = resolvedVideoUrl;
-             videoElement.load();
+     const currentVideoElement = videoMediaRef.current;
+     const currentAudioMusicElement = audioMusicRef.current;
+
+     // --- Video Setup ---
+     if (currentVideoElement && resolvedVideoUrl) {
+         console.log(`Story Viewer: Setting up video: ${resolvedVideoUrl}`);
+         if (currentVideoElement.currentSrc !== resolvedVideoUrl) {
+            currentVideoElement.src = resolvedVideoUrl;
          }
-         videoElement.muted = isMuted; // Video is muted if music is playing or globally muted
-         videoElement.loop = !resolvedMusicUrl; // Loop video if no separate music track
-         
-         videoElement.removeEventListener('loadedmetadata', handleMediaLoaded);
-         videoElement.removeEventListener('ended', goToNextStory);
-         videoElement.removeEventListener('play', () => { if (isMountedRef.current) setIsPaused(false) });
-         videoElement.removeEventListener('pause', () => { if (isMountedRef.current) setIsPaused(true) });
-         videoElement.removeEventListener('error', (e) => handleMediaError(e, 'video'));
+         currentVideoElement.muted = isMuted || !!resolvedMusicUrl; // Mute video if global mute OR if there's background music
+         currentVideoElement.loop = !resolvedMusicUrl; // Loop video only if no background music
 
-         videoElement.addEventListener('loadedmetadata', handleMediaLoaded);
-         videoElement.addEventListener('ended', goToNextStory);
-         videoElement.addEventListener('play', () => { if (isMountedRef.current) setIsPaused(false) });
-         videoElement.addEventListener('pause', () => { if (isMountedRef.current) setIsPaused(true) });
-         videoElement.addEventListener('error', (e) => handleMediaError(e, 'video'));
-         
-         if (!showComments) videoElement.play().catch(e => console.warn("Video autoplay prevented:", e));
-         else videoElement.pause();
+         const onVideoLoaded = () => handleMediaLoaded();
+         const onVideoEnded = () => goToNextStory();
+         const onVideoPlay = () => { if (isMountedRef.current) setIsPaused(false); };
+         const onVideoPause = () => { if (isMountedRef.current) setIsPaused(true); };
+         const onVideoError = (e: Event) => handleMediaError(e, 'video');
+
+         currentVideoElement.addEventListener('loadedmetadata', onVideoLoaded);
+         currentVideoElement.addEventListener('ended', onVideoEnded);
+         currentVideoElement.addEventListener('play', onVideoPlay);
+         currentVideoElement.addEventListener('pause', onVideoPause);
+         currentVideoElement.addEventListener('error', onVideoError);
+
+         currentVideoElement.load(); // Important to load the new source
+         if (!showComments) {
+             currentVideoElement.play().catch(e => console.warn("Initial video play() caught:", e));
+         }
+
+
+         // Cleanup for video
+         return () => {
+            if (currentVideoElement) {
+                currentVideoElement.removeEventListener('loadedmetadata', onVideoLoaded);
+                currentVideoElement.removeEventListener('ended', onVideoEnded);
+                currentVideoElement.removeEventListener('play', onVideoPlay);
+                currentVideoElement.removeEventListener('pause', onVideoPause);
+                currentVideoElement.removeEventListener('error', onVideoError);
+            }
+         };
      }
-
-     // Setup audio (if video is not primary or no video)
-     if (audioElement && resolvedMusicUrl && !resolvedVideoUrl) { // Only setup audio if no video
-         if (audioElement.currentSrc !== resolvedMusicUrl) {
-             audioElement.src = resolvedMusicUrl;
-             audioElement.load();
+     // --- Music Setup (Only if no video or video is muted due to music) ---
+     else if (currentAudioMusicElement && resolvedMusicUrl) {
+         console.log(`Story Viewer: Setting up music: ${resolvedMusicUrl}`);
+         if (currentAudioMusicElement.currentSrc !== resolvedMusicUrl) {
+             currentAudioMusicElement.src = resolvedMusicUrl;
          }
-         audioElement.muted = isMuted;
-         audioElement.currentTime = activeStory?.musicStartTime ?? 0;
-         audioElement.loop = activeStory?.musicEndTime === null;
+         currentAudioMusicElement.muted = isMuted;
+         currentAudioMusicElement.currentTime = activeStory.musicStartTime ?? 0;
+         currentAudioMusicElement.loop = activeStory.musicEndTime === null || (activeStory.musicEndTime <= (activeStory.musicStartTime ?? 0));
 
-         audioElement.removeEventListener('loadedmetadata', handleMediaLoaded);
-         audioElement.removeEventListener('ended', goToNextStory);
-         audioElement.removeEventListener('play', () => { if (isMountedRef.current) setIsPaused(false) });
-         audioElement.removeEventListener('pause', () => { if (isMountedRef.current) setIsPaused(true) });
-         audioElement.removeEventListener('error', (e) => handleMediaError(e, 'audio'));
 
-         audioElement.addEventListener('loadedmetadata', handleMediaLoaded);
-         audioElement.addEventListener('ended', goToNextStory);
-         audioElement.addEventListener('play', () => { if (isMountedRef.current) setIsPaused(false) });
-         audioElement.addEventListener('pause', () => { if (isMountedRef.current) setIsPaused(true) });
-         audioElement.addEventListener('error', (e) => handleMediaError(e, 'audio'));
+         const onMusicLoaded = () => handleMediaLoaded();
+         const onMusicEnded = () => goToNextStory();
+         const onMusicPlay = () => { if (isMountedRef.current) setIsPaused(false); };
+         const onMusicPause = () => { if (isMountedRef.current) setIsPaused(true); };
+         const onMusicError = (e: Event) => handleMediaError(e, 'audio');
 
-         if (!showComments) audioElement.play().catch(e => console.warn("Audio autoplay prevented:", e));
-         else audioElement.pause();
-     } else if (resolvedImageUrl && !resolvedVideoUrl && !resolvedMusicUrl) { // Pure image story
-        if (!showComments) startProgress(STORY_DURATION_SECONDS);
-        else {
-            stopMediaAndTimers();
+         currentAudioMusicElement.addEventListener('loadedmetadata', onMusicLoaded);
+         currentAudioMusicElement.addEventListener('ended', onMusicEnded);
+         currentAudioMusicElement.addEventListener('play', onMusicPlay);
+         currentAudioMusicElement.addEventListener('pause', onMusicPause);
+         currentAudioMusicElement.addEventListener('error', onMusicError);
+
+         currentAudioMusicElement.load();
+         if (!showComments) {
+             currentAudioMusicElement.play().catch(e => console.warn("Initial music play() caught:", e));
+         }
+
+         // Cleanup for music
+         return () => {
+             if (currentAudioMusicElement) {
+                currentAudioMusicElement.removeEventListener('loadedmetadata', onMusicLoaded);
+                currentAudioMusicElement.removeEventListener('ended', onMusicEnded);
+                currentAudioMusicElement.removeEventListener('play', onMusicPlay);
+                currentAudioMusicElement.removeEventListener('pause', onMusicPause);
+                currentAudioMusicElement.removeEventListener('error', onMusicError);
+             }
+         };
+     }
+      // --- Pure Image Story Setup ---
+     else if (resolvedImageUrl && !resolvedVideoUrl && !resolvedMusicUrl) {
+         console.log(`Story Viewer: Pure image story. Starting progress timer.`);
+         if (!showComments) startProgress(STORY_DURATION_SECONDS);
+         else {
+            stopMediaAndTimers(); // Ensure timers are stopped if comments are shown
             setIsPaused(true);
-        }
+         }
+     } else {
+         console.warn("Story Viewer: No valid media (image, video, or music) found for the current story.");
+         if (!showComments) startProgress(0.1); // Quickly advance if no media
      }
-
 
    }, [currentIndex, activeStory, resolvedVideoUrl, resolvedMusicUrl, resolvedImageUrl, stopMediaAndTimers, handleMediaLoaded, startProgress, isMuted, goToNextStory, handleMediaError, showComments]);
 
 
-  const handleInteractionStart = () => {
-    if (!isPaused && !showComments) {
+  const handleInteractionStart = React.useCallback(() => {
+    if (!isPaused && !showComments && isMountedRef.current) {
         setIsPaused(true);
-         if (videoMediaRef.current) videoMediaRef.current.pause();
-         if (mediaRef.current) mediaRef.current.pause();
-         if (timerRef.current) clearTimeout(timerRef.current);
+         if (videoMediaRef.current && !videoMediaRef.current.paused) videoMediaRef.current.pause();
+         if (audioMusicRef.current && !audioMusicRef.current.paused) audioMusicRef.current.pause();
          if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
     }
-  };
+  }, [isPaused, showComments]);
 
-  const handleInteractionEnd = () => {
-    if (isPaused && !showComments) {
+  const handleInteractionEnd = React.useCallback(() => {
+    if (isPaused && !showComments && isMountedRef.current && activeStory) { // Ensure activeStory exists
         setIsPaused(false);
-        const currentMediaElement = resolvedVideoUrl ? videoMediaRef.current : mediaRef.current;
-        if (currentMediaElement) currentMediaElement.play().catch(e => console.warn("Resume play prevented:", e));
-        
         let durationForProgress = STORY_DURATION_SECONDS;
-        if (resolvedVideoUrl && videoMediaRef.current && isFinite(videoMediaRef.current.duration)) {
-            durationForProgress = videoMediaRef.current.duration - videoMediaRef.current.currentTime;
-        } else if (resolvedMusicUrl && mediaRef.current && mediaRef.current instanceof HTMLAudioElement && isFinite(mediaRef.current.duration)) {
-            const audioEl = mediaRef.current as HTMLAudioElement;
-            const startTime = activeStory?.musicStartTime ?? 0;
-            const endTime = activeStory?.musicEndTime ?? audioEl.duration;
-            durationForProgress = endTime - audioEl.currentTime;
+        let mediaToPlay: HTMLVideoElement | HTMLAudioElement | null = null;
+
+        if (resolvedVideoUrl && videoMediaRef.current) {
+            mediaToPlay = videoMediaRef.current;
+            if (isFinite(mediaToPlay.duration)) {
+                durationForProgress = mediaToPlay.duration - mediaToPlay.currentTime;
+            }
+        } else if (resolvedMusicUrl && audioMusicRef.current) {
+            mediaToPlay = audioMusicRef.current;
+            if (isFinite(mediaToPlay.duration)) {
+                const startTime = activeStory.musicStartTime ?? 0;
+                const endTime = activeStory.musicEndTime ?? mediaToPlay.duration;
+                durationForProgress = endTime - mediaToPlay.currentTime;
+            }
         } else if (resolvedImageUrl) {
              const elapsedRatio = progress / 100;
              durationForProgress = STORY_DURATION_SECONDS * (1 - elapsedRatio);
         }
+
+        if (mediaToPlay) {
+            mediaToPlay.play().catch(e => console.warn("Resume play prevented:", e));
+        }
         startProgress(durationForProgress > 0 ? durationForProgress : 0.1);
     }
-  };
+  }, [isPaused, showComments, activeStory, resolvedVideoUrl, resolvedMusicUrl, resolvedImageUrl, progress, startProgress]);
 
 
   const handleDeleteClick = async () => {
-    if (!activeStory || isDeleting || !isOwner) return;
+    if (!activeStory || isDeleting || !isOwner || !isMountedRef.current) return;
     setIsDeleting(true);
-    handleInteractionStart(); 
+    handleInteractionStart();
     try {
       await deletePost(activeStory.id, currentUserId || '');
       toast({ title: "Story Deleted", description: "The story has been removed." });
-      onDelete(activeStory.id);
+      onDelete(activeStory.id); // Notify parent to update its list
 
-      if (userStories.length <= 1) {
+      // Logic to handle closing or moving to next/prev story
+      const remainingStories = userStories.filter(s => s.id !== activeStory.id);
+      if (remainingStories.length === 0) {
          onClose();
       } else {
-         const deletedIndex = userStories.findIndex(s => s.id === activeStory.id);
-         const nextIndexToShow = deletedIndex >= userStories.length - 1 ? deletedIndex - 1 : deletedIndex;
+         // Determine the new index carefully
+         let nextIndexToShow = currentIndex;
+         if (currentIndex >= remainingStories.length) { // If last item was deleted
+            nextIndexToShow = remainingStories.length - 1;
+         }
+         // If not the last, the current index might still be valid if items before it were deleted,
+         // or it might need to point to the new item at that position.
+         // The parent `onDelete` should cause a re-render with the new `userStories` prop,
+         // and `currentIndex` might need adjustment in a `useEffect` watching `userStories`.
+         // For now, a simple adjustment:
+         setCurrentIndex(Math.max(0, Math.min(nextIndexToShow, remainingStories.length - 1)));
          setProgress(0);
          setShowComments(false);
-         setCurrentIndex(Math.max(0, Math.min(nextIndexToShow, userStories.length - 2)));
+         // The useEffect watching currentIndex and activeStory will handle the new story loading.
       }
     } catch (error: any) {
       console.error("Error deleting story:", error);
       toast({ title: "Delete Failed", description: error.message || "Could not delete the story.", variant: "destructive" });
-      handleInteractionEnd(); 
+      if (isMountedRef.current) handleInteractionEnd();
     } finally {
        if(isMountedRef.current) setIsDeleting(false);
     }
   };
 
   const toggleComments = (e: React.MouseEvent) => {
-      e.stopPropagation();
+      e.stopPropagation(); // Prevent click-through to interaction handlers
+      if (!isMountedRef.current) return;
       setShowComments(prev => {
            const nextState = !prev;
            if (nextState) { // Comments are being shown
-               setIsPaused(true);
-               if (videoMediaRef.current) videoMediaRef.current.pause();
-               if (mediaRef.current) mediaRef.current.pause();
-               if (timerRef.current) clearTimeout(timerRef.current);
+               setIsPaused(true); // Explicitly pause
+               if (videoMediaRef.current && !videoMediaRef.current.paused) videoMediaRef.current.pause();
+               if (audioMusicRef.current && !audioMusicRef.current.paused) audioMusicRef.current.pause();
                if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
            } else { // Comments are being hidden
-               handleInteractionEnd(); // Resume story playback
+                // Only resume if it was paused by showing comments, not by user interaction
+                if(isPaused) { // Check if it was paused by user interaction
+                     setIsPaused(false); // Unpause
+                     handleInteractionEnd(); // Then call the resume logic
+                }
            }
            return nextState;
       });
@@ -333,14 +407,17 @@ export function StoryModalViewer({
 
 
   if (!activeStory) {
+    // This can happen if userStories becomes empty after a delete and before onClose is called
+    // or if initialIndex is out of bounds.
+    if(userStories.length === 0 && isOpen) onClose(); // Auto-close if no stories left
     return null;
   }
 
   return (
-      <Dialog open={true} onOpenChange={(open) => !open && onClose()}>
+      <Dialog open={true} onOpenChange={(open) => { if (!open) onClose(); }}>
         <DialogContent
-            className="p-0 max-w-md w-[90vw] h-[85vh] md:h-[80vh] md:w-[25vw] md:max-w-[400px] border-0 shadow-2xl bg-black rounded-lg flex flex-col overflow-hidden" // Medium size
-             onInteractOutside={(e) => e.preventDefault()}
+            className="p-0 max-w-md w-[90vw] h-[85vh] md:h-[80vh] md:w-[25vw] md:max-w-[400px] border-0 shadow-2xl bg-black rounded-lg flex flex-col overflow-hidden"
+             onInteractOutside={(e) => e.preventDefault()} // Prevent closing by clicking outside if needed
              onEscapeKeyDown={onClose}
         >
             <DialogTitle className={cn("sr-only")}>
@@ -349,12 +426,13 @@ export function StoryModalViewer({
 
           <div
             className="relative w-full h-full flex flex-col text-white select-none"
-             onMouseDown={!showComments ? handleInteractionStart : undefined}
-             onTouchStart={!showComments ? handleInteractionStart : undefined}
-             onMouseUp={!showComments ? handleInteractionEnd : undefined}
-             onTouchEnd={!showComments ? handleInteractionEnd : undefined}
-             onMouseLeave={!showComments ? handleInteractionEnd : undefined}
+             onMouseDownCapture={!showComments ? handleInteractionStart : undefined}
+             onTouchStartCapture={!showComments ? handleInteractionStart : undefined}
+             onMouseUpCapture={!showComments ? handleInteractionEnd : undefined}
+             onTouchEndCapture={!showComments ? handleInteractionEnd : undefined}
+             onMouseLeave={!showComments ? handleInteractionEnd : undefined} // Resume on mouse leave
            >
+            {/* Progress Bars */}
             <div className="absolute top-0 left-0 right-0 p-2 z-20">
               <div className="flex items-center gap-1 h-1 w-full">
                 {userStories.map((_, index) => (
@@ -365,11 +443,12 @@ export function StoryModalViewer({
                       animate={{
                         width: index < currentIndex ? '100%' : (index === currentIndex ? `${progress}%` : '0%')
                       }}
-                      transition={{ duration: index === currentIndex ? 0.05 : 0, ease: "linear" }}
+                      transition={{ duration: index === currentIndex ? 0.05 : 0.3, ease: "linear" }}
                     />
                   </div>
                 ))}
               </div>
+               {/* Header Info */}
                <div className="flex items-center justify-between mt-2">
                  <div className="flex items-center gap-2">
                      <Avatar className="h-8 w-8">
@@ -395,30 +474,30 @@ export function StoryModalViewer({
                </div>
             </div>
 
-             <div className="absolute inset-y-0 left-0 w-1/3 z-30" onClick={(e) => { e.stopPropagation(); goToPrevStory(); }}></div>
-             <div className="absolute inset-y-0 right-0 w-1/3 z-30" onClick={(e) => { e.stopPropagation(); goToNextStory(); }}></div>
+             {/* Navigation Areas */}
+             <div className="absolute inset-y-0 left-0 w-1/3 z-10" onClick={(e) => { e.stopPropagation(); goToPrevStory(); }}></div>
+             <div className="absolute inset-y-0 right-0 w-1/3 z-10" onClick={(e) => { e.stopPropagation(); goToNextStory(); }}></div>
 
+            {/* Media Display Area */}
             <div className="flex-1 flex items-center justify-center overflow-hidden relative bg-gray-900">
               {resolvedVideoUrl ? (
                 <video
-                  ref={videoMediaRef} // Use specific video ref
-                  key={activeStory.id + '-video'}
+                  ref={videoMediaRef}
+                  key={activeStory.id + '-video'} // Key to force re-render on story change
                   src={resolvedVideoUrl}
                   className="max-w-full max-h-full object-contain pointer-events-none"
-                  muted={isMuted || !!resolvedMusicUrl} // Mute video if separate music is playing or globally muted
                   playsInline
-                  loop={!resolvedMusicUrl} // Loop video only if no separate music track
                   preload="auto"
                 />
               ) : resolvedImageUrl ? (
                 <Image
                   key={activeStory.id + '-image'}
                   src={resolvedImageUrl}
-                  alt={`Story by ${activeStory.displayName}`}
+                  alt={activeStory.text || `Story by ${activeStory.displayName}`}
                   fill
                   style={{ objectFit: 'contain' }}
                   className="pointer-events-none"
-                  priority={currentIndex === initialIndex}
+                  priority={currentIndex === initialIndex} // Prioritize loading the first visible story's image
                   unoptimized
                 />
               ) : (
@@ -427,22 +506,21 @@ export function StoryModalViewer({
                     <span>No media found for this story.</span>
                 </div>
               )}
-              {resolvedMusicUrl && !resolvedVideoUrl && ( // Only play separate music if no video
+              {/* Separate Audio Element for Music (plays if no video or if video is muted for music) */}
+               {resolvedMusicUrl && (
                    <audio
-                       ref={mediaRef as React.RefObject<HTMLAudioElement>}
+                       ref={audioMusicRef}
                        key={activeStory.id + '-music'}
                        src={resolvedMusicUrl}
-                       muted={isMuted}
-                       loop={activeStory.musicEndTime === null}
                        playsInline
                        preload="auto"
-                       className="hidden" 
+                       className="hidden" // Visually hidden, controlled programmatically
                    > Your browser does not support the audio element. </audio>
                )}
             </div>
 
-             <div className="absolute bottom-0 left-0 right-0 p-3 flex items-center justify-between z-20 bg-gradient-to-t from-black/50 to-transparent">
-                {/* Mute button active if there's video OR music */}
+            {/* Footer Controls */}
+             <div className="absolute bottom-0 left-0 right-0 p-3 flex items-center justify-between z-20 bg-gradient-to-t from-black/60 to-transparent">
                 {(resolvedVideoUrl || resolvedMusicUrl) ? (
                      <Button
                          variant="ghost"
@@ -453,13 +531,16 @@ export function StoryModalViewer({
                      >
                        {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
                      </Button>
-                ) : <div />}
+                ) : <div className="w-9 h-9" /> } {/* Placeholder for spacing */}
 
                 <Button
                     variant="ghost"
                     onClick={toggleComments}
                     size="icon"
-                    className="text-white/80 hover:bg-white/20 hover:text-white"
+                    className={cn(
+                        "text-white/80 hover:bg-white/20 hover:text-white",
+                        showComments && "bg-white/20 text-white" // Indicate active state
+                    )}
                     aria-label={showComments ? "Hide comments" : "Show comments"}
                 >
                   <MessageCircle className="w-5 h-5" />
@@ -471,15 +552,15 @@ export function StoryModalViewer({
                           <Button
                              variant="ghost"
                              size="icon"
-                             onClick={(e) => e.stopPropagation()} 
+                             onClick={(e) => {e.stopPropagation(); handleInteractionStart();}} // Pause story on dialog open
                              className="text-red-400 hover:bg-red-500/20 hover:text-red-300"
                              aria-label="Delete story"
-                             disabled={isDeleting} 
+                             disabled={isDeleting}
                           >
-                             <Trash2 className="w-5 h-5" />
+                             {isDeleting ? <Loader2 className="h-5 w-5 animate-spin" /> : <Trash2 className="w-5 h-5" />}
                           </Button>
                        </AlertDialogTrigger>
-                       <AlertDialogPrimitiveContent onClick={(e) => e.stopPropagation()}> 
+                       <AlertDialogPrimitiveContent onClick={(e) => e.stopPropagation()}>
                           <AlertDialogHeader>
                              <AlertDialogTitleComponent className="flex items-center gap-2">
                                 <AlertTriangle className="text-destructive"/> Delete this story?
@@ -489,7 +570,7 @@ export function StoryModalViewer({
                           <AlertDialogFooter>
                              <AlertDialogCancel
                                 disabled={isDeleting}
-                                onClick={(e) => {e.stopPropagation(); handleInteractionEnd(); }}>Cancel</AlertDialogCancel>
+                                onClick={(e) => {e.stopPropagation(); if (isMountedRef.current) handleInteractionEnd(); }}>Cancel</AlertDialogCancel>
                              <AlertDialogAction
                                 onClick={(e) => {e.stopPropagation(); handleDeleteClick();}}
                                 disabled={isDeleting}
@@ -501,15 +582,17 @@ export function StoryModalViewer({
                           </AlertDialogFooter>
                        </AlertDialogPrimitiveContent>
                     </AlertDialog>
-                 ) : <div />} 
+                 ) : <div className="w-9 h-9" /> } {/* Placeholder for spacing */}
              </div>
 
+            {/* Caption */}
              {!showComments && activeStory.text && (
                   <div className="absolute bottom-16 left-4 right-4 z-10 text-center pointer-events-none">
-                      <p className="text-sm bg-black/60 px-2 py-1 rounded inline-block">{activeStory.text}</p>
+                      <p className="text-sm bg-black/70 px-2.5 py-1.5 rounded-md inline-block shadow-lg">{activeStory.text}</p>
                   </div>
               )}
 
+            {/* Comment Section Overlay */}
              <AnimatePresence>
                 {showComments && (
                     <motion.div
@@ -517,16 +600,19 @@ export function StoryModalViewer({
                         animate={{ y: 0 }}
                         exit={{ y: "100%" }}
                         transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                        className="absolute inset-x-0 bottom-0 z-40 bg-background text-foreground max-h-[60%] rounded-t-lg shadow-lg flex flex-col"
-                        onClick={(e) => e.stopPropagation()}
+                        className="absolute inset-x-0 bottom-0 z-40 bg-background text-foreground max-h-[60%] min-h-[40%] rounded-t-lg shadow-2xl flex flex-col" // Ensure it has a shadow
+                        onClick={(e) => e.stopPropagation()} // Prevent clicks from bubbling to interaction handlers
+                        onMouseDownCapture={(e) => e.stopPropagation()} // Stop interaction handlers for comments
+                        onTouchStartCapture={(e) => e.stopPropagation()}
                     >
-                        <div className="flex justify-between items-center p-2 border-b">
-                            <h4 className="text-sm font-semibold">Comments</h4>
+                        <div className="flex justify-between items-center p-3 border-b sticky top-0 bg-background z-10">
+                            <h4 className="text-sm font-semibold">Comments ({activeStory.commentCount ?? 0})</h4>
                              <Button variant="ghost" size="icon" onClick={toggleComments} className="h-7 w-7">
                                 <X className="w-4 h-4" />
+                                <span className="sr-only">Close comments</span>
                              </Button>
                         </div>
-                        <div className="flex-1 overflow-hidden">
+                        <div className="flex-1 overflow-y-auto"> {/* Scrollable area for comments */}
                           <CommentSection postId={activeStory.id} />
                         </div>
                     </motion.div>
