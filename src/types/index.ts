@@ -1,5 +1,4 @@
 
-
 import type { User as FirebaseUser } from 'firebase/auth';
 import type { Timestamp } from 'firebase/firestore';
 
@@ -58,6 +57,8 @@ export interface Post {
     musicStartTime?: number | null; // Optional start time in seconds for music
     musicEndTime?: number | null; // Optional end time in seconds for music
     type?: 'post' | 'story'; // Added type field
+    tags?: string[]; // For hashtags
+    mentions?: string[]; // For user UIDs mentioned (advanced)
     timestamp: Timestamp | Date; // Can be Timestamp or Date (e.g., for optimistic updates)
     likeCount?: number; // Number of likes
     likedBy?: string[]; // Array of UIDs who liked the post
@@ -77,6 +78,8 @@ export interface PostSerializable {
     musicStartTime?: number | null; // Optional start time in seconds for music
     musicEndTime?: number | null; // Optional end time in seconds for music
     type?: 'post' | 'story'; // Make sure this is included
+    tags?: string[]; // For hashtags
+    mentions?: string[]; // For user UIDs mentioned (advanced) - keep as string for now if not linking
     timestamp: string; // Use ISO string for serialization
     likeCount?: number;
     likedBy?: string[];

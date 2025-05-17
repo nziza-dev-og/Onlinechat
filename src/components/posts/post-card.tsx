@@ -49,6 +49,36 @@ const formatTimestampForPost = (timestampISO: string | null | undefined): string
     }
 };
 
+
+const renderTextWithTags = (text: string | null | undefined) => {
+    if (!text) return null;
+
+    // Regex to find hashtags (#tag) and mentions (@username)
+    // It captures the symbol (# or @) and the word following it.
+    // It handles cases where tags/mentions might be at the start/end of words or have punctuation.
+    const tagMentionRegex = /(#\w+)|(@\w+)/g;
+
+    const parts = text.split(tagMentionRegex).filter(part => part !== undefined);
+
+    return parts.map((part, index) => {
+        if (part?.startsWith('#')) {
+            return (
+                <span key={index} className="text-primary hover:underline cursor-pointer">
+                    {part}
+                </span>
+            );
+        } else if (part?.startsWith('@')) {
+            return (
+                <span key={index} className="text-primary font-semibold hover:underline cursor-pointer">
+                    {part}
+                </span>
+            );
+        }
+        return <React.Fragment key={index}>{part}</React.Fragment>;
+    });
+};
+
+
 export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: PostCardProps) {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -105,11 +135,13 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
   const handleDelete = async () => {
      if (!isOwner || isDeleting) return;
      setIsDeleting(true);
+     // Optimistically call onPostDeleted before awaiting the actual deletion
      onPostDeleted?.(post.id);
 
      try {
          await deletePost(post.id, user.uid);
          toast({ title: "Post Deleted", description: "Your post has been successfully removed." });
+         // No need to call onPostDeleted again here if already called optimistically
      } catch (error: any) {
          console.error("Error deleting post:", error);
          toast({
@@ -117,9 +149,17 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
              description: error.message || "Could not delete the post. Please try again.",
              variant: "destructive",
          });
+         // If optimistic deletion happened, we might need a way to revert it in the UI,
+         // or simply rely on the parent component re-fetching/re-filtering.
+         // For now, we just set isDeleting to false.
          setIsDeleting(false);
      }
+      // setIsDeleting is set to false in the finally block of the try-catch-finally if an error occurs.
+      // If successful, the component might unmount, so setting it might not be necessary.
+      // However, if it doesn't unmount for some reason, ensure it's reset.
+      // This is usually handled by the parent component re-rendering without this post.
   };
+
 
   const toggleCommentSection = () => {
      setShowComments(prev => !prev);
@@ -281,11 +321,11 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
             {post.text && (
               <div className="px-1 text-sm text-card-foreground">
                 <span className="font-semibold hover:underline cursor-pointer">{post.displayName || 'User'}</span>
-                <span className="whitespace-pre-wrap break-words"> {post.text}</span>
+                <span className="whitespace-pre-wrap break-words"> {renderTextWithTags(post.text)}</span>
               </div>
             )}
 
-            {/* View Comments / Add Comment (Placeholder) */}
+            {/* View Comments / Add Comment */}
             {currentCommentCount > 0 && !showComments && (
                 <button
                     onClick={toggleCommentSection}
@@ -294,10 +334,10 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
                     View all {currentCommentCount} comments
                 </button>
             )}
-             {!showComments && user && ( // Only show "Add a comment..." if comments are hidden AND user is logged in
-                 <p 
+             {!showComments && user && (
+                 <p
                     className="px-1 text-sm text-muted-foreground cursor-pointer hover:text-card-foreground"
-                    onClick={toggleCommentSection} // Also toggle comments on click
+                    onClick={toggleCommentSection}
                  >
                      Add a comment...
                  </p>

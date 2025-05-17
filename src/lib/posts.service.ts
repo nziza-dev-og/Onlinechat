@@ -1,3 +1,4 @@
+
 'use server';
 
 import { db } from '@/lib/firebase';
@@ -36,14 +37,32 @@ export interface PostInput {
   musicStartTime?: number | null; // Optional start time in seconds for music
   musicEndTime?: number | null; // Optional end time in seconds for music
   type?: 'post' | 'story'; // Added type field, optional, defaults to 'post'
+  tags?: string[]; // For hashtags (extracted from text)
+  // mentions?: string[]; // For user UIDs mentioned (advanced - future)
 }
+
+/**
+ * Extracts hashtags (words starting with #) from a given text.
+ * @param text - The text to parse.
+ * @returns An array of unique hashtags (without the # prefix).
+ */
+const extractHashtags = (text: string | null | undefined): string[] => {
+  if (!text) return [];
+  const hashtagRegex = /#([a-zA-Z0-9_]+)/g;
+  const matches = text.match(hashtagRegex);
+  if (!matches) return [];
+  // Remove '#' and ensure uniqueness
+  return Array.from(new Set(matches.map(tag => tag.substring(1))));
+};
+
 
 /**
  * Adds a new post document to the 'posts' collection in Firestore.
  * Initializes likeCount and commentCount to 0 and likedBy to an empty array.
  * Saves the post type, defaulting to 'post'. Includes musicUrl, startTime, endTime for stories.
+ * Extracts and stores hashtags.
  *
- * @param postData - An object containing the post details (uid, text, imageUrl, videoUrl, musicUrl, startTime, endTime, type).
+ * @param postData - An object containing the post details.
  * @returns Promise<string> - The ID of the newly created post document.
  * @throws Error if post data is invalid, db is not initialized, or add operation fails.
  */
@@ -79,23 +98,25 @@ export const addPost = async (postData: PostInput): Promise<string> => {
   try {
     const postsCollectionRef = collection(db, 'posts');
     const isStory = postData.type === 'story';
+    const extractedTags = extractHashtags(postData.text);
+
     const dataToSave = {
       ...postData,
       text: postData.text?.trim() || null,
       imageUrl: postData.imageUrl?.trim() || null,
       videoUrl: postData.videoUrl?.trim() || null,
-      // Only save music-related fields for stories
       musicUrl: isStory ? (postData.musicUrl?.trim() || null) : null,
       musicStartTime: isStory ? (postData.musicStartTime ?? null) : null,
       musicEndTime: isStory ? (postData.musicEndTime ?? null) : null,
-      type: postData.type || 'post', // Default to 'post' if type is not provided
-      timestamp: firestoreServerTimestamp(), // Firestore handles this on the server
-      likeCount: 0, // Initialize like count
-      likedBy: [], // Initialize likedBy array
-      commentCount: 0, // Initialize comment count
+      type: postData.type || 'post',
+      tags: extractedTags.length > 0 ? extractedTags : [], // Store extracted hashtags
+      timestamp: firestoreServerTimestamp(),
+      likeCount: 0,
+      likedBy: [],
+      commentCount: 0,
     };
     const newPostDocRef = await addDoc(postsCollectionRef, dataToSave);
-    console.log(`Firestore: Post created with ID: ${newPostDocRef.id}, Type: ${dataToSave.type}`);
+    console.log(`Firestore: Post created with ID: ${newPostDocRef.id}, Type: ${dataToSave.type}, Tags: ${dataToSave.tags.join(', ')}`);
     return newPostDocRef.id;
   } catch (error: any) {
      const detailedErrorMessage = `Failed to add post to Firestore. Error: ${error.message || 'Unknown Firestore error'}${error.code ? ` (Code: ${error.code})` : ''}`;
@@ -150,15 +171,16 @@ export const fetchPosts = async (count: number = 50): Promise<PostSerializable[]
         text: data.text ?? null,
         imageUrl: data.imageUrl ?? null,
         videoUrl: data.videoUrl ?? null,
-        musicUrl: data.musicUrl ?? null, // Include musicUrl
-        musicStartTime: data.musicStartTime ?? null, // Include start time
-        musicEndTime: data.musicEndTime ?? null, // Include end time
-        type: data.type || 'post', // Include type, default to 'post'
+        musicUrl: data.musicUrl ?? null,
+        musicStartTime: data.musicStartTime ?? null,
+        musicEndTime: data.musicEndTime ?? null,
+        type: data.type || 'post',
+        tags: data.tags ?? [], // Include tags
         // Convert Timestamp to ISO string for serialization
         timestamp: data.timestamp.toDate().toISOString(),
-        likeCount: data.likeCount ?? 0, // Default to 0 if missing
-        likedBy: data.likedBy ?? [], // Default to empty array if missing
-        commentCount: data.commentCount ?? 0, // Default to 0 if missing
+        likeCount: data.likeCount ?? 0,
+        likedBy: data.likedBy ?? [],
+        commentCount: data.commentCount ?? 0,
       };
     }).filter((post): post is PostSerializable => post !== null); // Filter out invalid documents
 
@@ -308,8 +330,14 @@ export const deletePost = async (postId: string, userId: string): Promise<void> 
         }
         const postData = postSnap.data();
         if (postData?.uid !== userId) {
-            console.warn(`Unauthorized delete attempt on post ${postId} by user ${userId}. Author: ${postData?.uid}`);
-            throw new Error("Unauthorized: You can only delete your own posts.");
+            // Allow admin to delete any post
+            const adminUserRef = doc(db, 'users', userId);
+            const adminSnap = await getDoc(adminUserRef);
+            if (!adminSnap.exists() || !adminSnap.data()?.isAdmin) {
+                console.warn(`Unauthorized delete attempt on post ${postId} by user ${userId}. Author: ${postData?.uid}`);
+                throw new Error("Unauthorized: You can only delete your own posts or you must be an admin.");
+            }
+            console.log(`Admin user ${userId} deleting post ${postId} authored by ${postData?.uid}`);
         }
         // --- End Authorization Check ---
 
@@ -327,7 +355,7 @@ export const deletePost = async (postId: string, userId: string): Promise<void> 
         // Commit the batch
         await batch.commit();
 
-        console.log(`Firestore: Post ${postId} and its comments deleted successfully by owner ${userId}.`);
+        console.log(`Firestore: Post ${postId} and its comments deleted successfully by user ${userId}.`);
 
     } catch (error: any) {
         // Avoid double logging if it's an authorization or not found error caught above
