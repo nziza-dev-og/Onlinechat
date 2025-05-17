@@ -11,7 +11,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth } from '@/hooks/use-auth'; // Import useAuth hook
 import { Button } from '@/components/ui/button';
-import { LogOut, Users, MessageSquare, Search, CircleDot, Video as VideoIcon, Circle, Menu } from 'lucide-react'; // Added Circle, Menu
+import { LogOut, Users, MessageSquare, Search, CircleDot, Video as VideoIcon, Circle, Menu, Edit3, Camera } from 'lucide-react'; // Added Circle, Menu, Edit3, Camera
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
@@ -21,9 +21,9 @@ import { updateUserProfileDocument } from '@/lib/user-profile.service';
 import { isFirebaseError } from '@/lib/firebase-errors';
 import { formatDistanceToNowStrict } from 'date-fns';
 import { updateTypingStatus } from '@/lib/chat.service';
-import { VideoCallModal } from '@/components/chat/video-call-modal'; // Import VideoCallModal
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'; // Import Card components
-import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet'; // Import Sheet for mobile sidebar
+import { VideoCallModal } from '@/components/chat/video-call-modal';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 
 
 // Helper function to create a unique chat ID between two users
@@ -56,7 +56,7 @@ const formatLastSeen = (lastSeen: Timestamp | Date | undefined): string => {
     if (isOnline(lastSeen)) {
         return 'Online';
     }
-    if (!lastSeen) return ''; // No data
+    if (!lastSeen) return 'Offline'; // No data
     const lastSeenDate = lastSeen instanceof Timestamp ? lastSeen.toDate() : lastSeen;
     // Use strict formatting for brevity, e.g., "5m", "2h", "3d"
     return formatDistanceToNowStrict(lastSeenDate, { addSuffix: true });
@@ -78,6 +78,8 @@ export function ChatWindow() {
   const [dbInstance, setDbInstance] = useState<Firestore | null>(null); // Hold Firestore instance
   const [hasUnreadMap, setHasUnreadMap] = useState<Map<string, boolean>>(new Map()); // Track unread status per user UID
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false); // State for mobile sidebar sheet
+  const [activeFilter, setActiveFilter] = useState<'messages' | 'channels' | 'requests'>('messages');
+
 
   const { toast } = useToast();
   const scrollAreaRef = useRef<HTMLDivElement>(null);
@@ -92,8 +94,6 @@ export function ChatWindow() {
   // Initialize Firestore instance on mount
   useEffect(() => {
     try {
-        // Use the db instance directly imported from firebase.ts
-        // This assumes firebase.ts successfully initializes and exports db
         if (!firebaseDb) {
              throw new Error("Firestore service (db) is not available from firebase.ts");
         }
@@ -105,10 +105,10 @@ export function ChatWindow() {
             title: "Database Error",
             description: "Could not connect to the database. Chat features may be limited.",
             variant: "destructive",
-            duration: 10000, // Make it persistent
+            duration: 10000,
         });
     }
-  }, [toast]); // Only run on mount
+  }, [toast]);
 
 
    const scrollToBottom = useCallback(() => {
@@ -117,48 +117,39 @@ export function ChatWindow() {
     }
   }, []);
 
-   // Function to set the message being replied to
    const handleSetReplyTo = useCallback((message: Message | null) => {
      setReplyingToMessage(message);
    }, []);
 
-   // Function to clear the reply state
    const clearReply = useCallback(() => {
      setReplyingToMessage(null);
    }, []);
 
 
-    // Update user presence (lastSeen) periodically and on focus
     useEffect(() => {
         let intervalId: NodeJS.Timeout | null = null;
         let isFocused = typeof document !== 'undefined' ? document.hasFocus() : true;
-        let currentChatIdForCleanup: string | null = null; // Variable to hold chatId for cleanup
+        let currentChatIdForCleanup: string | null = null;
 
         const updateUserPresence = async (reason: string) => {
              if (!user?.uid) {
-                 // console.log("Presence update skipped: No authenticated user.");
                  return;
              }
-             // Check if dbInstance is available before proceeding
              if (!dbInstance) {
                  console.warn(`Presence update skipped for ${user.uid} (${reason}): DB instance not ready.`);
                  return;
              }
 
              try {
-                 // Call the server action to update the profile
                  await updateUserProfileDocument(user.uid, {
                      lastSeen: 'SERVER_TIMESTAMP'
                  });
-                 // console.log(`✅ User presence updated for ${user.uid} (${reason}).`);
              } catch (error: any) {
-                 // Log the detailed error from the service function, but avoid redundant console.error if the service already logs
-                 console.error(`🔴 Error updating user presence for ${user.uid} (${reason}): "${error.message}"`, error);
-                 // Show a less technical toast to the user if it's not just a network blip
-                 if (!error.message?.includes("Network Error")) { // Example check
+                 console.error(`🔴 Error updating user presence for ${user.uid} (${reason}):`, error.message, error);
+                 if (!error.message?.includes("Network Error") && !error.message?.includes("temporarily unavailable")) {
                     toast({
                         title: "Presence Error",
-                        description: `Could not update online status.`, // More generic message
+                        description: `Could not update online status.`,
                         variant: "destructive",
                         duration: 5000,
                     });
@@ -166,9 +157,8 @@ export function ChatWindow() {
              }
         };
 
-        // --- Presence Logic ---
         const initialTimeoutId = setTimeout(() => updateUserPresence('initial'), 1500);
-        intervalId = setInterval(() => updateUserPresence('interval'), 4 * 60 * 1000); // 4 minutes
+        intervalId = setInterval(() => updateUserPresence('interval'), 4 * 60 * 1000);
 
         const handleFocus = () => {
             if (!isFocused) {
@@ -182,7 +172,6 @@ export function ChatWindow() {
 
         const handleBlur = async () => {
             isFocused = false;
-            // Update currentChatIdForCleanup when chatId changes
             currentChatIdForCleanup = chatId;
             if (user?.uid && currentChatIdForCleanup && dbInstance) {
                 try {
@@ -197,7 +186,7 @@ export function ChatWindow() {
             window.addEventListener('focus', handleFocus);
             window.addEventListener('blur', handleBlur);
         }
-        handleFocus(); // Initial focus check
+        handleFocus();
 
 
         return () => {
@@ -208,19 +197,15 @@ export function ChatWindow() {
                  window.removeEventListener('focus', handleFocus);
                  window.removeEventListener('blur', handleBlur);
              }
-             // Cleanup typing status on unmount using the captured chatId
               if (user?.uid && currentChatIdForCleanup && dbInstance) {
                   updateTypingStatus(currentChatIdForCleanup, user.uid, false)
                      .catch(err => console.error("Cleanup error for typing status:", err));
               }
          };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [user?.uid, chatId, toast, dbInstance]); // Add dbInstance to dependency array
+    }, [user?.uid, chatId, toast, dbInstance]);
 
 
-  // Fetch users from Firestore 'users' collection
   useEffect(() => {
-    // Ensure cleanup runs if dependencies change or component unmounts
     const unsubscribe = userListenerUnsubscribe.current;
     return () => {
       if (unsubscribe) {
@@ -229,24 +214,21 @@ export function ChatWindow() {
          userListenerUnsubscribe.current = null;
       }
     };
-  }, []); // Run cleanup only on unmount
+  }, []);
 
   useEffect(() => {
-    // Re-setup listener if dbInstance or user changes
     if (userListenerUnsubscribe.current) {
-        console.log("Cleaning up previous 'users' listener before new setup.");
         userListenerUnsubscribe.current();
         userListenerUnsubscribe.current = null;
     }
 
     if (!user || !dbInstance) {
       setUsers([]);
-      setLoadingUsers(!user || !dbInstance); // Loading if user or db is expected but not ready
+      setLoadingUsers(!user || !dbInstance);
       return;
     }
 
     setLoadingUsers(true);
-    console.log(`Setting up Firestore listener for 'users' collection, excluding self: ${user.uid}`);
     const usersQuery = query(collection(dbInstance, 'users'));
 
     userListenerUnsubscribe.current = onSnapshot(usersQuery, (snapshot) => {
@@ -255,7 +237,6 @@ export function ChatWindow() {
           const data = doc.data();
           const uid = data.uid;
           if (!uid || typeof uid !== 'string') {
-            console.warn("Fetched user document missing or invalid UID:", doc.id, data);
             return null;
           }
 
@@ -280,13 +261,18 @@ export function ChatWindow() {
             passwordChangeApproved: data.passwordChangeApproved ?? false,
           };
         })
-        .filter((u): u is UserProfile => u !== null && u.uid !== user.uid); // Exclude self and invalid docs
+        .filter((u): u is UserProfile => u !== null && u.uid !== user.uid);
 
       fetchedUsers.sort((a, b) => {
           const onlineA = isOnline(a.lastSeen);
           const onlineB = isOnline(b.lastSeen);
           if (onlineA && !onlineB) return -1;
           if (!onlineA && onlineB) return 1;
+          // Fallback to lastSeen if both online or both offline
+          const timeA = a.lastSeen instanceof Timestamp ? a.lastSeen.toMillis() : (a.lastSeen ? new Date(a.lastSeen).getTime() : 0);
+          const timeB = b.lastSeen instanceof Timestamp ? b.lastSeen.toMillis() : (b.lastSeen ? new Date(b.lastSeen).getTime() : 0);
+          if (timeA !== timeB) return timeB - timeA; // Newest first
+
           const nameA = (a.displayName || a.email || '').toLowerCase();
           const nameB = (b.displayName || b.email || '').toLowerCase();
           return nameA.localeCompare(nameB);
@@ -294,13 +280,11 @@ export function ChatWindow() {
 
       setUsers(fetchedUsers);
       setLoadingUsers(false);
-       console.log(`Firestore: Updated user list, count: ${fetchedUsers.length}`);
 
       if (selectedChatPartner) {
           const updatedPartner = fetchedUsers.find(u => u.uid === selectedChatPartner.uid);
           setSelectedChatPartner(updatedPartner || null);
           if (!updatedPartner) {
-              console.warn(`Selected chat partner ${selectedChatPartner.uid} not found in latest snapshot.`);
               setChatId(null);
               setReplyingToMessage(null);
           }
@@ -316,53 +300,42 @@ export function ChatWindow() {
         variant: "destructive",
       });
     });
-
-    // Return statement in useEffect is for cleanup, handled by the first useEffect now
-  }, [user, dbInstance, toast, selectedChatPartner?.uid]); // Add dbInstance
+  }, [user, dbInstance, toast, selectedChatPartner?.uid]);
 
 
-  // Fetch messages and listen to chat document for typing status
    useEffect(() => {
-     // Ensure cleanup runs if dependencies change or component unmounts
      const unsubscribeMessages = messageListenerUnsubscribe.current;
      const unsubscribeChatDoc = chatDocListenerUnsubscribe.current;
-     const chatIdForCleanup = chatId; // Capture chatId for cleanup
+     const chatIdForCleanup = chatId;
 
      return () => {
         if (unsubscribeMessages) {
-           console.log(`Cleaning up message listener for chat ${chatIdForCleanup}.`);
            unsubscribeMessages();
            messageListenerUnsubscribe.current = null;
         }
         if (unsubscribeChatDoc) {
-             console.log(`Cleaning up chat document listener for chat ${chatIdForCleanup}.`);
              unsubscribeChatDoc();
              chatDocListenerUnsubscribe.current = null;
         }
-         // Reset typing status when changing chats or unmounting
          if (user?.uid && chatIdForCleanup && dbInstance) {
               updateTypingStatus(chatIdForCleanup, user.uid, false).catch(err => console.error("Cleanup error for typing status:", err));
          }
       };
-   }, [chatId, user?.uid, dbInstance]); // Add dependencies chatId, user?.uid, dbInstance
+   }, [chatId, user?.uid, dbInstance]);
 
    useEffect(() => {
-    // Re-setup listeners if dependencies change
      if (messageListenerUnsubscribe.current) {
-        console.log("Cleaning up previous message listener before new setup.");
         messageListenerUnsubscribe.current();
         messageListenerUnsubscribe.current = null;
       }
       if (chatDocListenerUnsubscribe.current) {
-          console.log("Cleaning up previous chat document listener before new setup.");
           chatDocListenerUnsubscribe.current();
           chatDocListenerUnsubscribe.current = null;
       }
 
-    if (!user || !selectedChatPartner || !dbInstance || !chatId) { // Ensure chatId is also set
+    if (!user || !selectedChatPartner || !dbInstance || !chatId) {
         setMessages([]);
         setLoadingMessages(false);
-        // Do not set chatId to null here, let handleSelectUser manage it
         setIsPartnerTyping(false);
         setReplyingToMessage(null);
         setIsVideoButtonDisabled(true);
@@ -372,16 +345,12 @@ export function ChatWindow() {
 
     setLoadingMessages(true);
     isInitialMessagesLoadForScroll.current = true;
-    // chatId is now set by handleSelectUser
     setIsVideoButtonDisabled(false);
-    // Clear unread status handled in handleSelectUser
-
-     console.log(`Setting up listeners for chat: ${chatId}`);
 
     const messagesQuery = query(
       collection(dbInstance, 'chats', chatId, 'messages'),
       orderBy('timestamp', 'asc'),
-      limit(100) // Consider pagination
+      limit(100)
     );
 
     messageListenerUnsubscribe.current = onSnapshot(messagesQuery, (querySnapshot) => {
@@ -407,8 +376,7 @@ export function ChatWindow() {
                   console.warn("Skipping invalid message (missing timestamp or uid):", change.doc.id, data);
                   return;
                }
-               // Ensure some content exists
-               if (!data.text && !data.imageUrl && !data.audioUrl && !data.videoUrl && !data.fileUrl) { // Added fileUrl check
+               if (!data.text && !data.imageUrl && !data.audioUrl && !data.videoUrl && !data.fileUrl) {
                     console.warn("Skipping empty message:", change.doc.id, data);
                     return;
                }
@@ -422,6 +390,7 @@ export function ChatWindow() {
                   fileUrl: data.fileUrl ?? null,
                   fileName: data.fileName ?? null,
                   fileType: data.fileType ?? null,
+                  fileSize: data.fileSize ?? null,
                   timestamp: timestamp,
                   uid: data.uid,
                   displayName: data.displayName ?? null,
@@ -433,16 +402,14 @@ export function ChatWindow() {
                newMessagesBatch.push(message);
                newMessagesAdded = true;
 
-               // --- Unread Message & Notification Logic ---
                const isFromOtherUser = message.uid !== user?.uid;
                const isTabHidden = typeof document !== 'undefined' && document.hidden;
-               const isCurrentChatSelected = selectedChatPartner?.uid === message.uid; // Check if the current chat partner sent the message
+               const isCurrentChatSelected = selectedChatPartner?.uid === message.uid;
 
-               // Set unread status if message is from another user and the chat isn't currently selected OR tab is hidden
                 if (isFromOtherUser && (!isCurrentChatSelected || isTabHidden)) {
                      setHasUnreadMap(prevMap => {
                         const newMap = new Map(prevMap);
-                        if (!newMap.get(message.uid)) { // Only update if not already marked as unread
+                        if (!newMap.get(message.uid)) {
                              newMap.set(message.uid, true);
                              console.log(`Marked chat with user ${message.uid} as unread.`);
                         }
@@ -450,7 +417,6 @@ export function ChatWindow() {
                      });
                 }
 
-               // Notify if from other user, tab is hidden, and this specific chat is selected (or maybe just if tab is hidden?)
                if (isFromOtherUser && isTabHidden && hasNonPendingChanges) {
                      const notificationText = message.text ? (message.text.substring(0, 50) + (message.text.length > 50 ? '...' : ''))
                                             : message.imageUrl ? 'Sent an image'
@@ -468,7 +434,6 @@ export function ChatWindow() {
                          duration: 5000,
                      });
                }
-               // --- End Unread/Notification Logic ---
           }
        });
 
@@ -509,21 +474,18 @@ export function ChatWindow() {
         });
     });
 
-    // Listener for typing status
     const chatDocRef = doc(dbInstance, 'chats', chatId);
     chatDocListenerUnsubscribe.current = onSnapshot(chatDocRef, (docSnap) => {
         if (docSnap.exists()) {
             const chatData = docSnap.data() as Chat;
-            // Ensure selectedChatPartner is not null before accessing uid
             const partnerUid = selectedChatPartner?.uid;
             if (partnerUid) {
                  const partnerTyping = chatData.typing?.[partnerUid] ?? false;
                  setIsPartnerTyping(partnerTyping);
             } else {
-                setIsPartnerTyping(false); // Partner not selected, can't be typing
+                setIsPartnerTyping(false);
             }
         } else {
-            console.warn(`Chat document ${chatId} does not exist yet for typing listener.`);
             setIsPartnerTyping(false);
         }
     }, (error: FirestoreError) => {
@@ -531,29 +493,22 @@ export function ChatWindow() {
         setIsPartnerTyping(false);
         chatDocListenerUnsubscribe.current = null;
     });
-
-    // Return statement handled by the first useEffect for cleanup
-   }, [user, selectedChatPartner, dbInstance, chatId, toast, scrollToBottom]); // Add chatId here
+   }, [user, selectedChatPartner, dbInstance, chatId, toast, scrollToBottom]);
 
 
-  // Focus handling for notification title and unread status update
   useEffect(() => {
     const handleFocus = () => {
-        // Clear title notification
         const titlePrefix = '(*) ';
         if (typeof document !== 'undefined' && document.title.startsWith(titlePrefix)) {
             document.title = document.title.substring(titlePrefix.length);
         }
-        // Clear unread status for the currently selected chat partner when window gains focus
         if (selectedChatPartner?.uid) {
              setHasUnreadMap(prevMap => {
                  const newMap = new Map(prevMap);
-                 if (newMap.get(selectedChatPartner.uid)) { // Check if it was marked unread
+                 if (newMap.get(selectedChatPartner.uid)) {
                     newMap.set(selectedChatPartner.uid, false);
-                    console.log(`Cleared unread status for user ${selectedChatPartner.uid} on window focus.`);
-                    return newMap;
                  }
-                 return prevMap; // No change needed
+                 return newMap;
              });
         }
     };
@@ -561,21 +516,20 @@ export function ChatWindow() {
     if (typeof window !== 'undefined') {
         window.addEventListener('focus', handleFocus);
     }
-    handleFocus(); // Check on initial load too
+    handleFocus();
 
     return () => {
         if (typeof window !== 'undefined') {
             window.removeEventListener('focus', handleFocus);
         }
     };
-  }, [selectedChatPartner?.uid]); // Re-run if selected partner changes
+  }, [selectedChatPartner?.uid]);
 
 
   const handleSelectUser = useCallback(async (partner: UserProfile) => {
-     if (selectedChatPartner?.uid === partner.uid) return; // Do nothing if already selected
+     if (selectedChatPartner?.uid === partner.uid) return;
 
      if (!dbInstance || !user?.uid) {
-        console.error("Cannot select user: DB instance or current user UID missing.");
         toast({
             title: "Error",
             description: "Could not initialize chat. Database connection might be unavailable.",
@@ -584,7 +538,6 @@ export function ChatWindow() {
         return;
      }
 
-     // Reset typing status in the previous chat before switching
      if (chatId) {
         try {
             await updateTypingStatus(chatId, user.uid, false);
@@ -593,7 +546,6 @@ export function ChatWindow() {
         }
      }
 
-     // Update state for the new chat
      setSelectedChatPartner(partner);
      setMessages([]);
      setLoadingMessages(true);
@@ -602,21 +554,17 @@ export function ChatWindow() {
      setIsVideoButtonDisabled(true);
      isInitialMessagesLoadForScroll.current = true;
      const newChatId = getChatId(user.uid, partner.uid);
-     setChatId(newChatId); // Set the new chat ID state
-     setIsMobileSidebarOpen(false); // Close mobile sidebar on user selection
-     console.log(`Selected user ${partner.uid}, switching to chat ${newChatId}`);
+     setChatId(newChatId);
+     setIsMobileSidebarOpen(false);
 
-      // Clear unread status immediately on selection
        setHasUnreadMap(prevMap => {
            const newMap = new Map(prevMap);
            if (newMap.has(partner.uid)) {
                newMap.set(partner.uid, false);
-               console.log(`Cleared unread status for user ${partner.uid} on selection.`);
            }
            return newMap;
        });
 
-     // Ensure chat document exists
      const chatDocRef = doc(dbInstance, 'chats', newChatId);
      try {
         const chatDocSnap = await getDoc(chatDocRef);
@@ -624,23 +572,15 @@ export function ChatWindow() {
             await setDoc(chatDocRef, {
                 participants: [user.uid, partner.uid],
                 createdAt: serverTimestamp(),
-                typing: {} // Initialize typing map
+                typing: {}
             });
-             console.log(`Firestore: Created chat document ${newChatId}`);
         } else {
              const chatData = chatDocSnap.data();
-             // Ensure typing field exists, add if missing
              if (!chatData?.typing) {
-                 console.log(`Chat document ${newChatId} missing 'typing' field. Adding...`);
-                  try {
-                     await updateDoc(chatDocRef, { typing: {} }); // Add the typing field
-                 } catch (updateError) {
-                     console.error(`Error adding 'typing' field to chat ${newChatId}:`, updateError);
-                      // Handle error, maybe show toast
-                 }
+                 await updateDoc(chatDocRef, { typing: {} });
              }
         }
-        setIsVideoButtonDisabled(false); // Enable video button after ensuring doc exists
+        setIsVideoButtonDisabled(false);
      } catch (error) {
         console.error(`Error ensuring chat document ${newChatId} exists:`, error);
         toast({
@@ -650,7 +590,7 @@ export function ChatWindow() {
         });
         setIsVideoButtonDisabled(true);
      }
-  }, [selectedChatPartner?.uid, user?.uid, chatId, toast, dbInstance]); // Include chatId in dependencies
+  }, [selectedChatPartner?.uid, user?.uid, chatId, toast, dbInstance]);
 
 
    const filteredUsers = users.filter(u =>
@@ -666,7 +606,7 @@ export function ChatWindow() {
                         <CardTitle>Database Connection Error</CardTitle>
                     </CardHeader>
                     <CardContent>
-                        <p className="text-muted-foreground">Could not connect to the database. Please check your internet connection and configuration. Chat features are unavailable.</p>
+                        <p className="text-muted-foreground">Could not connect to the database. Chat features are unavailable.</p>
                     </CardContent>
                 </Card>
             </div>
@@ -674,47 +614,78 @@ export function ChatWindow() {
    }
 
 
-   // Sidebar Content Component
    const SidebarContent = () => (
      <>
-         <header className="flex items-center justify-between p-4 border-b min-h-[65px]">
-             <div className="flex items-center gap-2 overflow-hidden mr-2">
-                <Avatar className="h-8 w-8 flex-shrink-0">
-                    <AvatarImage src={user?.photoURL || undefined} alt={user?.displayName || 'My Avatar'} data-ai-hint="current user profile avatar"/>
-                    <AvatarFallback>{getInitials(user?.displayName || user?.email)}</AvatarFallback>
-                </Avatar>
-                <span className="font-semibold text-foreground truncate flex-1 min-w-0 text-sm">{user?.displayName || user?.email || 'User'}</span>
-             </div>
-            <Button variant="ghost" size="icon" onClick={signOut} aria-label="Sign out" className="flex-shrink-0 text-muted-foreground hover:text-destructive h-8 w-8">
-              <LogOut className="h-4 w-4" />
-            </Button>
+         <header className="flex items-center justify-between p-4 border-b min-h-[65px] bg-background">
+             <h1 className="text-lg font-semibold text-foreground truncate">
+                {user?.displayName || "Messages"}
+             </h1>
+             <div className="flex items-center gap-1">
+                <Button variant="ghost" size="icon" onClick={() => toast({ title: "New message action placeholder" })} aria-label="New message" className="text-muted-foreground hover:text-primary h-8 w-8">
+                    <Edit3 className="h-5 w-5" />
+                </Button>
+                <Button variant="ghost" size="icon" onClick={signOut} aria-label="Sign out" className="text-muted-foreground hover:text-destructive h-8 w-8">
+                    <LogOut className="h-5 w-5" />
+                </Button>
+            </div>
          </header>
+
+        <div className="p-3 border-b bg-background">
+            <div className="flex items-center gap-2">
+                <Button
+                    variant={activeFilter === 'messages' ? 'default' : 'ghost'}
+                    size="sm"
+                    onClick={() => setActiveFilter('messages')}
+                    className={cn("flex-1 rounded-full text-xs", activeFilter === 'messages' ? "bg-primary text-primary-foreground" : "text-muted-foreground")}
+                >
+                    Messages
+                </Button>
+                <Button
+                     variant={activeFilter === 'channels' ? 'default' : 'ghost'}
+                     size="sm"
+                     onClick={() => { setActiveFilter('channels'); toast({ title: "Channels coming soon!" }); }}
+                     className={cn("flex-1 rounded-full text-xs", activeFilter === 'channels' ? "bg-primary text-primary-foreground" : "text-muted-foreground")}
+                >
+                    Channels
+                </Button>
+                <Button
+                    variant={activeFilter === 'requests' ? 'default' : 'ghost'}
+                    size="sm"
+                    onClick={() => { setActiveFilter('requests'); toast({ title: "Requests coming soon!" }); }}
+                    className={cn("flex-1 rounded-full text-xs", activeFilter === 'requests' ? "bg-primary text-primary-foreground" : "text-muted-foreground")}
+                >
+                    Requests
+                </Button>
+            </div>
+        </div>
+
 
          <div className="p-3 border-b">
             <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                     type="search"
-                    placeholder="Search users..."
-                    className="pl-8 h-9 bg-muted/50 focus:bg-background"
+                    placeholder="Search messages..."
+                    className="pl-8 h-9 bg-muted/50 focus:bg-background text-sm"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    aria-label="Search for users to chat with"
+                    aria-label="Search for users or messages"
                 />
             </div>
          </div>
 
          <ScrollArea className="flex-1">
-            <div className="p-2 space-y-1">
+            <div className="p-2 space-y-0.5">
                  {loadingUsers && (
                      <div className="space-y-1 p-2">
-                        {[...Array(6)].map((_, i) => (
-                            <div key={i} className="flex items-center space-x-3 p-2 h-[52px]">
-                                <Skeleton className="h-8 w-8 rounded-full" />
+                        {[...Array(8)].map((_, i) => (
+                            <div key={i} className="flex items-center space-x-3 p-2.5 h-[60px]">
+                                <Skeleton className="h-10 w-10 rounded-full" />
                                 <div className="space-y-1.5 flex-1">
                                     <Skeleton className="h-4 w-3/4" />
                                     <Skeleton className="h-3 w-1/2" />
                                 </div>
+                                <Skeleton className="h-6 w-6 rounded-md" />
                             </div>
                         ))}
                      </div>
@@ -731,44 +702,54 @@ export function ChatWindow() {
                  )}
                  {!loadingUsers && filteredUsers.map((u) => {
                      const hasUnread = hasUnreadMap.get(u.uid) ?? false;
+                     const lastActivityText = isPartnerTyping && selectedChatPartner?.uid === u.uid
+                                            ? "typing..."
+                                            : (u.status || formatLastSeen(u.lastSeen)); // Show status or last seen
+                     // Placeholder for last message - this would require fetching last message for each chat
+                     const lastMessagePreview = "Last message placeholder...";
+                     const lastMessageTime = formatLastSeen(u.lastSeen); // Use lastSeen for now
+
                      return (
                          <Button
                             key={u.uid}
                             variant="ghost"
                             className={cn(
-                                "w-full justify-start h-auto py-2 px-3 text-left rounded-md",
+                                "w-full justify-start h-auto py-2.5 px-3 text-left rounded-md",
                                 "gap-3 items-center relative",
                                 selectedChatPartner?.uid === u.uid ? "bg-accent text-accent-foreground hover:bg-accent/90" : "hover:bg-muted/50",
-                                hasUnread && "font-semibold" // Make text bold if unread
                             )}
                             onClick={() => handleSelectUser(u)}
                             aria-pressed={selectedChatPartner?.uid === u.uid}
                         >
-                            {/* Online Status Indicator */}
-                            {isOnline(u.lastSeen) && (
-                                <span className="absolute left-1 top-1.5 block h-2.5 w-2.5 rounded-full bg-green-500 ring-2 ring-background" aria-label="Online"/>
-                            )}
-                             {/* Unread Message Indicator */}
-                             {hasUnread && (
-                                 <span className="absolute right-2 top-1/2 -translate-y-1/2 block h-2.5 w-2.5 rounded-full bg-primary" aria-label="Unread messages"/>
-                             )}
-                            <Avatar className="h-8 w-8 flex-shrink-0 ml-1">
-                                <AvatarImage src={u.photoURL || undefined} alt={u.displayName || 'User Avatar'} data-ai-hint="user chat list avatar"/>
-                                <AvatarFallback>{getInitials(u.displayName || u.email)}</AvatarFallback>
-                            </Avatar>
-                            <div className="flex flex-col flex-1 min-w-0">
-                                <span className="font-medium truncate text-sm">{u.displayName || u.email || 'Unnamed User'}</span>
-                                {!isOnline(u.lastSeen) && u.status && (
-                                    <span className="text-xs text-muted-foreground truncate italic">
-                                        {u.status}
-                                    </span>
+                            <div className="relative shrink-0">
+                                <Avatar className="h-10 w-10">
+                                    <AvatarImage src={u.photoURL || undefined} alt={u.displayName || 'User Avatar'} data-ai-hint="user chat list avatar"/>
+                                    <AvatarFallback>{getInitials(u.displayName || u.email)}</AvatarFallback>
+                                </Avatar>
+                                {isOnline(u.lastSeen) && (
+                                    <span className="absolute bottom-0 right-0 block h-3 w-3 rounded-full bg-green-500 ring-2 ring-background" aria-label="Online"/>
                                 )}
-                                 {!isOnline(u.lastSeen) && !u.status && u.lastSeen && (
-                                     <span className="text-xs text-muted-foreground truncate">
-                                         {formatLastSeen(u.lastSeen)}
-                                     </span>
-                                 )}
                             </div>
+                            <div className="flex flex-col flex-1 min-w-0">
+                                <div className="flex justify-between items-center">
+                                    <span className={cn("font-medium truncate text-sm", hasUnread && "font-bold text-foreground")}>
+                                        {u.displayName || u.email || 'Unnamed User'}
+                                    </span>
+                                    <span className={cn("text-xs text-muted-foreground ml-2 shrink-0", hasUnread && "text-primary font-semibold")}>
+                                        {lastMessageTime}
+                                    </span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <span className={cn("text-xs text-muted-foreground truncate", hasUnread && "text-foreground")}>
+                                        {/* Replace with actual last message logic if available */}
+                                        {isPartnerTyping && selectedChatPartner?.uid === u.uid ? <span className="text-primary italic">typing...</span> : lastMessagePreview}
+                                    </span>
+                                    {hasUnread && (
+                                         <CircleDot className="h-2.5 w-2.5 text-primary shrink-0" />
+                                    )}
+                                </div>
+                            </div>
+                             <Camera className="h-5 w-5 text-muted-foreground shrink-0 ml-1 opacity-70 group-hover:opacity-100" />
                         </Button>
                      );
                  })}
@@ -781,19 +762,14 @@ export function ChatWindow() {
   return (
     <>
     <div className="flex h-[calc(100vh-theme(spacing.14))] bg-secondary">
-        {/* Desktop Sidebar */}
-       <aside className="w-64 flex-col border-r bg-background shadow-md hidden md:flex">
+       <aside className="w-80 flex-col border-r bg-background shadow-md hidden md:flex"> {/* Wider sidebar */}
          <SidebarContent />
        </aside>
-
-        {/* Mobile Sidebar Trigger - Now part of the header in main content */}
-
 
        <main className="flex-1 flex flex-col bg-background">
             {selectedChatPartner ? (
                  <>
                  <header className="flex items-center gap-3 p-4 border-b shadow-sm bg-card min-h-[65px]">
-                    {/* Mobile Sidebar Trigger */}
                     <Sheet open={isMobileSidebarOpen} onOpenChange={setIsMobileSidebarOpen}>
                        <SheetTrigger asChild className="md:hidden mr-2">
                           <Button variant="ghost" size="icon">
@@ -801,14 +777,13 @@ export function ChatWindow() {
                              <span className="sr-only">Open User List</span>
                           </Button>
                        </SheetTrigger>
-                       <SheetContent side="left" className="p-0 w-72"> {/* Adjust width as needed */}
+                       <SheetContent side="left" className="p-0 w-80">
                           <div className="flex flex-col h-full">
                               <SidebarContent />
                           </div>
                        </SheetContent>
                     </Sheet>
 
-                    {/* Rest of the Header */}
                     <div className="relative">
                         <Avatar className="h-9 w-9">
                             <AvatarImage src={selectedChatPartner.photoURL || undefined} alt={selectedChatPartner.displayName || 'Chat partner avatar'} data-ai-hint="chat partner avatar"/>
@@ -818,21 +793,17 @@ export function ChatWindow() {
                             <span className="absolute bottom-0 right-0 block h-2.5 w-2.5 rounded-full bg-green-500 ring-2 ring-card border border-background" aria-label="Online"/>
                         )}
                     </div>
-                    <div className="flex flex-col flex-grow"> {/* Added flex-grow */}
+                    <div className="flex flex-col flex-grow">
                         <span className="font-semibold text-card-foreground">{selectedChatPartner.displayName || selectedChatPartner.email}</span>
                         <span className="text-xs text-muted-foreground">
-                           {isOnline(selectedChatPartner.lastSeen)
-                               ? (isPartnerTyping ? 'typing...' : (selectedChatPartner.status || 'Online'))
-                               : (selectedChatPartner.status || formatLastSeen(selectedChatPartner.lastSeen))
-                           }
+                           {isPartnerTyping ? <span className="italic text-primary">typing...</span> : (selectedChatPartner.status || formatLastSeen(selectedChatPartner.lastSeen))}
                         </span>
                     </div>
-                    {/* Video Call Button */}
                      <Button
                          variant="ghost"
                          size="icon"
                          onClick={() => setIsVideoModalOpen(true)}
-                         disabled={isVideoButtonDisabled || !dbInstance} // Also disable if DB is not ready
+                         disabled={isVideoButtonDisabled || !dbInstance}
                          aria-label="Start video call"
                          className="text-muted-foreground hover:text-primary"
                      >
@@ -842,8 +813,8 @@ export function ChatWindow() {
 
                 <div className="flex-1 overflow-hidden">
                     <ScrollArea className="h-full" ref={scrollAreaRef}>
-                        <div ref={viewportRef} className="h-full flex flex-col p-4 space-y-0.5"> {/* Reduce space-y for tighter messages */}
-                            <div className="flex-grow" /> {/* Pushes messages to bottom */}
+                        <div ref={viewportRef} className="h-full flex flex-col p-4 space-y-0.5">
+                            <div className="flex-grow" />
                             {loadingMessages && messages.length === 0 && (
                                 <div className="space-y-4 p-4">
                                     {[...Array(4)].map((_, i) => (
@@ -860,16 +831,16 @@ export function ChatWindow() {
                                     <p className="text-sm">Send a message to {selectedChatPartner.displayName || selectedChatPartner.email}.</p>
                                 </div>
                             )}
-                            <div className="pb-2"> {/* Reduce bottom padding */}
+                            <div className="pb-2">
                                 {messages.map((msg) => (
                                     <ChatMessage
                                         key={msg.id}
                                         message={msg}
-                                        onReply={() => handleSetReplyTo(msg)} // Pass reply handler
+                                        onReply={() => handleSetReplyTo(msg)}
                                      />
                                 ))}
                             </div>
-                            {isPartnerTyping && (
+                            {isPartnerTyping && !loadingMessages && (
                                 <div className="flex items-center gap-2 text-sm text-muted-foreground animate-pulse px-2 pb-1">
                                     <Avatar className="h-6 w-6 flex-shrink-0">
                                         <AvatarImage src={selectedChatPartner.photoURL || undefined} alt={selectedChatPartner.displayName || 'Typing avatar'} data-ai-hint="typing indicator avatar"/>
@@ -884,13 +855,12 @@ export function ChatWindow() {
 
                 <ChatInput
                     chatId={chatId}
-                    replyingTo={replyingToMessage} // Pass replyingTo state
-                    onClearReply={clearReply} // Pass clear reply handler
+                    replyingTo={replyingToMessage}
+                    onClearReply={clearReply}
                  />
                 </>
             ) : (
                  <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground p-8 bg-gradient-to-br from-background to-muted/30">
-                     {/* Mobile Sidebar Trigger (Visible only when no chat is selected) */}
                      <Sheet open={isMobileSidebarOpen} onOpenChange={setIsMobileSidebarOpen}>
                        <SheetTrigger asChild className="md:hidden absolute top-4 left-4">
                           <Button variant="ghost" size="icon">
@@ -898,21 +868,20 @@ export function ChatWindow() {
                              <span className="sr-only">Open User List</span>
                           </Button>
                        </SheetTrigger>
-                       <SheetContent side="left" className="p-0 w-72"> {/* Adjust width as needed */}
+                       <SheetContent side="left" className="p-0 w-80">
                            <div className="flex flex-col h-full">
                                <SidebarContent />
                            </div>
                        </SheetContent>
                      </Sheet>
 
-                    <Users className="h-16 w-16 mb-4 text-primary opacity-80" />
-                    <h2 className="text-xl font-semibold text-foreground mb-1">Select a Chat</h2>
-                    <p className="text-base mb-4 max-w-xs">Choose someone from the list on the left to start messaging.</p>
+                    <MessageSquare className="h-16 w-16 mb-4 text-primary opacity-70" />
+                    <h2 className="text-xl font-semibold text-foreground mb-1">Your Messages</h2>
+                    <p className="text-base mb-4 max-w-xs">Select a conversation or start a new one.</p>
                 </div>
             )}
        </main>
     </div>
-     {/* Video Call Modal */}
      {isVideoModalOpen && user && selectedChatPartner && chatId && (
         <VideoCallModal
             chatId={chatId}
