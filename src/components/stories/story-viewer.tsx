@@ -1,3 +1,4 @@
+
 "use client";
 
 import * as React from 'react';
@@ -17,26 +18,25 @@ import {
     AlertDialog,
     AlertDialogAction,
     AlertDialogCancel,
-    AlertDialogContent as AlertDialogPrimitiveContent, // Use Primitive Content for unstyled base
+    AlertDialogContent as AlertDialogPrimitiveContent, 
     AlertDialogDescription,
     AlertDialogFooter,
     AlertDialogHeader,
     AlertDialogTitle as AlertDialogTitleComponent,
     AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { CommentSection } from '@/components/posts/comment-section';
+import { CommentSection } from '@/components/posts/comment-section'; // Ensure this is imported
 
 interface StoryModalViewerProps {
-  userStories: PostSerializable[]; // Array of stories for the selected user
-  initialIndex?: number; // Which story to start with
-  currentUserId: string | null; // ID of the viewing user
-  onClose: () => void; // Function to close the modal
-  onDelete: (storyId: string) => void; // Function to call when a story is deleted
+  userStories: PostSerializable[]; 
+  initialIndex?: number; 
+  currentUserId: string | null; 
+  onClose: () => void; 
+  onDelete: (storyId: string) => void; 
 }
 
-const STORY_DURATION_SECONDS = 8; // Default duration for image stories
+const STORY_DURATION_SECONDS = 8; 
 
-// Format timestamp for stories (short relative time)
 const formatStoryTimestamp = (timestampISO: string | null | undefined): string => {
     if (!timestampISO) return 'just now';
     try {
@@ -59,11 +59,12 @@ export function StoryModalViewer({
   const [isMuted, setIsMuted] = React.useState(false);
   const [progress, setProgress] = React.useState(0);
   const [isDeleting, setIsDeleting] = React.useState(false);
-  const [showComments, setShowComments] = React.useState(false); // State for comments visibility
+  const [showComments, setShowComments] = React.useState(false);
 
-  const mediaRef = React.useRef<HTMLVideoElement | HTMLAudioElement | null>(null); // Can be video or audio
+  const mediaRef = React.useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
   const timerRef = React.useRef<NodeJS.Timeout | null>(null);
   const progressIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
+  const videoMediaRef = React.useRef<HTMLVideoElement>(null); // Specific ref for video element
 
   const { toast } = useToast();
   const activeStory = userStories[currentIndex];
@@ -73,14 +74,13 @@ export function StoryModalViewer({
   const resolvedVideoUrl = activeStory?.videoUrl ? resolveMediaUrl(activeStory.videoUrl) : undefined;
   const resolvedMusicUrl = activeStory ? resolveMediaUrl(activeStory.musicUrl) : undefined;
 
-  // --- Navigation ---
   const goToNextStory = React.useCallback(() => {
     setCurrentIndex((prevIndex) => {
       if (prevIndex < userStories.length - 1) {
-        setShowComments(false); // Hide comments when moving to next story
+        setShowComments(false); 
         return prevIndex + 1;
       }
-      onClose(); // Close modal if it's the last story
+      onClose(); 
       return prevIndex;
     });
   }, [userStories.length, onClose]);
@@ -89,19 +89,19 @@ export function StoryModalViewer({
     setCurrentIndex((prevIndex) => {
         const newIndex = Math.max(0, prevIndex - 1);
         if (newIndex !== prevIndex) {
-             setShowComments(false); // Hide comments when moving to previous story
+             setShowComments(false); 
         }
         return newIndex;
     });
   };
 
-  // --- Media & Progress Handling ---
   const stopMediaAndTimers = React.useCallback(() => {
-    // Pause media
     if (mediaRef.current) {
       mediaRef.current.pause();
     }
-    // Clear timers
+    if (videoMediaRef.current) { // Also pause video ref if it exists
+        videoMediaRef.current.pause();
+    }
     if (timerRef.current) {
       clearTimeout(timerRef.current);
       timerRef.current = null;
@@ -112,25 +112,24 @@ export function StoryModalViewer({
     }
   }, []);
 
-  // Mount/Unmount tracking
   const isMountedRef = React.useRef(true);
   React.useEffect(() => {
       isMountedRef.current = true;
       return () => {
           isMountedRef.current = false;
-          stopMediaAndTimers(); // Clean up timers on unmount
+          stopMediaAndTimers(); 
       };
   }, [stopMediaAndTimers]);
 
   const startProgress = React.useCallback((durationSeconds: number) => {
-    stopMediaAndTimers(); // Clear previous timers/intervals
+    stopMediaAndTimers(); 
     setProgress(0);
-    const intervalTime = 50; // Update progress roughly 20 times per second
+    const intervalTime = 50; 
     const totalSteps = (durationSeconds * 1000) / intervalTime;
     let currentStep = 0;
 
     progressIntervalRef.current = setInterval(() => {
-      if (isPaused || !isMountedRef.current || showComments) return; // Pause progress if comments are shown
+      if (isPaused || !isMountedRef.current || showComments) return; 
       currentStep++;
       const currentProgress = (currentStep / totalSteps) * 100;
       setProgress(currentProgress);
@@ -138,107 +137,119 @@ export function StoryModalViewer({
         goToNextStory();
       }
     }, intervalTime);
-  }, [stopMediaAndTimers, isPaused, goToNextStory, showComments]); // Add showComments dependency
+  }, [stopMediaAndTimers, isPaused, goToNextStory, showComments]);
 
- const handleMediaError = React.useCallback((e: Event) => {
-     const mediaElement = mediaRef.current;
+ const handleMediaError = React.useCallback((e: Event, type: 'video' | 'audio') => {
+     const mediaElement = type === 'video' ? videoMediaRef.current : mediaRef.current;
      const error = mediaElement?.error;
      console.error(
-       `Media Error Event: Code ${error?.code}, Message: ${error?.message}`,
-       e // Log the original event object too
+       `Media Error (${type}): Code ${error?.code}, Message: ${error?.message}`,
+       e 
      );
-     const elementType = mediaElement instanceof HTMLVideoElement ? 'video' : (mediaElement instanceof HTMLAudioElement ? 'audio' : 'media');
      toast({
          variant: "destructive",
-         title: "Media Error",
-         description: `Could not load story ${elementType}. ${error?.message || 'Check console for details.'}`
+         title: `${type.charAt(0).toUpperCase() + type.slice(1)} Error`,
+         description: `Could not load story ${type}. ${error?.message || 'Check console for details.'}`
      });
      if (isMountedRef.current) {
          setIsPaused(true);
-         setProgress(100); // Show progress as complete
+         setProgress(100); 
      }
      stopMediaAndTimers();
- }, [stopMediaAndTimers, toast, setIsPaused, setProgress]);
+ }, [stopMediaAndTimers, toast]);
 
   const handleMediaLoaded = React.useCallback(() => {
-    const mediaElement = mediaRef.current;
-    if (!mediaElement || !isMountedRef.current) return;
+    const currentMediaRef = resolvedVideoUrl ? videoMediaRef.current : mediaRef.current; // Prioritize video ref
+    if (!currentMediaRef || !isMountedRef.current) return;
 
-    if (activeStory?.musicUrl && mediaElement instanceof HTMLAudioElement) {
-         const startTime = activeStory.musicStartTime ?? 0;
-         mediaElement.currentTime = startTime;
-         console.log(`Audio starting at: ${startTime}s`);
-         if (activeStory.musicEndTime !== null && activeStory.musicEndTime > startTime) {
-             const durationToPlay = (activeStory.musicEndTime - startTime) * 1000;
-             if (timerRef.current) clearTimeout(timerRef.current);
-             timerRef.current = setTimeout(() => {
-                 if (!isPaused && isMountedRef.current) {
-                     console.log(`Audio reached end time: ${activeStory.musicEndTime}s. Advancing.`);
-                     goToNextStory();
-                 }
-             }, durationToPlay);
-              startProgress((activeStory.musicEndTime - startTime));
+    let duration = STORY_DURATION_SECONDS;
+
+    if (resolvedVideoUrl && currentMediaRef instanceof HTMLVideoElement && isFinite(currentMediaRef.duration)) {
+        duration = currentMediaRef.duration;
+        console.log(`Video story duration: ${duration}s`);
+    } else if (resolvedMusicUrl && currentMediaRef instanceof HTMLAudioElement) {
+         const startTime = activeStory?.musicStartTime ?? 0;
+         currentMediaRef.currentTime = startTime;
+         if (activeStory?.musicEndTime !== null && activeStory.musicEndTime > startTime && isFinite(activeStory.musicEndTime)) {
+             duration = activeStory.musicEndTime - startTime;
+         } else if (isFinite(currentMediaRef.duration)) {
+            const musicFullDuration = currentMediaRef.duration - startTime;
+            duration = musicFullDuration > 0 ? musicFullDuration : 0.1; // fallback if startTime is at or past duration
          } else {
-             if (isFinite(mediaElement.duration)) {
-                const remainingDuration = mediaElement.duration - startTime;
-                startProgress(remainingDuration > 0 ? remainingDuration : 0.1);
-             } else {
-                 console.warn("Audio duration is infinite/NaN, cannot use for progress.");
-                  startProgress(STORY_DURATION_SECONDS);
-             }
+             console.warn("Music duration is infinite/NaN, using default story duration.");
          }
-    } else if (mediaElement instanceof HTMLVideoElement && isFinite(mediaElement.duration)) {
-        startProgress(mediaElement.duration);
-    } else {
-        startProgress(STORY_DURATION_SECONDS);
+         console.log(`Music story, effective duration: ${duration}s`);
     }
-    mediaElement.play().catch(e => console.warn("Autoplay prevented:", e));
+    
+    startProgress(duration > 0 ? duration : STORY_DURATION_SECONDS); // Ensure duration is positive
+    currentMediaRef.play().catch(e => console.warn("Autoplay prevented:", e));
 
-  }, [activeStory, startProgress, isPaused, goToNextStory]);
+  }, [activeStory, startProgress, resolvedVideoUrl, resolvedMusicUrl]);
 
    React.useEffect(() => {
      stopMediaAndTimers();
      setProgress(0);
-     const mediaElement = mediaRef.current;
+     
+     const videoElement = videoMediaRef.current;
+     const audioElement = mediaRef.current as HTMLAudioElement | null; // Assuming mediaRef is for audio
 
-     if (mediaElement) {
-         const newSrc = resolvedVideoUrl || resolvedMusicUrl;
-         if (newSrc && mediaElement.currentSrc !== newSrc) {
-             mediaElement.src = newSrc;
-             mediaElement.load();
-         } else if (!newSrc && mediaElement.currentSrc) {
-              mediaElement.src = '';
+     // Setup video
+     if (videoElement && resolvedVideoUrl) {
+         if (videoElement.currentSrc !== resolvedVideoUrl) {
+             videoElement.src = resolvedVideoUrl;
+             videoElement.load();
          }
+         videoElement.muted = isMuted; // Video is muted if music is playing or globally muted
+         videoElement.loop = !resolvedMusicUrl; // Loop video if no separate music track
+         
+         videoElement.removeEventListener('loadedmetadata', handleMediaLoaded);
+         videoElement.removeEventListener('ended', goToNextStory);
+         videoElement.removeEventListener('play', () => { if (isMountedRef.current) setIsPaused(false) });
+         videoElement.removeEventListener('pause', () => { if (isMountedRef.current) setIsPaused(true) });
+         videoElement.removeEventListener('error', (e) => handleMediaError(e, 'video'));
 
-         mediaElement.muted = isMuted;
-         mediaElement.currentTime = activeStory?.musicStartTime ?? 0;
+         videoElement.addEventListener('loadedmetadata', handleMediaLoaded);
+         videoElement.addEventListener('ended', goToNextStory);
+         videoElement.addEventListener('play', () => { if (isMountedRef.current) setIsPaused(false) });
+         videoElement.addEventListener('pause', () => { if (isMountedRef.current) setIsPaused(true) });
+         videoElement.addEventListener('error', (e) => handleMediaError(e, 'video'));
+         
+         if (!showComments) videoElement.play().catch(e => console.warn("Video autoplay prevented:", e));
+         else videoElement.pause();
+     }
 
-         mediaElement.removeEventListener('loadedmetadata', handleMediaLoaded);
-         mediaElement.removeEventListener('ended', goToNextStory);
-         mediaElement.removeEventListener('play', () => {if (isMountedRef.current) setIsPaused(false)});
-         mediaElement.removeEventListener('pause', () => {if (isMountedRef.current) setIsPaused(true)});
-         mediaElement.removeEventListener('error', handleMediaError);
+     // Setup audio (if video is not primary or no video)
+     if (audioElement && resolvedMusicUrl && !resolvedVideoUrl) { // Only setup audio if no video
+         if (audioElement.currentSrc !== resolvedMusicUrl) {
+             audioElement.src = resolvedMusicUrl;
+             audioElement.load();
+         }
+         audioElement.muted = isMuted;
+         audioElement.currentTime = activeStory?.musicStartTime ?? 0;
+         audioElement.loop = activeStory?.musicEndTime === null;
 
-         mediaElement.addEventListener('loadedmetadata', handleMediaLoaded);
-         mediaElement.addEventListener('ended', goToNextStory);
-         mediaElement.addEventListener('play', () => {if (isMountedRef.current) setIsPaused(false)});
-         mediaElement.addEventListener('pause', () => {if (isMountedRef.current) setIsPaused(true)});
-         mediaElement.addEventListener('error', handleMediaError);
+         audioElement.removeEventListener('loadedmetadata', handleMediaLoaded);
+         audioElement.removeEventListener('ended', goToNextStory);
+         audioElement.removeEventListener('play', () => { if (isMountedRef.current) setIsPaused(false) });
+         audioElement.removeEventListener('pause', () => { if (isMountedRef.current) setIsPaused(true) });
+         audioElement.removeEventListener('error', (e) => handleMediaError(e, 'audio'));
 
-          if (!showComments) {
-             mediaElement.play().catch(e => console.warn("Autoplay prevented on story change:", e));
-          } else {
-             mediaElement.pause();
-             setIsPaused(true);
-          }
-     } else if (resolvedImageUrl) {
-          if (!showComments) {
-             startProgress(STORY_DURATION_SECONDS);
-          } else {
+         audioElement.addEventListener('loadedmetadata', handleMediaLoaded);
+         audioElement.addEventListener('ended', goToNextStory);
+         audioElement.addEventListener('play', () => { if (isMountedRef.current) setIsPaused(false) });
+         audioElement.addEventListener('pause', () => { if (isMountedRef.current) setIsPaused(true) });
+         audioElement.addEventListener('error', (e) => handleMediaError(e, 'audio'));
+
+         if (!showComments) audioElement.play().catch(e => console.warn("Audio autoplay prevented:", e));
+         else audioElement.pause();
+     } else if (resolvedImageUrl && !resolvedVideoUrl && !resolvedMusicUrl) { // Pure image story
+        if (!showComments) startProgress(STORY_DURATION_SECONDS);
+        else {
             stopMediaAndTimers();
             setIsPaused(true);
-          }
+        }
      }
+
 
    }, [currentIndex, activeStory, resolvedVideoUrl, resolvedMusicUrl, resolvedImageUrl, stopMediaAndTimers, handleMediaLoaded, startProgress, isMuted, goToNextStory, handleMediaError, showComments]);
 
@@ -246,6 +257,7 @@ export function StoryModalViewer({
   const handleInteractionStart = () => {
     if (!isPaused && !showComments) {
         setIsPaused(true);
+         if (videoMediaRef.current) videoMediaRef.current.pause();
          if (mediaRef.current) mediaRef.current.pause();
          if (timerRef.current) clearTimeout(timerRef.current);
          if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
@@ -255,34 +267,22 @@ export function StoryModalViewer({
   const handleInteractionEnd = () => {
     if (isPaused && !showComments) {
         setIsPaused(false);
-        if (mediaRef.current) mediaRef.current.play().catch(e => console.warn("Resume play prevented:", e));
-        const mediaElement = mediaRef.current;
-        let remainingDuration = STORY_DURATION_SECONDS;
-        let progressAlreadyElapsed = progress;
-
-        if (mediaElement && isFinite(mediaElement.duration)) {
-            const currentTime = mediaElement.currentTime;
-            const startTime = mediaElement instanceof HTMLAudioElement ? (activeStory?.musicStartTime ?? 0) : 0;
-            const endTime = (mediaElement instanceof HTMLAudioElement && activeStory?.musicEndTime !== null) ? activeStory.musicEndTime : mediaElement.duration;
-            const totalMediaDuration = endTime - startTime;
-
-            if (currentTime < endTime && totalMediaDuration > 0) {
-                remainingDuration = endTime - currentTime;
-                progressAlreadyElapsed = ((currentTime - startTime) / totalMediaDuration) * 100;
-            } else {
-                 goToNextStory();
-                 return;
-            }
+        const currentMediaElement = resolvedVideoUrl ? videoMediaRef.current : mediaRef.current;
+        if (currentMediaElement) currentMediaElement.play().catch(e => console.warn("Resume play prevented:", e));
+        
+        let durationForProgress = STORY_DURATION_SECONDS;
+        if (resolvedVideoUrl && videoMediaRef.current && isFinite(videoMediaRef.current.duration)) {
+            durationForProgress = videoMediaRef.current.duration - videoMediaRef.current.currentTime;
+        } else if (resolvedMusicUrl && mediaRef.current && mediaRef.current instanceof HTMLAudioElement && isFinite(mediaRef.current.duration)) {
+            const audioEl = mediaRef.current as HTMLAudioElement;
+            const startTime = activeStory?.musicStartTime ?? 0;
+            const endTime = activeStory?.musicEndTime ?? audioEl.duration;
+            durationForProgress = endTime - audioEl.currentTime;
+        } else if (resolvedImageUrl) {
+             const elapsedRatio = progress / 100;
+             durationForProgress = STORY_DURATION_SECONDS * (1 - elapsedRatio);
         }
-        const remainingDurationFromProgress = (durationSeconds: number) => (durationSeconds * (100 - progress)) / 100;
-        let resumeDuration = STORY_DURATION_SECONDS;
-        if (mediaElement && isFinite(mediaElement.duration)) {
-             const startTime = mediaElement instanceof HTMLAudioElement ? (activeStory?.musicStartTime ?? 0) : 0;
-             const endTime = (mediaElement instanceof HTMLAudioElement && activeStory?.musicEndTime !== null) ? activeStory.musicEndTime : mediaElement.duration;
-             resumeDuration = endTime - startTime;
-        }
-        const remainingSeconds = remainingDurationFromProgress(resumeDuration > 0 ? resumeDuration : STORY_DURATION_SECONDS);
-         startProgress(remainingSeconds > 0 ? remainingSeconds : 0.1);
+        startProgress(durationForProgress > 0 ? durationForProgress : 0.1);
     }
   };
 
@@ -290,9 +290,8 @@ export function StoryModalViewer({
   const handleDeleteClick = async () => {
     if (!activeStory || isDeleting || !isOwner) return;
     setIsDeleting(true);
-    handleInteractionStart(); // Pause story
+    handleInteractionStart(); 
     try {
-      // Call the delete service, ensuring currentUserId is passed correctly
       await deletePost(activeStory.id, currentUserId || '');
       toast({ title: "Story Deleted", description: "The story has been removed." });
       onDelete(activeStory.id);
@@ -309,7 +308,7 @@ export function StoryModalViewer({
     } catch (error: any) {
       console.error("Error deleting story:", error);
       toast({ title: "Delete Failed", description: error.message || "Could not delete the story.", variant: "destructive" });
-      handleInteractionEnd(); // Resume story on failure
+      handleInteractionEnd(); 
     } finally {
        if(isMountedRef.current) setIsDeleting(false);
     }
@@ -319,13 +318,14 @@ export function StoryModalViewer({
       e.stopPropagation();
       setShowComments(prev => {
            const nextState = !prev;
-           if (nextState) {
+           if (nextState) { // Comments are being shown
                setIsPaused(true);
+               if (videoMediaRef.current) videoMediaRef.current.pause();
                if (mediaRef.current) mediaRef.current.pause();
                if (timerRef.current) clearTimeout(timerRef.current);
                if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
-           } else {
-               handleInteractionEnd();
+           } else { // Comments are being hidden
+               handleInteractionEnd(); // Resume story playback
            }
            return nextState;
       });
@@ -339,7 +339,7 @@ export function StoryModalViewer({
   return (
       <Dialog open={true} onOpenChange={(open) => !open && onClose()}>
         <DialogContent
-            className="p-0 max-w-md w-[90vw] h-[85vh] border-0 shadow-2xl bg-black rounded-lg flex flex-col overflow-hidden"
+            className="p-0 max-w-md w-[90vw] h-[85vh] md:h-[80vh] md:w-[25vw] md:max-w-[400px] border-0 shadow-2xl bg-black rounded-lg flex flex-col overflow-hidden" // Medium size
              onInteractOutside={(e) => e.preventDefault()}
              onEscapeKeyDown={onClose}
         >
@@ -401,13 +401,13 @@ export function StoryModalViewer({
             <div className="flex-1 flex items-center justify-center overflow-hidden relative bg-gray-900">
               {resolvedVideoUrl ? (
                 <video
-                  ref={mediaRef as React.RefObject<HTMLVideoElement>}
+                  ref={videoMediaRef} // Use specific video ref
                   key={activeStory.id + '-video'}
                   src={resolvedVideoUrl}
                   className="max-w-full max-h-full object-contain pointer-events-none"
-                  muted={isMuted}
+                  muted={isMuted || !!resolvedMusicUrl} // Mute video if separate music is playing or globally muted
                   playsInline
-                  loop={!resolvedMusicUrl}
+                  loop={!resolvedMusicUrl} // Loop video only if no separate music track
                   preload="auto"
                 />
               ) : resolvedImageUrl ? (
@@ -427,7 +427,7 @@ export function StoryModalViewer({
                     <span>No media found for this story.</span>
                 </div>
               )}
-              {resolvedMusicUrl && (
+              {resolvedMusicUrl && !resolvedVideoUrl && ( // Only play separate music if no video
                    <audio
                        ref={mediaRef as React.RefObject<HTMLAudioElement>}
                        key={activeStory.id + '-music'}
@@ -436,11 +436,13 @@ export function StoryModalViewer({
                        loop={activeStory.musicEndTime === null}
                        playsInline
                        preload="auto"
+                       className="hidden" 
                    > Your browser does not support the audio element. </audio>
                )}
             </div>
 
              <div className="absolute bottom-0 left-0 right-0 p-3 flex items-center justify-between z-20 bg-gradient-to-t from-black/50 to-transparent">
+                {/* Mute button active if there's video OR music */}
                 {(resolvedVideoUrl || resolvedMusicUrl) ? (
                      <Button
                          variant="ghost"
@@ -469,15 +471,15 @@ export function StoryModalViewer({
                           <Button
                              variant="ghost"
                              size="icon"
-                             onClick={(e) => e.stopPropagation()} // Prevent pausing when clicking trigger
+                             onClick={(e) => e.stopPropagation()} 
                              className="text-red-400 hover:bg-red-500/20 hover:text-red-300"
                              aria-label="Delete story"
-                             disabled={isDeleting} // Disable trigger if already deleting
+                             disabled={isDeleting} 
                           >
                              <Trash2 className="w-5 h-5" />
                           </Button>
                        </AlertDialogTrigger>
-                       <AlertDialogPrimitiveContent onClick={(e) => e.stopPropagation()}> {/* Prevent pausing when clicking content */}
+                       <AlertDialogPrimitiveContent onClick={(e) => e.stopPropagation()}> 
                           <AlertDialogHeader>
                              <AlertDialogTitleComponent className="flex items-center gap-2">
                                 <AlertTriangle className="text-destructive"/> Delete this story?
@@ -485,11 +487,9 @@ export function StoryModalViewer({
                              <AlertDialogDescription>This action cannot be undone and will permanently remove your story.</AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>
-                             {/* Cancel button should stop propagation and possibly resume story */}
                              <AlertDialogCancel
                                 disabled={isDeleting}
                                 onClick={(e) => {e.stopPropagation(); handleInteractionEnd(); }}>Cancel</AlertDialogCancel>
-                             {/* Action button should stop propagation and call delete handler */}
                              <AlertDialogAction
                                 onClick={(e) => {e.stopPropagation(); handleDeleteClick();}}
                                 disabled={isDeleting}
@@ -501,7 +501,7 @@ export function StoryModalViewer({
                           </AlertDialogFooter>
                        </AlertDialogPrimitiveContent>
                     </AlertDialog>
-                 ) : <div />} {/* Placeholder if not owner */}
+                 ) : <div />} 
              </div>
 
              {!showComments && activeStory.text && (

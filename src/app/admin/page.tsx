@@ -8,7 +8,7 @@ import type { UserProfile, AdminMessage, User, PostSerializable, MusicPlaylistIt
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Loader2, ShieldAlert, CheckCircle, XCircle, UserCheck, UserX, BarChart2, Bell, Settings, ShieldCheck, Send, Ban, MessageSquare, Users as UsersIcon, User as UserIcon, Clapperboard, Trash2, Film, PlusCircle } from 'lucide-react'; // Removed Music, PlusCircle icons
+import { Loader2, ShieldAlert, CheckCircle, XCircle, UserCheck, UserX, BarChart2, Bell, Settings, ShieldCheck, Send, Ban, MessageSquare, Users as UsersIcon, User as UserIcon, Clapperboard, Trash2, Film, PlusCircle } from 'lucide-react'; 
 import { useToast } from '@/hooks/use-toast';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -43,9 +43,8 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { getPlatformConfig, updatePlatformCoreConfig } from '@/lib/config.service'; // Removed add/removeMusicTrack imports
+import { getPlatformConfig, updatePlatformCoreConfig } from '@/lib/config.service'; 
 
-// Helper to get initials
 const getInitials = (name: string | null | undefined): string => {
     if (!name) return '?';
     const nameParts = name.trim().split(' ').filter(part => part.length > 0);
@@ -57,18 +56,17 @@ const getInitials = (name: string | null | undefined): string => {
     return '?';
 };
 
-// Helper to safely format timestamp or ISO string
 const formatTimestamp = (timestamp: any): string => {
     if (!timestamp) return '';
     let date: Date | null = null;
     try {
         if (timestamp instanceof Date) {
             date = timestamp;
-        } else if (timestamp && typeof timestamp.toDate === 'function') { // Firestore Timestamp
+        } else if (timestamp && typeof timestamp.toDate === 'function') { 
             date = timestamp.toDate();
-        } else if (typeof timestamp === 'string') { // ISO string
+        } else if (typeof timestamp === 'string') { 
             date = parseISO(timestamp);
-        } else if (typeof timestamp === 'number') { // Unix timestamp (seconds or ms)
+        } else if (typeof timestamp === 'number') { 
             date = new Date(timestamp > 100000000000 ? timestamp : timestamp * 1000);
         }
 
@@ -84,7 +82,6 @@ const formatTimestamp = (timestamp: any): string => {
     }
 };
 
-// Story Preview Component (Simple version)
 const StoryPreview = ({ story, onDelete }: { story: PostSerializable; onDelete: (storyId: string) => void }) => {
     const [isDeleting, setIsDeleting] = React.useState(false);
     const { toast } = useToast();
@@ -92,7 +89,7 @@ const StoryPreview = ({ story, onDelete }: { story: PostSerializable; onDelete: 
      const handleDelete = async () => {
         setIsDeleting(true);
         try {
-            await deletePost(story.id, story.uid); // Pass story author UID for now - Needs admin override check in deletePost
+            await deletePost(story.id, story.uid); 
             toast({ title: "Story Deleted", description: "The story has been removed." });
             onDelete(story.id);
         } catch (error: any) {
@@ -112,7 +109,7 @@ const StoryPreview = ({ story, onDelete }: { story: PostSerializable; onDelete: 
                 <div className="min-w-0">
                     <p className="text-sm font-medium text-foreground truncate">{story.displayName || 'Unknown User'}</p>
                     <p className="text-xs text-muted-foreground truncate">
-                        {story.imageUrl ? 'Image Story' : (story.videoUrl ? 'Video Story' : 'Text Story?')} - {formatTimestamp(story.timestamp)}
+                        {story.videoUrl ? 'Video Story' : (story.imageUrl ? 'Image Story' : 'Text Story?')} - {formatTimestamp(story.timestamp)}
                     </p>
                      {story.text && <p className="text-xs text-muted-foreground italic truncate">{story.text}</p>}
                 </div>
@@ -155,132 +152,102 @@ export default function AdminPage() {
   const [loadingAnalytics, setLoadingAnalytics] = React.useState(true);
   const [dbInstance, setDbInstance] = React.useState<Firestore | null>(null);
 
-  // --- Notification States ---
   const [notificationMessage, setNotificationMessage] = React.useState('');
   const [isSendingNotification, setIsSendingNotification] = React.useState(false);
   const [notificationType, setNotificationType] = React.useState<'global' | 'targeted'>('global');
   const [targetUserId, setTargetUserId] = React.useState<string | undefined>(undefined);
   const [userList, setUserList] = React.useState<UserProfile[]>([]);
   const [loadingUserList, setLoadingUserList] = React.useState(false);
-  // --- End Notification States ---
 
-  // Config States
   const [allowEmoji, setAllowEmoji] = React.useState(true);
   const [allowFileUploads, setAllowFileUploads] = React.useState(true);
   const [isSavingSettings, setIsSavingSettings] = React.useState(false);
 
-  // Security States
   const [ipToBlock, setIpToBlock] = React.useState('');
   const [isBlockingIp, setIsBlockingIp] = React.useState(false);
-  const [blockReason, setBlockReason] = React.useState(''); // Optional reason
+  const [blockReason, setBlockReason] = React.useState(''); 
 
-  // Admin Messages State
   const [adminMessages, setAdminMessages] = React.useState<AdminMessage[]>([]);
   const [loadingAdminMessages, setLoadingAdminMessages] = React.useState(true);
   const [replyingToAdminMessage, setReplyingToAdminMessage] = React.useState<AdminMessage | null>(null);
   const [replyText, setReplyText] = React.useState('');
   const [isSendingReply, setIsSendingReply] = React.useState(false);
 
-  // Story Management State
   const [stories, setStories] = React.useState<PostSerializable[]>([]);
   const [loadingStories, setLoadingStories] = React.useState(true);
 
-  // Music Playlist State Removed - Playlist is predefined now
-  // const [musicPlaylist, setMusicPlaylist] = React.useState<MusicPlaylistItem[]>([]);
-  // const [loadingPlaylist, setLoadingPlaylist] = React.useState(true);
-  // const [newTrackTitle, setNewTrackTitle] = React.useState('');
-  // const [newTrackUrl, setNewTrackUrl] = React.useState('');
-  // const [isAddingTrack, setIsAddingTrack] = React.useState(false);
-  // const [deletingTrackId, setDeletingTrackId] = React.useState<string | null>(null);
-
   const { toast } = useToast();
-  const userListListenerUnsubscribeRef = React.useRef<Unsubscribe | null>(null); // Ref for user list listener
-  const adminMessagesListenerUnsubscribeRef = React.useRef<Unsubscribe | null>(null); // Ref for admin messages listener
+  const userListListenerUnsubscribeRef = React.useRef<Unsubscribe | null>(null); 
+  const adminMessagesListenerUnsubscribeRef = React.useRef<Unsubscribe | null>(null); 
 
-   // Initialize Firestore instance on mount
    React.useEffect(() => {
         try {
             const currentDb = getFirestore(app);
             setDbInstance(currentDb);
-            console.log("Firestore instance obtained successfully in AdminPage.");
         } catch (error) {
             console.error("🔴 Failed to get Firestore instance in AdminPage:", error);
             setError("Database connection failed. Admin features may be limited.");
-            setIsAdmin(false); // Assume not admin if DB fails
+            setIsAdmin(false); 
             setLoadingRequests(false);
             setLoadingAnalytics(false);
             setLoadingAdminMessages(false);
             setLoadingUserList(false);
             setLoadingStories(false);
-            // setLoadingPlaylist(false); // Remove playlist loading
         }
     }, []);
 
 
-  // Fetch admin status and data on mount and when user/db changes
   React.useEffect(() => {
-    if (authLoading || !dbInstance) { // Wait for auth and db
-      console.log("AdminPage: Waiting for auth or dbInstance.");
+    if (authLoading || !dbInstance) { 
       setIsAdmin(null);
       setLoadingRequests(true);
       setLoadingAnalytics(true);
       setLoadingAdminMessages(true);
       setLoadingUserList(true);
       setLoadingStories(true);
-      // setLoadingPlaylist(true); // Remove playlist loading
       setRequests([]);
       setOnlineUsers(null);
       setAdminMessages([]);
       setUserList([]);
       setStories([]);
-      // setMusicPlaylist([]); // Reset playlist removed
       return;
     }
     if (!user) {
-      console.log("AdminPage: No user logged in.");
       setIsAdmin(false);
       setLoadingRequests(false);
       setLoadingAnalytics(false);
       setLoadingAdminMessages(false);
       setLoadingUserList(false);
       setLoadingStories(false);
-      // setLoadingPlaylist(false); // Remove playlist loading
       setRequests([]);
       setError("Please log in to access the admin page.");
       setOnlineUsers(null);
       setAdminMessages([]);
       setUserList([]);
        setStories([]);
-       // setMusicPlaylist([]); // Reset playlist removed
       return;
     }
 
-    // Cleanup previous listeners if they exist
      if (userListListenerUnsubscribeRef.current) {
-        console.log("AdminPage: Cleaning up previous user list listener before new setup.");
         userListListenerUnsubscribeRef.current();
         userListListenerUnsubscribeRef.current = null;
      }
      if (adminMessagesListenerUnsubscribeRef.current) {
-        console.log("AdminPage: Cleaning up previous admin messages listener before new setup.");
         adminMessagesListenerUnsubscribeRef.current();
         adminMessagesListenerUnsubscribeRef.current = null;
      }
 
-    console.log("AdminPage: Checking admin status and fetching data...");
     const checkAdminAndFetchData = async (firestoreInstance: Firestore) => {
         setLoadingRequests(true);
         setLoadingAnalytics(true);
         setLoadingAdminMessages(true);
         setLoadingUserList(true);
         setLoadingStories(true);
-        // setLoadingPlaylist(true); // Remove playlist loading
         setError(null);
         setOnlineUsers(null);
         setAdminMessages([]);
         setUserList([]);
         setStories([]);
-        // setMusicPlaylist([]); // Reset playlist removed
 
         try {
              const profile = await getDoc(doc(firestoreInstance, 'users', user.uid));
@@ -288,17 +255,11 @@ export default function AdminPage() {
              setIsAdmin(isAdminUser);
 
              if (isAdminUser) {
-                 console.log("AdminPage: User is admin. Fetching data...");
-                // --- Fetch Data Concurrently ---
                 const requestsPromise = getPasswordChangeRequests(user.uid).catch(err => { console.error("Req Fetch Err:", err); throw err; });
                 const analyticsPromise = getOnlineUsersCount().catch(err => { console.error("Analytics Err:", err); throw err; });
                 const storiesPromise = fetchPosts(100).then(posts => posts.filter(p => p.type === 'story')).catch(err => { console.error("Stories Fetch Err:", err); throw err; });
-                 // Fetch Platform Config (excluding playlist now)
                  const configPromise = getPlatformConfig().catch(err => { console.error("Config Fetch Err:", err); throw err; });
 
-
-                 // --- Setup Admin Messages Listener ---
-                 console.log("AdminPage: Setting up admin messages listener.");
                  const messagesQuery = query(collection(firestoreInstance, 'adminMessages'), orderBy('timestamp', 'desc'), limit(50));
                  adminMessagesListenerUnsubscribeRef.current = onSnapshot(messagesQuery, (snapshot) => {
                       const fetchedMessages: AdminMessage[] = snapshot.docs.map(doc => {
@@ -325,40 +286,31 @@ export default function AdminPage() {
                       }).filter((msg): msg is AdminMessage => msg !== null);
                       setAdminMessages(fetchedMessages);
                       setLoadingAdminMessages(false);
-                      console.log(`Admin: Admin messages updated (${fetchedMessages.length} messages)`);
                  }, (error) => {
                      console.error("Error fetching admin messages:", error);
                      toast({ title: "Messages Error", description: "Could not load admin messages.", variant: "destructive" });
                      setAdminMessages([]); setLoadingAdminMessages(false); adminMessagesListenerUnsubscribeRef.current = null;
                  });
 
-
-                 // --- Setup User List Listener (for notifications) ---
-                 console.log("AdminPage: Setting up user list listener.");
                  const usersQuery = query(collection(firestoreInstance, 'users'), where('uid', '!=', user.uid));
                  userListListenerUnsubscribeRef.current = onSnapshot(usersQuery, (snapshot) => {
                      const fetchedUsers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as UserProfile))
                          .sort((a, b) => (a.displayName || a.email || '').localeCompare(b.displayName || b.email || ''));
                      setUserList(fetchedUsers);
                      setLoadingUserList(false);
-                     console.log(`Admin: User list updated (${fetchedUsers.length} users)`);
                  }, (error) => {
                      console.error("Error fetching user list for notifications:", error);
                      toast({ title: "User List Error", description: "Could not load users.", variant: "destructive" });
                      setUserList([]); setLoadingUserList(false); userListListenerUnsubscribeRef.current = null;
                  });
 
-                // Await results for non-listener fetches
                  try {
                       const [fetchedRequests, onlineCount, fetchedStories, platformConfig] = await Promise.all([requestsPromise, analyticsPromise, storiesPromise, configPromise]);
                       setRequests(fetchedRequests);
                       setOnlineUsers(onlineCount);
                       setStories(fetchedStories);
-                      // Set config states
                       setAllowEmoji(platformConfig.allowEmoji ?? true);
                       setAllowFileUploads(platformConfig.allowFileUploads ?? true);
-                      // Music playlist is no longer fetched/set here
-                      // setMusicPlaylist([{ id: 'none', title: "No Music", url: "none" }, ...(platformConfig.musicPlaylist || [])]);
 
                  } catch (batchError: any) {
                      console.error("Error fetching initial admin data batch:", batchError);
@@ -366,32 +318,27 @@ export default function AdminPage() {
                      if (!requests.length) setRequests([]);
                      if (onlineUsers === null) setOnlineUsers(0);
                      if (!stories.length) setStories([]);
-                     // Default playlist on error removed
-                     // if (!musicPlaylist.length) setMusicPlaylist([{ id: 'none', title: "No Music", url: "none" }]);
                  } finally {
                     setLoadingRequests(false);
                     setLoadingAnalytics(false);
                     setLoadingStories(false);
-                    // setLoadingPlaylist(false); // Remove playlist loading
                  }
 
              } else {
-                 console.log("AdminPage: User is not admin.");
                 setError("You do not have permission to access this page.");
-                setRequests([]); setOnlineUsers(null); setAdminMessages([]); setUserList([]); setStories([]); // setMusicPlaylist([]); removed
-                setLoadingRequests(false); setLoadingAnalytics(false); setLoadingAdminMessages(false); setLoadingUserList(false); setLoadingStories(false); // setLoadingPlaylist(false); removed
+                setRequests([]); setOnlineUsers(null); setAdminMessages([]); setUserList([]); setStories([]); 
+                setLoadingRequests(false); setLoadingAnalytics(false); setLoadingAdminMessages(false); setLoadingUserList(false); setLoadingStories(false); 
              }
         } catch (err: any) {
             console.error("Error checking admin status or fetching data:", err);
             setError(err.message || "Failed to load admin data.");
             setIsAdmin(false);
-            setRequests([]); setOnlineUsers(null); setAdminMessages([]); setUserList([]); setStories([]); // setMusicPlaylist([]); removed
-            setLoadingRequests(false); setLoadingAnalytics(false); setLoadingAdminMessages(false); setLoadingUserList(false); setLoadingStories(false); // setLoadingPlaylist(false); removed
+            setRequests([]); setOnlineUsers(null); setAdminMessages([]); setUserList([]); setStories([]); 
+            setLoadingRequests(false); setLoadingAnalytics(false); setLoadingAdminMessages(false); setLoadingUserList(false); setLoadingStories(false); 
         } finally {
              setLoadingUserList(false);
              setLoadingAdminMessages(false);
              setLoadingStories(false);
-             // setLoadingPlaylist(false); // Ensure playlist loading is false removed
         }
     };
 
@@ -405,9 +352,8 @@ export default function AdminPage() {
   }, [user, authLoading, dbInstance, toast]);
 
 
-   // Function to handle approving/denying requests
   const handleReview = async (targetUserId: string, approve: boolean) => {
-    if (!user || !isAdmin || processingUserId || !dbInstance) return; // Check dbInstance
+    if (!user || !isAdmin || processingUserId || !dbInstance) return; 
 
     setProcessingUserId(targetUserId);
     try {
@@ -425,7 +371,6 @@ export default function AdminPage() {
     }
   };
 
-   // Handle sending notifications (global or targeted)
    const handleSendNotification = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!user || !notificationMessage.trim() || isSendingNotification) return;
@@ -446,23 +391,18 @@ export default function AdminPage() {
                 const targetUserName = userList.find(u => u.uid === targetUserId)?.displayName || `user ${targetUserId}`;
                 toast({ title: 'Targeted Notification Sent', description: `Notification sent to ${targetUserName}.` });
             }
-             console.log(`Notification sent, Doc ID: ${resultId}`);
              setNotificationMessage(''); setTargetUserId(undefined); setNotificationType('global');
         } catch (error: any) {
-             console.error("Error sending notification:", error);
             toast({ title: 'Send Failed', description: error.message || 'Could not send the notification.', variant: 'destructive' });
         } finally {
             setIsSendingNotification(false);
         }
    };
 
-   // Handle saving settings
    const handleSaveSettings = async () => {
       setIsSavingSettings(true);
       try {
-          console.log("Saving settings:", { allowEmoji, allowFileUploads });
-          await updatePlatformCoreConfig({ allowEmoji, allowFileUploads }, user.uid); // Call real service
-          // await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate network delay removed
+          await updatePlatformCoreConfig({ allowEmoji, allowFileUploads }, user.uid); 
           toast({ title: 'Settings Saved' });
       } catch (error: any) {
           toast({ title: 'Save Failed', description: error.message, variant: 'destructive' });
@@ -471,7 +411,6 @@ export default function AdminPage() {
       }
    };
 
-   // Handle blocking IP address
    const handleBlockIp = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!user || !ipToBlock.trim() || isBlockingIp) return;
@@ -490,13 +429,11 @@ export default function AdminPage() {
         }
    };
 
-   // Handle sending reply to admin message
    const handleSendReply = async (e: React.FormEvent) => {
        e.preventDefault();
        if (!replyingToAdminMessage || !replyText.trim() || isSendingReply || !user) return;
 
        setIsSendingReply(true);
-       console.log(`Admin: Replying to message ${replyingToAdminMessage.id} from ${replyingToAdminMessage.senderUid}`);
        try {
            await sendAdminReply(replyingToAdminMessage.id, replyText.trim(), user.uid);
            toast({ title: 'Reply Sent Successfully' });
@@ -509,18 +446,10 @@ export default function AdminPage() {
        }
    };
 
-   // Handle story deletion from the list
    const handleStoryDeleted = (deletedStoryId: string) => {
         setStories(prevStories => prevStories.filter(story => story.id !== deletedStoryId));
    };
 
-   // --- Music Playlist Handlers Removed ---
-   // const handleAddMusicTrack = async (...) => { ... };
-   // const handleRemoveMusicTrack = async (...) => { ... };
-   // --- End Music Playlist Handlers Removed ---
-
-
-  // --- Render Logic ---
 
   if (authLoading || isAdmin === null || dbInstance === null) {
     return (
@@ -557,19 +486,16 @@ export default function AdminPage() {
         </div>
 
         <Tabs defaultValue="requests" className="w-full">
-           {/* Adjusted grid columns for fewer tabs */}
           <TabsList className="grid w-full grid-cols-3 sm:grid-cols-6 gap-1 mb-4 sm:mb-6">
             <TabsTrigger value="requests"><ShieldCheck className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Requests</TabsTrigger>
             <TabsTrigger value="analytics"><BarChart2 className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Analytics</TabsTrigger>
             <TabsTrigger value="messages"><MessageSquare className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Messages</TabsTrigger>
             <TabsTrigger value="stories"><Film className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Stories</TabsTrigger>
             <TabsTrigger value="notifications"><Bell className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Notifications</TabsTrigger>
-            {/* <TabsTrigger value="music"><Music className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Music</TabsTrigger> Removed Music Trigger */}
             <TabsTrigger value="settings"><Settings className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Settings</TabsTrigger>
             <TabsTrigger value="security"><ShieldAlert className="mr-1 sm:mr-2 h-4 w-4 inline-block"/> Security</TabsTrigger>
           </TabsList>
 
-          {/* Password Change Requests Tab */}
           <TabsContent value="requests">
             <Card className="shadow-lg mt-4 w-full">
               <CardHeader>
@@ -615,7 +541,6 @@ export default function AdminPage() {
             </Card>
           </TabsContent>
 
-          {/* Analytics Tab */}
            <TabsContent value="analytics">
               <Card className="shadow-lg mt-4 w-full">
                   <CardHeader> <CardTitle>Platform Analytics</CardTitle> <CardDescription>Overview of user activity.</CardDescription> </CardHeader>
@@ -633,7 +558,6 @@ export default function AdminPage() {
               </Card>
            </TabsContent>
 
-          {/* Messages Tab */}
            <TabsContent value="messages">
               <Card className="shadow-lg mt-4 w-full">
                    <CardHeader> <CardTitle>Admin Messages</CardTitle> <CardDescription>Messages sent to administrators.</CardDescription> </CardHeader>
@@ -677,7 +601,6 @@ export default function AdminPage() {
               </Card>
            </TabsContent>
 
-           {/* Stories Tab */}
            <TabsContent value="stories">
                <Card className="shadow-lg mt-4 w-full">
                    <CardHeader> <CardTitle>Manage Stories</CardTitle> <CardDescription>View and delete active user stories.</CardDescription> </CardHeader>
@@ -689,7 +612,6 @@ export default function AdminPage() {
                </Card>
            </TabsContent>
 
-           {/* Notifications Tab */}
            <TabsContent value="notifications">
               <Card className="shadow-lg mt-4 w-full">
                   <CardHeader> <CardTitle>Notifications & Announcements</CardTitle> <CardDescription>Send platform-wide or targeted notifications.</CardDescription> </CardHeader>
@@ -729,17 +651,6 @@ export default function AdminPage() {
               </Card>
            </TabsContent>
 
-           {/* Music Playlist Tab - Removed */}
-           {/*
-           <TabsContent value="music">
-               <Card className="shadow-lg mt-4 w-full">
-                    <CardHeader> <CardTitle>Manage Story Music</CardTitle> <CardDescription>Add or remove background music options for stories.</CardDescription> </CardHeader>
-                    <CardContent> Playlist Management UI Removed </CardContent>
-               </Card>
-           </TabsContent>
-           */}
-
-           {/* Settings Tab */}
            <TabsContent value="settings">
               <Card className="shadow-lg mt-4 w-full">
                   <CardHeader> <CardTitle>Platform Settings</CardTitle> <CardDescription>Configure chat features and platform behavior.</CardDescription> </CardHeader>
@@ -758,7 +669,6 @@ export default function AdminPage() {
               </Card>
            </TabsContent>
 
-           {/* Security Tab */}
            <TabsContent value="security">
               <Card className="shadow-lg mt-4 w-full">
                   <CardHeader> <CardTitle>Security & Access Control</CardTitle> <CardDescription>Manage platform security.</CardDescription> </CardHeader>
