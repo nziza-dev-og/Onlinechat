@@ -9,7 +9,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Loader2, Frown, BookOpen, Image as ImageIcon } from 'lucide-react'; // Changed Film to BookOpen or ImageIcon
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card'; // Added CardFooter
 import { Separator } from '@/components/ui/separator';
 import { StoryPreviewCard, StoryPreviewCardSkeleton } from '@/components/stories/story-preview-card';
 import { StoryModalViewer } from '@/components/stories/story-viewer';
@@ -304,3 +304,4 @@ export default function FeedPage() {
     </>
   );
 }
+
