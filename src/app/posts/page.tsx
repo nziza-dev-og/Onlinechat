@@ -10,9 +10,9 @@ import { useAuth } from '@/hooks/use-auth';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Loader2, MessageSquarePlus, Frown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'; // Corrected import
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import { AnimatePresence } from 'framer-motion'; // Import for exit animations
+import { AnimatePresence } from 'framer-motion';
 
 export default function PostsPage() {
   const [posts, setPosts] = React.useState<PostSerializable[]>([]);
@@ -87,7 +87,6 @@ export default function PostsPage() {
     };
 
    const handlePostDeleted = (postId: string) => {
-       console.log(`Optimistically removing post ${postId} from UI.`);
        setPosts(prevPosts => prevPosts.filter(post => post.id !== postId));
    };
 
@@ -204,3 +203,5 @@ export default function PostsPage() {
     </div>
   );
 }
+
+    

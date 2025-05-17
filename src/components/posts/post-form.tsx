@@ -65,6 +65,7 @@ export function PostForm({ onPostAdded }: PostFormProps) {
         text: data.text?.trim() || null,
         imageUrl: data.imageUrl?.trim() || null,
         videoUrl: data.videoUrl?.trim() || null,
+        type: 'post', // Explicitly set type as 'post'
     };
 
 
@@ -81,7 +82,8 @@ export function PostForm({ onPostAdded }: PostFormProps) {
        const tempPost: Post = {
            id: postId, // Use the returned ID
            ...postInput,
-           timestamp: new Date() // Use client date as placeholder
+           timestamp: new Date(), // Use client date as placeholder
+           type: 'post', // Ensure type is 'post'
        };
        onPostAdded?.(tempPost); // Call the callback if provided
 
@@ -178,3 +180,5 @@ export function PostForm({ onPostAdded }: PostFormProps) {
     </Card>
   );
 }
+
+    

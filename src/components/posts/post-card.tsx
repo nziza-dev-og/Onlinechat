@@ -187,7 +187,7 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
                              <AlertDialogAction
                                 onClick={handleDelete}
                                 disabled={isDeleting}
-                                className={cn(buttonVariants({ variant: "destructive" }))} // Use cn with buttonVariants
+                                className={cn(buttonVariants({ variant: "destructive" }))} 
                             >
                                 {isDeleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                                 Delete Post
@@ -206,7 +206,7 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
              {resolvedImageUrl && (
                <div className="relative aspect-video w-full rounded-lg overflow-hidden border shadow-inner">
                  <Image
-                   src={resolvedImageUrl} // Use resolved URL
+                   src={resolvedImageUrl} 
                    alt={post.text ? `Image for post: ${post.text.substring(0,30)}...` : "Post image"}
                    fill
                    style={{ objectFit: 'cover' }}
@@ -220,7 +220,7 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
              {resolvedVideoUrl && (
                 <div className="aspect-video w-full rounded-lg overflow-hidden border bg-black shadow-inner">
                      <video
-                        src={resolvedVideoUrl} // Use resolved URL
+                        src={resolvedVideoUrl} 
                         controls
                         className="w-full h-full object-contain bg-black"
                         preload="metadata"
@@ -294,3 +294,5 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
      </motion.div>
   );
 }
+
+    
