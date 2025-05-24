@@ -77,7 +77,7 @@ export const addPost = async (postData: PostInput): Promise<string> => {
     const isStory = postData.type === 'story';
     const extractedTags = extractHashtags(postData.text);
 
-    const dataToSave: Omit<Post, 'id' | 'timestamp'> & { timestamp: any, saveCount?: number, savedBy?: string[] } = { // Ensure Post type is used for consistency before serverTimestamp
+    const dataToSave: Omit<Post, 'id' | 'timestamp'> & { timestamp: any, saveCount?: number, savedBy?: string[] } = {
       uid: postData.uid,
       displayName: postData.displayName,
       photoURL: postData.photoURL,
@@ -93,8 +93,8 @@ export const addPost = async (postData: PostInput): Promise<string> => {
       likeCount: 0,
       likedBy: [],
       commentCount: 0,
-      saveCount: 0, // Initialize saveCount
-      savedBy: [],  // Initialize savedBy
+      saveCount: 0,
+      savedBy: [],
     };
     const newPostDocRef = await addDoc(postsCollectionRef, dataToSave);
     console.log(`Firestore: Post created with ID: ${newPostDocRef.id}, Type: ${dataToSave.type}, Tags: ${dataToSave.tags.join(', ')}`);
@@ -113,8 +113,6 @@ export const fetchPosts = async (count: number = 50): Promise<PostSerializable[]
   }
 
   try {
-    const twentyFourHoursAgo = new Timestamp(Math.floor(Date.now() / 1000) - (24 * 60 * 60), 0);
-
     const postsQuery = query(
       collection(db, 'posts'),
       orderBy('timestamp', 'desc'),
@@ -130,10 +128,14 @@ export const fetchPosts = async (count: number = 50): Promise<PostSerializable[]
            console.warn("Skipping invalid post document (missing uid or timestamp):", doc.id, data);
            return null;
          }
-         // For stories, filter out those older than 24 hours
-         if (data.type === 'story' && data.timestamp.toMillis() < twentyFourHoursAgo.toMillis()) {
-           console.log(`Filtering out old story: ${doc.id}`);
-           return null;
+         // Client-side filtering for stories older than 24 hours
+         if (data.type === 'story') {
+             const storyTimestamp = data.timestamp.toMillis();
+             const twentyFourHoursAgo = Date.now() - (24 * 60 * 60 * 1000);
+             if (storyTimestamp < twentyFourHoursAgo) {
+                 console.log(`Client-side filtering out old story: ${doc.id}`);
+                 return null;
+             }
          }
         return {
           id: doc.id,
@@ -260,7 +262,6 @@ export const deletePost = async (postId: string, userId: string): Promise<void> 
              throw new Error("Post not found.");
         }
         const postData = postSnap.data();
-        // User can delete their own post OR an admin can delete any post
         if (postData?.uid !== userId) {
             const adminUserRef = doc(db, 'users', userId);
             const adminSnap = await getDoc(adminUserRef);
@@ -326,9 +327,6 @@ export const fetchComments = async (postId: string, count: number = 100): Promis
     }
 };
 
-/**
- * Saves a post for a user.
- */
 export const savePost = async (postId: string, userId: string): Promise<void> => {
     if (!db) throw new Error("Database service not available.");
     if (!postId || !userId) throw new Error("Post ID and User ID are required.");
@@ -347,9 +345,6 @@ export const savePost = async (postId: string, userId: string): Promise<void> =>
     }
 };
 
-/**
- * Unsaves a post for a user.
- */
 export const unsavePost = async (postId: string, userId: string): Promise<void> => {
     if (!db) throw new Error("Database service not available.");
     if (!postId || !userId) throw new Error("Post ID and User ID are required.");
@@ -368,3 +363,71 @@ export const unsavePost = async (postId: string, userId: string): Promise<void> 
     }
 };
 
+/**
+ * Fetches all posts saved by a specific user.
+ * @param userId - The UID of the user whose saved posts are to be fetched.
+ * @returns Promise<PostSerializable[]> - Array of saved posts with serializable timestamps.
+ * @throws Error if db is not initialized or fetch fails.
+ */
+export const fetchSavedPosts = async (userId: string): Promise<PostSerializable[]> => {
+    if (!db) {
+        console.error("🔴 fetchSavedPosts Error: Firestore (db) not available.");
+        throw new Error("Database service not available.");
+    }
+    if (!userId) {
+        throw new Error("User ID is required to fetch saved posts.");
+    }
+
+    try {
+        const postsQuery = query(
+            collection(db, 'posts'),
+            where('savedBy', 'array-contains', userId),
+            orderBy('timestamp', 'desc') // Or order by a 'savedAt' timestamp if you add that
+        );
+
+        const querySnapshot = await getDocs(postsQuery);
+        const savedPosts: PostSerializable[] = querySnapshot.docs.map(doc => {
+            const data = doc.data();
+            if (!data.uid || !(data.timestamp instanceof Timestamp)) {
+                console.warn("Skipping invalid saved post document:", doc.id, data);
+                return null;
+            }
+             // Client-side filtering for stories older than 24 hours
+             if (data.type === 'story') {
+                const storyTimestamp = data.timestamp.toMillis();
+                const twentyFourHoursAgo = Date.now() - (24 * 60 * 60 * 1000);
+                if (storyTimestamp < twentyFourHoursAgo) {
+                    return null; // Don't include old stories even if saved
+                }
+            }
+            return {
+                id: doc.id,
+                uid: data.uid,
+                displayName: data.displayName ?? null,
+                photoURL: data.photoURL ?? null,
+                text: data.text ?? null,
+                imageUrl: data.imageUrl ?? null,
+                videoUrl: data.videoUrl ?? null,
+                musicUrl: data.musicUrl ?? null,
+                musicStartTime: data.musicStartTime ?? null,
+                musicEndTime: data.musicEndTime ?? null,
+                type: data.type || 'post',
+                tags: data.tags ?? [],
+                timestamp: data.timestamp.toDate().toISOString(),
+                likeCount: data.likeCount ?? 0,
+                likedBy: data.likedBy ?? [],
+                commentCount: data.commentCount ?? 0,
+                saveCount: data.saveCount ?? 0,
+                savedBy: data.savedBy ?? [],
+            };
+        }).filter((post): post is PostSerializable => post !== null);
+
+        console.log(`Firestore: Fetched ${savedPosts.length} saved posts for user ${userId}.`);
+        return savedPosts;
+
+    } catch (error: any) {
+        const detailedErrorMessage = `Failed to fetch saved posts for user ${userId}. Error: ${error.message || 'Unknown Firestore error'}${error.code ? ` (Code: ${error.code})` : ''}`;
+        console.error("🔴 Detailed Firestore Error:", detailedErrorMessage, error);
+        throw new Error(detailedErrorMessage);
+    }
+};
