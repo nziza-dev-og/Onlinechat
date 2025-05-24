@@ -63,6 +63,8 @@ export interface Post {
     likeCount?: number; // Number of likes
     likedBy?: string[]; // Array of UIDs who liked the post
     commentCount?: number; // Number of comments
+    saveCount?: number; // Number of saves
+    savedBy?: string[]; // Array of UIDs who saved the post
 }
 
 // New Post type with serializable timestamp for passing to Client Components
@@ -84,6 +86,8 @@ export interface PostSerializable {
     likeCount?: number;
     likedBy?: string[];
     commentCount?: number;
+    saveCount?: number; // Number of saves
+    savedBy?: string[]; // Array of UIDs who saved the post
 }
 
 // Interface representing the structure of the main chat document in Firestore (`chats/{chatId}`)

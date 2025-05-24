@@ -5,13 +5,13 @@ import * as React from 'react';
 import type { PostSerializable } from '@/types';
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"; // Removed CardTitle
 import Image from 'next/image';
-import { cn, resolveMediaUrl, getInitials, getYouTubeVideoId } from '@/lib/utils'; // Added getYouTubeVideoId
-import { Heart, MessageCircle, Send, Bookmark, Trash2, AlertTriangle, Loader2, MoreHorizontal } from 'lucide-react';
+import { cn, resolveMediaUrl, getInitials, getYouTubeVideoId } from '@/lib/utils';
+import { Heart, MessageCircle, Send, Bookmark, Trash2, AlertTriangle, Loader2, MoreHorizontal, Link as LinkIcon } from 'lucide-react'; // Added LinkIcon
 import { Button, buttonVariants } from '@/components/ui/button';
 import { useAuth } from '@/hooks/use-auth';
-import { likePost, unlikePost, deletePost } from '@/lib/posts.service';
+import { likePost, unlikePost, deletePost, savePost, unsavePost } from '@/lib/posts.service'; // Added savePost, unsavePost
 import { useToast } from '@/hooks/use-toast';
 import { motion, AnimatePresence } from "framer-motion";
 import { CommentSection } from './comment-section';
@@ -33,11 +33,13 @@ interface PostCardProps {
   onLikeChange?: (postId: string, liked: boolean, newLikeCount: number) => void;
   onCommentAdded?: (postId: string, newCommentCount: number) => void;
   onPostDeleted?: (postId: string) => void;
+  // Add onSaveChange if needed by parent for optimistic updates
+  onSaveChange?: (postId: string, saved: boolean, newSaveCount: number) => void;
 }
 
 const formatTimestampForPost = (timestampISO: string | null | undefined): string => {
     if (!timestampISO) {
-        return 'JUST NOW'; 
+        return 'JUST NOW';
     }
     try {
         const date = parseISO(timestampISO);
@@ -73,12 +75,15 @@ const renderTextWithTags = (text: string | null | undefined) => {
 };
 
 
-export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: PostCardProps) {
+export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted, onSaveChange }: PostCardProps) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [isLiked, setIsLiked] = React.useState(post.likedBy?.includes(user?.uid ?? '') ?? false);
   const [likeCount, setLikeCount] = React.useState(post.likeCount ?? 0);
   const [isLiking, setIsLiking] = React.useState(false);
+  const [isSaved, setIsSaved] = React.useState(post.savedBy?.includes(user?.uid ?? '') ?? false); // New state for saved
+  const [saveCount, setSaveCount] = React.useState(post.saveCount ?? 0); // New state for save count
+  const [isSaving, setIsSaving] = React.useState(false); // New state for saving action
   const [isDeleting, setIsDeleting] = React.useState(false);
   const [showComments, setShowComments] = React.useState(false);
   const [currentCommentCount, setCurrentCommentCount] = React.useState(post.commentCount ?? 0);
@@ -87,13 +92,15 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
 
   const resolvedImageUrl = resolveMediaUrl(post.imageUrl);
   const resolvedVideoUrl = resolveMediaUrl(post.videoUrl);
-  const youtubeVideoId = getYouTubeVideoId(resolvedVideoUrl); // Get YouTube ID
+  const youtubeVideoId = getYouTubeVideoId(resolvedVideoUrl);
 
   React.useEffect(() => {
      setIsLiked(post.likedBy?.includes(user?.uid ?? '') ?? false);
      setLikeCount(post.likeCount ?? 0);
      setCurrentCommentCount(post.commentCount ?? 0);
-  }, [post.likedBy, post.likeCount, post.commentCount, user?.uid]);
+     setIsSaved(post.savedBy?.includes(user?.uid ?? '') ?? false);
+     setSaveCount(post.saveCount ?? 0);
+  }, [post.likedBy, post.likeCount, post.commentCount, post.savedBy, post.saveCount, user?.uid]);
 
   const handleLikeToggle = async () => {
     if (!user || isLiking) return;
@@ -127,22 +134,90 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
     }
   };
 
+  const handleSaveToggle = async () => {
+    if (!user || isSaving) return;
+    setIsSaving(true);
+    const currentlySaved = isSaved;
+    const newSaveState = !currentlySaved;
+    const newSaveCount = currentlySaved ? saveCount - 1 : saveCount + 1;
+
+    setIsSaved(newSaveState);
+    setSaveCount(newSaveCount);
+    onSaveChange?.(post.id, newSaveState, newSaveCount);
+
+    try {
+      if (newSaveState) {
+        await savePost(post.id, user.uid);
+        toast({ title: "Post Saved!" });
+      } else {
+        await unsavePost(post.id, user.uid);
+        toast({ title: "Post Unsaved" });
+      }
+    } catch (error: any) {
+      console.error("Error saving/unsaving post:", error);
+      toast({
+        title: "Error",
+        description: `Could not ${currentlySaved ? 'unsave' : 'save'} post. ${error.message}`,
+        variant: "destructive",
+      });
+      setIsSaved(currentlySaved);
+      setSaveCount(currentlySaved ? newSaveCount + 1 : newSaveCount - 1);
+      onSaveChange?.(post.id, currentlySaved, currentlySaved ? newSaveCount + 1 : newSaveCount - 1);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleShare = async () => {
+    const postUrl = `${window.location.origin}/posts/${post.id}`; // Basic URL, assumes post page exists
+    const shareData = {
+      title: `Check out this post by ${post.displayName || 'a user'}!`,
+      text: post.text ? `${post.text.substring(0, 100)}...` : `Post by ${post.displayName || 'a user'}`,
+      url: postUrl,
+    };
+
+    if (navigator.share) {
+      try {
+        await navigator.share(shareData);
+        toast({ title: "Shared successfully!" });
+      } catch (error) {
+        console.error("Error sharing:", error);
+        // If share fails (e.g., user cancels), copy link as fallback
+        navigator.clipboard.writeText(postUrl)
+          .then(() => toast({ title: "Link Copied!", description: "Share dialog closed, link copied to clipboard." }))
+          .catch(() => toast({ title: "Share Failed", description: "Could not share or copy link.", variant: "destructive" }));
+      }
+    } else {
+      // Fallback to copying the link
+      navigator.clipboard.writeText(postUrl)
+        .then(() => toast({ title: "Link Copied!", description: "Post link copied to clipboard." }))
+        .catch(() => toast({ title: "Copy Failed", description: "Could not copy link.", variant: "destructive" }));
+    }
+  };
+
+
   const handleDelete = async () => {
      if (!isOwner || isDeleting) return;
      setIsDeleting(true);
-     onPostDeleted?.(post.id);
-
+     // Optimistic UI update for parent, parent will handle removing from its state
+     // No direct state update here to avoid conflicts if parent also manages this
      try {
-         await deletePost(post.id, user.uid);
+         await deletePost(post.id, user.uid); // user.uid required for auth check
          toast({ title: "Post Deleted", description: "Your post has been successfully removed." });
-     } catch (error: any) {
+         if (onPostDeleted) { // Check if onPostDeleted is provided before calling
+            onPostDeleted(post.id);
+         }
+     } catch (error: any)
+{
          console.error("Error deleting post:", error);
          toast({
              title: "Deletion Failed",
              description: error.message || "Could not delete the post. Please try again.",
              variant: "destructive",
          });
-         setIsDeleting(false);
+         // No need to revert optimistic update here if parent handles it
+     } finally {
+        setIsDeleting(false);
      }
   };
 
@@ -152,8 +227,8 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
   };
 
   const handleCommentAddedInternal = (postId: string, newTotalComments: number) => {
-      setCurrentCommentCount(newTotalComments); 
-      onCommentAdded?.(postId, newTotalComments); 
+      setCurrentCommentCount(newTotalComments);
+      onCommentAdded?.(postId, newTotalComments);
   };
 
 
@@ -214,14 +289,14 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
                     </AlertDialogContent>
                  </AlertDialog>
              )}
-             {!isOwner && ( 
+             {!isOwner && (
                 <Button variant="ghost" size="icon" className="text-muted-foreground h-7 w-7 sm:h-8 sm:w-8 invisible">
                     <MoreHorizontal className="h-4 w-4 sm:h-5 sm:w-5" />
                 </Button>
              )}
           </CardHeader>
 
-          { (resolvedImageUrl || resolvedVideoUrl) && (
+          { (resolvedImageUrl || resolvedVideoUrl || youtubeVideoId) && (
             <div className="relative w-full bg-black aspect-square sm:aspect-auto sm:min-h-[300px] max-h-[75vh] overflow-hidden">
              {youtubeVideoId ? (
                 <iframe
@@ -238,12 +313,12 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
                    src={resolvedImageUrl}
                    alt={post.text ? `Image for post: ${post.text.substring(0,30)}...` : "Post image"}
                    fill
-                   style={{ objectFit: 'contain' }} 
-                   className="bg-black" 
+                   style={{ objectFit: 'contain' }}
+                   className="bg-black"
                    data-ai-hint="user post image"
-                   sizes="(max-width: 640px) 100vw, 50vw" 
+                   sizes="(max-width: 640px) 100vw, 50vw"
                  />
-             ) : resolvedVideoUrl && ( // Standard video, not YouTube
+             ) : resolvedVideoUrl && (
                  <video
                     src={resolvedVideoUrl}
                     controls
@@ -288,14 +363,21 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
                        <MessageCircle className="h-5 w-5 sm:h-6 sm:w-6" />
                        <span className="sr-only">Comment</span>
                    </Button>
-                   <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-primary h-8 w-8 sm:h-9 sm:w-9" onClick={() => toast({title: "Share: Coming Soon!"})}>
-                       <Send className="h-5 w-5 sm:h-6 sm:w-6" />
+                   <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-primary h-8 w-8 sm:h-9 sm:w-9" onClick={handleShare}>
+                       <Send className="h-5 w-5 sm:h-6 sm:w-6" /> {/* Using Send for share, consistent with stories */}
                        <span className="sr-only">Share</span>
                    </Button>
                 </div>
-                <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-primary h-8 w-8 sm:h-9 sm:w-9" onClick={() => toast({title: "Save: Coming Soon!"})}>
-                   <Bookmark className="h-5 w-5 sm:h-6 sm:w-6" />
-                   <span className="sr-only">Save</span>
+                <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-muted-foreground hover:text-primary h-8 w-8 sm:h-9 sm:w-9"
+                    onClick={handleSaveToggle}
+                    disabled={!user || isSaving}
+                    aria-pressed={isSaved}
+                >
+                   <Bookmark className={cn("h-5 w-5 sm:h-6 sm:w-6 transition-colors duration-200", isSaved ? "fill-primary text-primary" : "text-muted-foreground")} />
+                   <span className="sr-only">{isSaved ? 'Unsave' : 'Save'}</span>
                 </Button>
             </div>
 
@@ -320,7 +402,7 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
                     View all {currentCommentCount} comments
                 </button>
             )}
-             {!showComments && user && (
+             {!showComments && user && currentCommentCount === 0 && ( // Show "Add a comment" only if no comments and not expanded
                  <p
                     className="px-1 text-sm text-muted-foreground cursor-pointer hover:text-card-foreground"
                     onClick={toggleCommentSection}
@@ -352,3 +434,4 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
      </motion.div>
   );
 }
+

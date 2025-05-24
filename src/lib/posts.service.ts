@@ -17,78 +17,55 @@ import {
   increment,
   arrayUnion,
   arrayRemove,
-  where, // Import where for filtering
-  deleteDoc, // Import deleteDoc
-  getDoc, // Import getDoc for checking ownership
-  writeBatch, // Import writeBatch for atomic deletion of comments
+  where,
+  deleteDoc,
+  getDoc,
+  writeBatch,
 } from 'firebase/firestore';
-import type { Post, PostSerializable, CommentSerializable } from '@/types'; // Import PostSerializable and CommentSerializable
+import type { Post, PostSerializable, CommentSerializable } from '@/types';
 import { isFirebaseError } from '@/lib/firebase-errors';
 
-// Input type for creating a post, containing only serializable data.
 export interface PostInput {
   uid: string;
   displayName: string | null;
   photoURL: string | null;
-  text?: string | null; // Optional text content
-  imageUrl?: string | null; // Optional image URL
-  videoUrl?: string | null; // Optional video URL
-  musicUrl?: string | null; // Optional background music URL (for stories)
-  musicStartTime?: number | null; // Optional start time in seconds for music
-  musicEndTime?: number | null; // Optional end time in seconds for music
-  type?: 'post' | 'story'; // Added type field, optional, defaults to 'post'
-  tags?: string[]; // For hashtags (extracted from text)
-  // mentions?: string[]; // For user UIDs mentioned (advanced - future)
+  text?: string | null;
+  imageUrl?: string | null;
+  videoUrl?: string | null;
+  musicUrl?: string | null;
+  musicStartTime?: number | null;
+  musicEndTime?: number | null;
+  type?: 'post' | 'story';
+  tags?: string[];
 }
 
-/**
- * Extracts hashtags (words starting with #) from a given text.
- * @param text - The text to parse.
- * @returns An array of unique hashtags (without the # prefix).
- */
 const extractHashtags = (text: string | null | undefined): string[] => {
   if (!text) return [];
   const hashtagRegex = /#([a-zA-Z0-9_]+)/g;
   const matches = text.match(hashtagRegex);
   if (!matches) return [];
-  // Remove '#' and ensure uniqueness
   return Array.from(new Set(matches.map(tag => tag.substring(1))));
 };
 
-
-/**
- * Adds a new post document to the 'posts' collection in Firestore.
- * Initializes likeCount and commentCount to 0 and likedBy to an empty array.
- * Saves the post type, defaulting to 'post'. Includes musicUrl, startTime, endTime for stories.
- * Extracts and stores hashtags.
- *
- * @param postData - An object containing the post details.
- * @returns Promise<string> - The ID of the newly created post document.
- * @throws Error if post data is invalid, db is not initialized, or add operation fails.
- */
 export const addPost = async (postData: PostInput): Promise<string> => {
   if (!postData || !postData.uid) {
     console.error("🔴 addPost Error: Invalid post data provided (UID is missing).", postData);
     throw new Error("Invalid post data: Author UID is required.");
   }
-   // Content validation: require text OR image OR video (music is optional)
    if (!postData.text?.trim() && !postData.imageUrl?.trim() && !postData.videoUrl?.trim()) {
      console.error("🔴 addPost Error: Post/Story must contain text, an image URL, or a video URL.", postData);
      throw new Error("Post or Story must have content (text, image, or video).");
    }
-   // Story specific validation (if type is story, require image or video)
    if (postData.type === 'story' && !postData.imageUrl?.trim() && !postData.videoUrl?.trim()) {
      console.error("🔴 addPost Error: Story must contain an image URL or a video URL.", postData);
      throw new Error("Story must have an image or video.");
    }
-   // Validate start/end times if provided
    if (postData.musicStartTime !== null && postData.musicStartTime !== undefined && postData.musicStartTime < 0) {
         throw new Error("Music start time cannot be negative.");
    }
    if (postData.musicEndTime !== null && postData.musicEndTime !== undefined && (postData.musicEndTime <= (postData.musicStartTime ?? 0))) {
         throw new Error("Music end time must be after start time.");
    }
-
 
    if (!db) {
       console.error("🔴 addPost Error: Firestore (db) not available.");
@@ -100,8 +77,10 @@ export const addPost = async (postData: PostInput): Promise<string> => {
     const isStory = postData.type === 'story';
     const extractedTags = extractHashtags(postData.text);
 
-    const dataToSave = {
-      ...postData,
+    const dataToSave: Omit<Post, 'id' | 'timestamp'> & { timestamp: any, saveCount?: number, savedBy?: string[] } = { // Ensure Post type is used for consistency before serverTimestamp
+      uid: postData.uid,
+      displayName: postData.displayName,
+      photoURL: postData.photoURL,
       text: postData.text?.trim() || null,
       imageUrl: postData.imageUrl?.trim() || null,
       videoUrl: postData.videoUrl?.trim() || null,
@@ -109,11 +88,13 @@ export const addPost = async (postData: PostInput): Promise<string> => {
       musicStartTime: isStory ? (postData.musicStartTime ?? null) : null,
       musicEndTime: isStory ? (postData.musicEndTime ?? null) : null,
       type: postData.type || 'post',
-      tags: extractedTags.length > 0 ? extractedTags : [], // Store extracted hashtags
+      tags: extractedTags.length > 0 ? extractedTags : [],
       timestamp: firestoreServerTimestamp(),
       likeCount: 0,
       likedBy: [],
       commentCount: 0,
+      saveCount: 0, // Initialize saveCount
+      savedBy: [],  // Initialize savedBy
     };
     const newPostDocRef = await addDoc(postsCollectionRef, dataToSave);
     console.log(`Firestore: Post created with ID: ${newPostDocRef.id}, Type: ${dataToSave.type}, Tags: ${dataToSave.tags.join(', ')}`);
@@ -125,14 +106,6 @@ export const addPost = async (postData: PostInput): Promise<string> => {
   }
 };
 
-/**
- * Fetches recent posts from the 'posts' collection, ordered by timestamp.
- * Posts are now fetched without a time limit, effectively making them permanent unless deleted.
- *
- * @param count - The maximum number of posts to fetch (default: 50).
- * @returns Promise<PostSerializable[]> - An array of post objects with serializable timestamps.
- * @throws Error if db is not initialized or fetch fails.
- */
 export const fetchPosts = async (count: number = 50): Promise<PostSerializable[]> => {
   if (!db) {
      console.error("🔴 fetchPosts Error: Firestore (db) not available.");
@@ -140,43 +113,52 @@ export const fetchPosts = async (count: number = 50): Promise<PostSerializable[]
   }
 
   try {
+    const twentyFourHoursAgo = new Timestamp(Math.floor(Date.now() / 1000) - (24 * 60 * 60), 0);
+
     const postsQuery = query(
       collection(db, 'posts'),
-      orderBy('timestamp', 'desc'), // Get newest posts first
+      orderBy('timestamp', 'desc'),
       limit(count)
     );
 
     const querySnapshot = await getDocs(postsQuery);
 
-    const posts: PostSerializable[] = querySnapshot.docs.map(doc => {
-      const data = doc.data();
-      // Basic validation including new fields
-       if (!data.uid || !(data.timestamp instanceof Timestamp)) {
-         console.warn("Skipping invalid post document (missing uid or timestamp):", doc.id, data);
-         return null;
-       }
-      return {
-        id: doc.id,
-        uid: data.uid,
-        displayName: data.displayName ?? null,
-        photoURL: data.photoURL ?? null,
-        text: data.text ?? null,
-        imageUrl: data.imageUrl ?? null,
-        videoUrl: data.videoUrl ?? null,
-        musicUrl: data.musicUrl ?? null,
-        musicStartTime: data.musicStartTime ?? null,
-        musicEndTime: data.musicEndTime ?? null,
-        type: data.type || 'post',
-        tags: data.tags ?? [], // Include tags
-        // Convert Timestamp to ISO string for serialization
-        timestamp: data.timestamp.toDate().toISOString(),
-        likeCount: data.likeCount ?? 0,
-        likedBy: data.likedBy ?? [],
-        commentCount: data.commentCount ?? 0,
-      };
-    }).filter((post): post is PostSerializable => post !== null); // Filter out invalid documents
+    const posts: PostSerializable[] = querySnapshot.docs
+      .map(doc => {
+        const data = doc.data();
+         if (!data.uid || !(data.timestamp instanceof Timestamp)) {
+           console.warn("Skipping invalid post document (missing uid or timestamp):", doc.id, data);
+           return null;
+         }
+         // For stories, filter out those older than 24 hours
+         if (data.type === 'story' && data.timestamp.toMillis() < twentyFourHoursAgo.toMillis()) {
+           console.log(`Filtering out old story: ${doc.id}`);
+           return null;
+         }
+        return {
+          id: doc.id,
+          uid: data.uid,
+          displayName: data.displayName ?? null,
+          photoURL: data.photoURL ?? null,
+          text: data.text ?? null,
+          imageUrl: data.imageUrl ?? null,
+          videoUrl: data.videoUrl ?? null,
+          musicUrl: data.musicUrl ?? null,
+          musicStartTime: data.musicStartTime ?? null,
+          musicEndTime: data.musicEndTime ?? null,
+          type: data.type || 'post',
+          tags: data.tags ?? [],
+          timestamp: data.timestamp.toDate().toISOString(),
+          likeCount: data.likeCount ?? 0,
+          likedBy: data.likedBy ?? [],
+          commentCount: data.commentCount ?? 0,
+          saveCount: data.saveCount ?? 0,
+          savedBy: data.savedBy ?? [],
+        };
+      })
+      .filter((post): post is PostSerializable => post !== null);
 
-    console.log(`Firestore: Fetched ${posts.length} posts.`);
+    console.log(`Firestore: Fetched ${posts.length} posts/stories.`);
     return posts;
 
   } catch (error: any) {
@@ -186,14 +168,6 @@ export const fetchPosts = async (count: number = 50): Promise<PostSerializable[]
   }
 };
 
-/**
- * Likes a post by adding the user's ID to the likedBy array and incrementing the likeCount.
- *
- * @param postId - The ID of the post to like.
- * @param userId - The ID of the user liking the post.
- * @returns Promise<void>
- * @throws Error if db is not initialized or update fails.
- */
 export const likePost = async (postId: string, userId: string): Promise<void> => {
     if (!db) {
         console.error("🔴 likePost Error: Firestore (db) not available.");
@@ -202,13 +176,11 @@ export const likePost = async (postId: string, userId: string): Promise<void> =>
     if (!postId || !userId) {
         throw new Error("Post ID and User ID are required to like a post.");
     }
-
     const postRef = doc(db, 'posts', postId);
-
     try {
         await updateDoc(postRef, {
             likeCount: increment(1),
-            likedBy: arrayUnion(userId) // Add userId to the array if not already present
+            likedBy: arrayUnion(userId)
         });
         console.log(`Firestore: Post ${postId} liked by user ${userId}`);
     } catch (error: any) {
@@ -218,15 +190,6 @@ export const likePost = async (postId: string, userId: string): Promise<void> =>
     }
 };
 
-/**
- * Unlikes a post by removing the user's ID from the likedBy array and decrementing the likeCount.
- * Includes a check to prevent negative like counts.
- *
- * @param postId - The ID of the post to unlike.
- * @param userId - The ID of the user unliking the post.
- * @returns Promise<void>
- * @throws Error if db is not initialized or update fails.
- */
 export const unlikePost = async (postId: string, userId: string): Promise<void> => {
     if (!db) {
         console.error("🔴 unlikePost Error: Firestore (db) not available.");
@@ -235,17 +198,11 @@ export const unlikePost = async (postId: string, userId: string): Promise<void> 
      if (!postId || !userId) {
         throw new Error("Post ID and User ID are required to unlike a post.");
     }
-
     const postRef = doc(db, 'posts', postId);
-
     try {
-        // It's generally safer to read the like count first in a transaction
-        // to prevent race conditions, but for simplicity, we'll update directly.
-        // Firestore increments handle atomicity, but don't prevent going below zero easily without transactions.
-        // Let's assume likeCount won't go below zero due to UI logic preventing unliking if not liked.
         await updateDoc(postRef, {
             likeCount: increment(-1),
-            likedBy: arrayRemove(userId) // Remove userId from the array
+            likedBy: arrayRemove(userId)
         });
         console.log(`Firestore: Post ${postId} unliked by user ${userId}`);
     } catch (error: any) {
@@ -255,7 +212,6 @@ export const unlikePost = async (postId: string, userId: string): Promise<void> 
     }
 };
 
-// Input type for adding a comment
 export interface CommentInput {
   postId: string;
   uid: string;
@@ -264,13 +220,11 @@ export interface CommentInput {
   text: string;
 }
 
-// addComment function
 export const addComment = async (commentData: CommentInput): Promise<string> => {
     if (!db) throw new Error("Database service not available.");
     if (!commentData.postId || !commentData.uid || !commentData.text?.trim()) {
         throw new Error("Post ID, User ID, and comment text are required.");
     }
-
     try {
         const commentsRef = collection(db, 'posts', commentData.postId, 'comments');
         const newCommentRef = await addDoc(commentsRef, {
@@ -278,13 +232,10 @@ export const addComment = async (commentData: CommentInput): Promise<string> => 
             text: commentData.text.trim(),
             timestamp: firestoreServerTimestamp(),
         });
-
-        // Increment comment count on the post document
         const postRef = doc(db, 'posts', commentData.postId);
         await updateDoc(postRef, {
             commentCount: increment(1)
         });
-
         console.log(`Firestore: Comment ${newCommentRef.id} added to post ${commentData.postId}`);
         return newCommentRef.id;
     } catch (error: any) {
@@ -294,35 +245,23 @@ export const addComment = async (commentData: CommentInput): Promise<string> => 
     }
 };
 
-
-/**
- * Deletes a post and all its associated comments.
- * Checks if the provided userId matches the post's author uid before deleting.
- *
- * @param postId - The ID of the post to delete.
- * @param userId - The UID of the user attempting to delete the post.
- * @returns Promise<void>
- * @throws Error if db is not initialized, post not found, user is not authorized, or deletion fails.
- */
 export const deletePost = async (postId: string, userId: string): Promise<void> => {
     if (!db) throw new Error("Database service not available.");
     if (!postId) throw new Error("Post ID is required.");
-    if (!userId) throw new Error("User ID is required for authorization."); // Require userId for deletion
+    if (!userId) throw new Error("User ID is required for authorization.");
 
     const postRef = doc(db, 'posts', postId);
     const commentsRef = collection(db, 'posts', postId, 'comments');
 
     try {
-        // --- Authorization Check ---
         const postSnap = await getDoc(postRef);
         if (!postSnap.exists()) {
              console.warn(`Attempted to delete non-existent post: ${postId}`);
-             // Depending on UI, might not need to throw, but good for backend logic
              throw new Error("Post not found.");
         }
         const postData = postSnap.data();
+        // User can delete their own post OR an admin can delete any post
         if (postData?.uid !== userId) {
-            // Allow admin to delete any post
             const adminUserRef = doc(db, 'users', userId);
             const adminSnap = await getDoc(adminUserRef);
             if (!adminSnap.exists() || !adminSnap.data()?.isAdmin) {
@@ -331,48 +270,30 @@ export const deletePost = async (postId: string, userId: string): Promise<void> 
             }
             console.log(`Admin user ${userId} deleting post ${postId} authored by ${postData?.uid}`);
         }
-        // --- End Authorization Check ---
 
-        // Delete comments using a batch write
         const batch = writeBatch(db);
         const commentsQuerySnapshot = await getDocs(commentsRef);
         commentsQuerySnapshot.forEach((commentDoc) => {
             batch.delete(commentDoc.ref);
         });
         console.log(`Firestore: Queued deletion of ${commentsQuerySnapshot.size} comments for post ${postId}.`);
-
-        // Delete the post document itself
         batch.delete(postRef);
-
-        // Commit the batch
         await batch.commit();
-
         console.log(`Firestore: Post ${postId} and its comments deleted successfully by user ${userId}.`);
 
     } catch (error: any) {
-        // Avoid double logging if it's an authorization or not found error caught above
         if (error.message.includes("Unauthorized") || error.message.includes("Post not found")) {
-             throw error; // Re-throw the specific error
+             throw error;
         }
         const detailedErrorMessage = `Failed to delete post ${postId}. Error: ${error.message || 'Unknown Firestore error'}${error.code ? ` (Code: ${error.code})` : ''}`;
         console.error("🔴 Detailed Firestore Error:", detailedErrorMessage, error);
-        // Re-throw a more specific error if possible, or the detailed one
         throw new Error(error.message || detailedErrorMessage);
     }
 };
 
-/**
- * Fetches comments for a given post, ordered by timestamp.
- *
- * @param postId - The ID of the post whose comments are to be fetched.
- * @param count - The maximum number of comments to fetch (default: 100).
- * @returns Promise<CommentSerializable[]> - An array of comment objects.
- * @throws Error if db is not initialized or fetch fails.
- */
 export const fetchComments = async (postId: string, count: number = 100): Promise<CommentSerializable[]> => {
     if (!db) throw new Error("Database service not available.");
     if (!postId) throw new Error("Post ID is required to fetch comments.");
-
     try {
         const commentsQuery = query(
             collection(db, 'posts', postId, 'comments'),
@@ -380,7 +301,6 @@ export const fetchComments = async (postId: string, count: number = 100): Promis
             limit(count)
         );
         const querySnapshot = await getDocs(commentsQuery);
-
         const comments: CommentSerializable[] = querySnapshot.docs.map(doc => {
             const data = doc.data();
              if (!data.uid || !(data.timestamp instanceof Timestamp)) {
@@ -397,13 +317,54 @@ export const fetchComments = async (postId: string, count: number = 100): Promis
                 timestamp: data.timestamp.toDate().toISOString(),
             };
         }).filter((comment): comment is CommentSerializable => comment !== null);
-
         console.log(`Firestore: Fetched ${comments.length} comments for post ${postId}.`);
         return comments;
-
     } catch (error: any) {
         const msg = `Failed to fetch comments for post ${postId}. Error: ${error.message || 'Unknown Firestore error'}`;
         console.error("🔴 Firestore Error:", msg, error);
         throw new Error(msg);
     }
-}
+};
+
+/**
+ * Saves a post for a user.
+ */
+export const savePost = async (postId: string, userId: string): Promise<void> => {
+    if (!db) throw new Error("Database service not available.");
+    if (!postId || !userId) throw new Error("Post ID and User ID are required.");
+
+    const postRef = doc(db, 'posts', postId);
+    try {
+        await updateDoc(postRef, {
+            saveCount: increment(1),
+            savedBy: arrayUnion(userId)
+        });
+        console.log(`Firestore: Post ${postId} saved by user ${userId}`);
+    } catch (error: any) {
+        const msg = `Failed to save post ${postId}. Error: ${error.message || 'Unknown Firestore error'}`;
+        console.error("🔴 Firestore Error:", msg, error);
+        throw new Error(msg);
+    }
+};
+
+/**
+ * Unsaves a post for a user.
+ */
+export const unsavePost = async (postId: string, userId: string): Promise<void> => {
+    if (!db) throw new Error("Database service not available.");
+    if (!postId || !userId) throw new Error("Post ID and User ID are required.");
+
+    const postRef = doc(db, 'posts', postId);
+    try {
+        await updateDoc(postRef, {
+            saveCount: increment(-1),
+            savedBy: arrayRemove(userId)
+        });
+        console.log(`Firestore: Post ${postId} unsaved by user ${userId}`);
+    } catch (error: any) {
+        const msg = `Failed to unsave post ${postId}. Error: ${error.message || 'Unknown Firestore error'}`;
+        console.error("🔴 Firestore Error:", msg, error);
+        throw new Error(msg);
+    }
+};
+

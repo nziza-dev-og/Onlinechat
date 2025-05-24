@@ -6,8 +6,8 @@ import type { PostSerializable } from '@/types';
 import Image from 'next/image';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
-import { getInitials, resolveMediaUrl, cn, getYouTubeVideoId } from '@/lib/utils'; // Added getYouTubeVideoId
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { getInitials, resolveMediaUrl, cn, getYouTubeVideoId } from '@/lib/utils';
+import { Dialog, DialogContent, DialogTitle as RadixDialogTitle } from "@/components/ui/dialog"; // Renamed to avoid conflict
 import { X, Volume2, VolumeX, Trash2, Loader2, AlertTriangle, ChevronLeft, ChevronRight, Pause, Play as PlayIcon, MessageCircle } from 'lucide-react';
 import { Button } from '../ui/button';
 import { AnimatePresence, motion } from "framer-motion";
@@ -18,14 +18,14 @@ import {
     AlertDialog,
     AlertDialogAction,
     AlertDialogCancel,
-    AlertDialogContent as AlertDialogPrimitiveContent, 
+    AlertDialogContent as AlertDialogPrimitiveContent,
     AlertDialogDescription,
     AlertDialogFooter,
     AlertDialogHeader,
-    AlertDialogTitle as AlertDialogTitleComponent, 
+    AlertDialogTitle as AlertDialogTitleComponent,
     AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { CommentSection } from '@/components/posts/comment-section';
+import { CommentSection } from '@/components/posts/comment-section'; // Corrected import path
 
 interface StoryModalViewerProps {
   userStories: PostSerializable[];
@@ -61,8 +61,8 @@ export function StoryModalViewer({
   const [isDeleting, setIsDeleting] = React.useState(false);
   const [showComments, setShowComments] = React.useState(false);
 
-  const audioMusicRef = React.useRef<HTMLAudioElement | null>(null); 
-  const videoMediaRef = React.useRef<HTMLVideoElement>(null); 
+  const videoMediaRef = React.useRef<HTMLVideoElement>(null);
+  const audioMusicRef = React.useRef<HTMLAudioElement | null>(null);
   const timerRef = React.useRef<NodeJS.Timeout | null>(null);
   const progressIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
   const isMountedRef = React.useRef(true);
@@ -73,7 +73,7 @@ export function StoryModalViewer({
 
   const resolvedImageUrl = activeStory ? resolveMediaUrl(activeStory.imageUrl) : undefined;
   const resolvedVideoUrl = activeStory?.videoUrl ? resolveMediaUrl(activeStory.videoUrl) : undefined;
-  const youtubeVideoId = getYouTubeVideoId(resolvedVideoUrl); // Get YouTube ID
+  const youtubeVideoId = getYouTubeVideoId(resolvedVideoUrl);
   const resolvedMusicUrl = activeStory ? resolveMediaUrl(activeStory.musicUrl) : undefined;
 
   React.useEffect(() => {
@@ -92,7 +92,10 @@ export function StoryModalViewer({
         if (isMountedRef.current) setShowComments(false);
         return prevIndex + 1;
       }
-      onClose();
+      // Defer the onClose call to prevent state update during render
+      setTimeout(() => {
+        if (isMountedRef.current) onClose();
+      }, 0);
       return prevIndex;
     });
   }, [userStories.length, onClose]);
@@ -111,11 +114,11 @@ export function StoryModalViewer({
   const stopMediaAndTimers = React.useCallback(() => {
     if (videoMediaRef.current) {
       videoMediaRef.current.pause();
-      videoMediaRef.current.currentTime = 0; 
+      videoMediaRef.current.currentTime = 0;
     }
     if (audioMusicRef.current) {
       audioMusicRef.current.pause();
-      audioMusicRef.current.currentTime = 0; 
+      audioMusicRef.current.currentTime = 0;
     }
     if (timerRef.current) {
       clearTimeout(timerRef.current);
@@ -136,7 +139,7 @@ export function StoryModalViewer({
     const totalSteps = (durationSeconds * 1000) / intervalTime;
     let currentStep = 0;
 
-    if (totalSteps <= 0) { 
+    if (totalSteps <= 0) {
         goToNextStory();
         return;
     }
@@ -157,8 +160,8 @@ export function StoryModalViewer({
      const error = mediaElement?.error;
      console.error(
        `Media Error Event (${type}): Code ${error?.code}, Message: ${error?.message}`,
-       e, 
-       error 
+       e,
+       error
      );
      if (!isMountedRef.current) return;
      toast({
@@ -167,7 +170,7 @@ export function StoryModalViewer({
          description: `Could not load story ${type}. ${error?.message || 'Check console for details.'}`
      });
      setIsPaused(true);
-     setProgress(100); 
+     setProgress(100);
      stopMediaAndTimers();
  }, [stopMediaAndTimers, toast]);
 
@@ -180,23 +183,20 @@ export function StoryModalViewer({
     if (resolvedVideoUrl && !youtubeVideoId && videoMediaRef.current && isFinite(videoMediaRef.current.duration)) {
         duration = videoMediaRef.current.duration;
         console.log(`Story Viewer: Video story, duration from video: ${duration}s`);
-        if (!showComments) videoMediaRef.current.play().catch(e => console.warn("Video autoplay prevented:", e));
+        if (!showComments && videoMediaRef.current) videoMediaRef.current.play().catch(e => console.warn("Video autoplay prevented:", e));
     } else if (youtubeVideoId) {
-        // For YouTube, duration is handled by the progress timer (STORY_DURATION_SECONDS or music length)
-        // Autoplay is handled by iframe params.
         console.log(`Story Viewer: YouTube story.`);
-        // If music is present, music duration will take precedence
         if (resolvedMusicUrl && audioMusicRef.current && isFinite(audioMusicRef.current.duration)) {
             const audioEl = audioMusicRef.current;
             const startTime = activeStory.musicStartTime ?? 0;
             audioEl.currentTime = startTime;
             const endTime = activeStory.musicEndTime ?? audioEl.duration;
             const musicEffectiveDuration = endTime > startTime ? endTime - startTime : audioEl.duration - startTime;
-            duration = musicEffectiveDuration > 0 ? musicEffectiveDuration : STORY_DURATION_SECONDS; // Fallback if calc is odd
+            duration = musicEffectiveDuration > 0 ? musicEffectiveDuration : STORY_DURATION_SECONDS;
             console.log(`Story Viewer: YouTube with Music, effective duration: ${duration}s`);
-            if (!showComments) audioEl.play().catch(e => console.warn("Music autoplay for YouTube story prevented:", e));
+            if (!showComments && audioEl) audioEl.play().catch(e => console.warn("Music autoplay for YouTube story prevented:", e));
         } else {
-            duration = STORY_DURATION_SECONDS; // Default for YouTube without specific music
+            duration = STORY_DURATION_SECONDS;
         }
     } else if (resolvedMusicUrl && audioMusicRef.current && isFinite(audioMusicRef.current.duration)) {
         const audioEl = audioMusicRef.current;
@@ -206,7 +206,7 @@ export function StoryModalViewer({
         const musicEffectiveDuration = endTime > startTime ? endTime - startTime : audioEl.duration - startTime;
         duration = musicEffectiveDuration > 0 ? musicEffectiveDuration : 0.1;
         console.log(`Story Viewer: Music story, effective duration: ${duration}s`);
-        if (!showComments) audioEl.play().catch(e => console.warn("Music autoplay prevented:", e));
+        if (!showComments && audioEl) audioEl.play().catch(e => console.warn("Music autoplay prevented:", e));
     } else if (resolvedImageUrl && !resolvedVideoUrl && !resolvedMusicUrl) {
         console.log(`Story Viewer: Image story, using default duration: ${STORY_DURATION_SECONDS}s`);
     } else {
@@ -226,19 +226,18 @@ export function StoryModalViewer({
 
      stopMediaAndTimers();
      setProgress(0);
-     setIsPaused(false); 
+     setIsPaused(false);
 
      const currentVideoElement = videoMediaRef.current;
      const currentAudioMusicElement = audioMusicRef.current;
 
-     // --- Video/YouTube Setup ---
      if (currentVideoElement && resolvedVideoUrl && !youtubeVideoId) {
          console.log(`Story Viewer: Setting up video: ${resolvedVideoUrl}`);
          if (currentVideoElement.currentSrc !== resolvedVideoUrl) {
             currentVideoElement.src = resolvedVideoUrl;
          }
-         currentVideoElement.muted = isMuted || !!resolvedMusicUrl; 
-         currentVideoElement.loop = !resolvedMusicUrl; 
+         currentVideoElement.muted = isMuted || !!resolvedMusicUrl;
+         currentVideoElement.loop = !resolvedMusicUrl;
 
          const onVideoLoaded = () => handleMediaLoaded();
          const onVideoEnded = () => goToNextStory();
@@ -252,7 +251,7 @@ export function StoryModalViewer({
          currentVideoElement.addEventListener('pause', onVideoPause);
          currentVideoElement.addEventListener('error', onVideoError);
 
-         currentVideoElement.load(); 
+         currentVideoElement.load();
          if (!showComments) {
              currentVideoElement.play().catch(e => console.warn("Initial video play() caught:", e));
          }
@@ -266,12 +265,10 @@ export function StoryModalViewer({
             }
          };
      } else if (youtubeVideoId) {
-        // YouTube iframe handles its own playback. We control overall story progression.
         console.log(`Story Viewer: YouTube story detected: ${youtubeVideoId}`);
-        handleMediaLoaded(); // Start progress based on music or default duration
-        return; // No specific event listeners needed for the iframe in this basic setup
+        handleMediaLoaded();
+        return;
      }
-     // --- Music Setup (Only if no video or video is muted due to music) ---
      else if (currentAudioMusicElement && resolvedMusicUrl) {
          console.log(`Story Viewer: Setting up music: ${resolvedMusicUrl}`);
          if (currentAudioMusicElement.currentSrc !== resolvedMusicUrl) {
@@ -307,24 +304,23 @@ export function StoryModalViewer({
              }
          };
      }
-      // --- Pure Image Story Setup ---
      else if (resolvedImageUrl && !resolvedVideoUrl && !resolvedMusicUrl) {
          console.log(`Story Viewer: Pure image story. Starting progress timer.`);
          if (!showComments) startProgress(STORY_DURATION_SECONDS);
          else {
-            stopMediaAndTimers(); 
+            stopMediaAndTimers();
             setIsPaused(true);
          }
      } else {
          console.warn("Story Viewer: No valid media (image, video, or music) found for the current story.");
-         if (!showComments) startProgress(0.1); 
+         if (!showComments) startProgress(0.1);
      }
 
    }, [currentIndex, activeStory, resolvedVideoUrl, youtubeVideoId, resolvedMusicUrl, resolvedImageUrl, stopMediaAndTimers, handleMediaLoaded, startProgress, isMuted, goToNextStory, handleMediaError, showComments]);
 
 
   const handleInteractionStart = React.useCallback(() => {
-    if (!isPaused && !showComments && isMountedRef.current && !youtubeVideoId) { // Don't pause YouTube iframes this way
+    if (!isPaused && !showComments && isMountedRef.current && !youtubeVideoId) {
         setIsPaused(true);
          if (videoMediaRef.current && !videoMediaRef.current.paused) videoMediaRef.current.pause();
          if (audioMusicRef.current && !audioMusicRef.current.paused) audioMusicRef.current.pause();
@@ -333,7 +329,7 @@ export function StoryModalViewer({
   }, [isPaused, showComments, youtubeVideoId]);
 
   const handleInteractionEnd = React.useCallback(() => {
-    if (isPaused && !showComments && isMountedRef.current && activeStory && !youtubeVideoId) { // Don't resume YouTube iframes this way
+    if (isPaused && !showComments && isMountedRef.current && activeStory && !youtubeVideoId) {
         setIsPaused(false);
         let durationForProgress = STORY_DURATION_SECONDS;
         let mediaToPlay: HTMLVideoElement | HTMLAudioElement | null = null;
@@ -360,10 +356,9 @@ export function StoryModalViewer({
         }
         startProgress(durationForProgress > 0 ? durationForProgress : 0.1);
     } else if (youtubeVideoId && isPaused && !showComments && isMountedRef.current) {
-        // For YouTube, just restart the progress timer. Autoplay is handled by iframe.
         setIsPaused(false);
         let durationForProgress = STORY_DURATION_SECONDS;
-        if (resolvedMusicUrl && audioMusicRef.current && isFinite(audioMusicRef.current.duration)) {
+        if (resolvedMusicUrl && audioMusicRef.current && isFinite(audioMusicRef.current.duration) && activeStory) {
             const audioEl = audioMusicRef.current;
             const startTime = activeStory.musicStartTime ?? 0;
             const endTime = activeStory.musicEndTime ?? audioEl.duration;
@@ -385,14 +380,14 @@ export function StoryModalViewer({
     try {
       await deletePost(activeStory.id, currentUserId || '');
       toast({ title: "Story Deleted", description: "The story has been removed." });
-      onDelete(activeStory.id); 
+      onDelete(activeStory.id);
 
       const remainingStories = userStories.filter(s => s.id !== activeStory.id);
       if (remainingStories.length === 0) {
          onClose();
       } else {
          let nextIndexToShow = currentIndex;
-         if (currentIndex >= remainingStories.length) { 
+         if (currentIndex >= remainingStories.length) {
             nextIndexToShow = remainingStories.length - 1;
          }
          setCurrentIndex(Math.max(0, Math.min(nextIndexToShow, remainingStories.length - 1)));
@@ -409,19 +404,19 @@ export function StoryModalViewer({
   };
 
   const toggleComments = (e: React.MouseEvent) => {
-      e.stopPropagation(); 
+      e.stopPropagation();
       if (!isMountedRef.current) return;
       setShowComments(prev => {
            const nextState = !prev;
-           if (nextState) { 
-               setIsPaused(true); 
+           if (nextState) {
+               setIsPaused(true);
                if (videoMediaRef.current && !videoMediaRef.current.paused && !youtubeVideoId) videoMediaRef.current.pause();
                if (audioMusicRef.current && !audioMusicRef.current.paused) audioMusicRef.current.pause();
                if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
-           } else { 
-                if(isPaused) { 
-                     setIsPaused(false); 
-                     handleInteractionEnd(); 
+           } else {
+                if(isPaused) {
+                     setIsPaused(false);
+                     handleInteractionEnd();
                 }
            }
            return nextState;
@@ -430,7 +425,9 @@ export function StoryModalViewer({
 
 
   if (!activeStory) {
-    if(userStories.length === 0 && isOpen) onClose(); 
+    if(userStories.length === 0 && isMountedRef.current) { // Check if mounted before calling onClose
+        setTimeout(() => { if (isMountedRef.current) onClose(); }, 0);
+    }
     return null;
   }
 
@@ -438,12 +435,12 @@ export function StoryModalViewer({
       <Dialog open={true} onOpenChange={(open) => { if (!open) onClose(); }}>
         <DialogContent
             className="p-0 max-w-md w-[90vw] h-[85vh] md:h-[80vh] md:w-[25vw] md:max-w-[400px] border-0 shadow-2xl bg-black rounded-lg flex flex-col overflow-hidden"
-             onInteractOutside={(e) => e.preventDefault()} 
+             onInteractOutside={(e) => e.preventDefault()}
              onEscapeKeyDown={onClose}
         >
-            <DialogTitle className={cn("sr-only")}>
+            <RadixDialogTitle className={cn("sr-only")}>
                Story by {activeStory.displayName || 'User'}
-            </DialogTitle>
+            </RadixDialogTitle>
 
           <div
             className="relative w-full h-full flex flex-col text-white select-none"
@@ -451,7 +448,7 @@ export function StoryModalViewer({
              onTouchStartCapture={!showComments ? handleInteractionStart : undefined}
              onMouseUpCapture={!showComments ? handleInteractionEnd : undefined}
              onTouchEndCapture={!showComments ? handleInteractionEnd : undefined}
-             onMouseLeave={!showComments ? handleInteractionEnd : undefined} 
+             onMouseLeave={!showComments ? handleInteractionEnd : undefined}
            >
             <div className="absolute top-0 left-0 right-0 p-2 z-20">
               <div className="flex items-center gap-1 h-1 w-full">
@@ -511,7 +508,7 @@ export function StoryModalViewer({
               ) : resolvedVideoUrl ? (
                 <video
                   ref={videoMediaRef}
-                  key={activeStory.id + '-video'} 
+                  key={activeStory.id + '-video'}
                   src={resolvedVideoUrl}
                   className="max-w-full max-h-full object-contain pointer-events-none"
                   playsInline
@@ -525,8 +522,9 @@ export function StoryModalViewer({
                   fill
                   style={{ objectFit: 'contain' }}
                   className="pointer-events-none"
-                  priority={currentIndex === initialIndex} 
+                  priority={currentIndex === initialIndex}
                   unoptimized
+                  data-ai-hint="user story image"
                 />
               ) : (
                 <div className="p-6 text-center text-gray-300 flex flex-col items-center gap-2">
@@ -534,14 +532,14 @@ export function StoryModalViewer({
                     <span>No media found for this story.</span>
                 </div>
               )}
-               {resolvedMusicUrl && !youtubeVideoId && ( // Only render separate audio if not a YouTube video (YouTube handles its own audio)
+               {resolvedMusicUrl && !youtubeVideoId && (
                    <audio
                        ref={audioMusicRef}
                        key={activeStory.id + '-music'}
                        src={resolvedMusicUrl}
                        playsInline
                        preload="auto"
-                       className="hidden" 
+                       className="hidden"
                    > Your browser does not support the audio element. </audio>
                )}
             </div>
@@ -557,7 +555,7 @@ export function StoryModalViewer({
                      >
                        {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
                      </Button>
-                ) : <div className="w-9 h-9" /> } 
+                ) : <div className="w-9 h-9" /> }
 
                 <Button
                     variant="ghost"
@@ -565,7 +563,7 @@ export function StoryModalViewer({
                     size="icon"
                     className={cn(
                         "text-white/80 hover:bg-white/20 hover:text-white",
-                        showComments && "bg-white/20 text-white" 
+                        showComments && "bg-white/20 text-white"
                     )}
                     aria-label={showComments ? "Hide comments" : "Show comments"}
                 >
@@ -578,7 +576,7 @@ export function StoryModalViewer({
                           <Button
                              variant="ghost"
                              size="icon"
-                             onClick={(e) => {e.stopPropagation(); handleInteractionStart();}} 
+                             onClick={(e) => {e.stopPropagation(); handleInteractionStart();}}
                              className="text-red-400 hover:bg-red-500/20 hover:text-red-300"
                              aria-label="Delete story"
                              disabled={isDeleting}
@@ -608,7 +606,7 @@ export function StoryModalViewer({
                           </AlertDialogFooter>
                        </AlertDialogPrimitiveContent>
                     </AlertDialog>
-                 ) : <div className="w-9 h-9" /> } 
+                 ) : <div className="w-9 h-9" /> }
              </div>
 
              {!showComments && activeStory.text && (
@@ -624,9 +622,9 @@ export function StoryModalViewer({
                         animate={{ y: 0 }}
                         exit={{ y: "100%" }}
                         transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                        className="absolute inset-x-0 bottom-0 z-40 bg-background text-foreground max-h-[60%] min-h-[40%] rounded-t-lg shadow-2xl flex flex-col" 
-                        onClick={(e) => e.stopPropagation()} 
-                        onMouseDownCapture={(e) => e.stopPropagation()} 
+                        className="absolute inset-x-0 bottom-0 z-40 bg-background text-foreground max-h-[60%] min-h-[40%] rounded-t-lg shadow-2xl flex flex-col"
+                        onClick={(e) => e.stopPropagation()}
+                        onMouseDownCapture={(e) => e.stopPropagation()}
                         onTouchStartCapture={(e) => e.stopPropagation()}
                     >
                         <div className="flex justify-between items-center p-3 border-b sticky top-0 bg-background z-10">
@@ -636,7 +634,7 @@ export function StoryModalViewer({
                                 <span className="sr-only">Close comments</span>
                              </Button>
                         </div>
-                        <div className="flex-1 overflow-y-auto"> 
+                        <div className="flex-1 overflow-y-auto">
                           <CommentSection postId={activeStory.id} />
                         </div>
                     </motion.div>
@@ -648,3 +646,4 @@ export function StoryModalViewer({
       </Dialog>
   );
 }
+
