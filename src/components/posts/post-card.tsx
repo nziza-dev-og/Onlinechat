@@ -5,13 +5,13 @@ import * as React from 'react';
 import type { PostSerializable } from '@/types';
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"; // Removed CardTitle
+import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import Image from 'next/image';
 import { cn, resolveMediaUrl, getInitials, getYouTubeVideoId } from '@/lib/utils';
-import { Heart, MessageCircle, Send, Bookmark, Trash2, AlertTriangle, Loader2, MoreHorizontal, Link as LinkIcon } from 'lucide-react'; // Added LinkIcon
+import { Heart, MessageCircle, Send, Bookmark, Trash2, AlertTriangle, Loader2, MoreHorizontal } from 'lucide-react';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { useAuth } from '@/hooks/use-auth';
-import { likePost, unlikePost, deletePost, savePost, unsavePost } from '@/lib/posts.service'; // Added savePost, unsavePost
+import { likePost, unlikePost, deletePost, savePost, unsavePost } from '@/lib/posts.service';
 import { useToast } from '@/hooks/use-toast';
 import { motion, AnimatePresence } from "framer-motion";
 import { CommentSection } from './comment-section';
@@ -33,7 +33,6 @@ interface PostCardProps {
   onLikeChange?: (postId: string, liked: boolean, newLikeCount: number) => void;
   onCommentAdded?: (postId: string, newCommentCount: number) => void;
   onPostDeleted?: (postId: string) => void;
-  // Add onSaveChange if needed by parent for optimistic updates
   onSaveChange?: (postId: string, saved: boolean, newSaveCount: number) => void;
 }
 
@@ -81,9 +80,9 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted, on
   const [isLiked, setIsLiked] = React.useState(post.likedBy?.includes(user?.uid ?? '') ?? false);
   const [likeCount, setLikeCount] = React.useState(post.likeCount ?? 0);
   const [isLiking, setIsLiking] = React.useState(false);
-  const [isSaved, setIsSaved] = React.useState(post.savedBy?.includes(user?.uid ?? '') ?? false); // New state for saved
-  const [saveCount, setSaveCount] = React.useState(post.saveCount ?? 0); // New state for save count
-  const [isSaving, setIsSaving] = React.useState(false); // New state for saving action
+  const [isSaved, setIsSaved] = React.useState(post.savedBy?.includes(user?.uid ?? '') ?? false);
+  const [saveCount, setSaveCount] = React.useState(post.saveCount ?? 0);
+  const [isSaving, setIsSaving] = React.useState(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
   const [showComments, setShowComments] = React.useState(false);
   const [currentCommentCount, setCurrentCommentCount] = React.useState(post.commentCount ?? 0);
@@ -169,7 +168,7 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted, on
   };
 
   const handleShare = async () => {
-    const postUrl = `${window.location.origin}/posts/${post.id}`; // Basic URL, assumes post page exists
+    const postUrl = typeof window !== "undefined" ? `${window.location.origin}/posts/${post.id}` : `/posts/${post.id}`;
     const shareData = {
       title: `Check out this post by ${post.displayName || 'a user'}!`,
       text: post.text ? `${post.text.substring(0, 100)}...` : `Post by ${post.displayName || 'a user'}`,
@@ -180,18 +179,23 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted, on
       try {
         await navigator.share(shareData);
         toast({ title: "Shared successfully!" });
-      } catch (error) {
-        console.error("Error sharing:", error);
-        // If share fails (e.g., user cancels), copy link as fallback
+      } catch (error: any) {
+        console.error("Error sharing using Web Share API:", error);
+        if (error.name === 'NotAllowedError') {
+          toast({ title: "Share Canceled or Failed", description: "Could not share. Link copied to clipboard.", variant: "default" });
+        } else {
+          toast({ title: "Share Failed", description: `Could not share: ${error.message}. Link copied to clipboard.`, variant: "default" });
+        }
+        // Fallback to copying the link
         navigator.clipboard.writeText(postUrl)
-          .then(() => toast({ title: "Link Copied!", description: "Share dialog closed, link copied to clipboard." }))
-          .catch(() => toast({ title: "Share Failed", description: "Could not share or copy link.", variant: "destructive" }));
+          .then(() => { /* Already handled in the toast above or no additional toast needed */ })
+          .catch(() => toast({ title: "Copy Failed", description: "Could not copy post link.", variant: "destructive" }));
       }
     } else {
-      // Fallback to copying the link
+      // Fallback for browsers that don't support Web Share API
       navigator.clipboard.writeText(postUrl)
         .then(() => toast({ title: "Link Copied!", description: "Post link copied to clipboard." }))
-        .catch(() => toast({ title: "Copy Failed", description: "Could not copy link.", variant: "destructive" }));
+        .catch(() => toast({ title: "Copy Failed", description: "Could not copy post link.", variant: "destructive" }));
     }
   };
 
@@ -199,23 +203,19 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted, on
   const handleDelete = async () => {
      if (!isOwner || isDeleting) return;
      setIsDeleting(true);
-     // Optimistic UI update for parent, parent will handle removing from its state
-     // No direct state update here to avoid conflicts if parent also manages this
      try {
-         await deletePost(post.id, user.uid); // user.uid required for auth check
+         await deletePost(post.id, user.uid);
          toast({ title: "Post Deleted", description: "Your post has been successfully removed." });
-         if (onPostDeleted) { // Check if onPostDeleted is provided before calling
+         if (onPostDeleted) {
             onPostDeleted(post.id);
          }
-     } catch (error: any)
-{
+     } catch (error: any) {
          console.error("Error deleting post:", error);
          toast({
              title: "Deletion Failed",
              description: error.message || "Could not delete the post. Please try again.",
              variant: "destructive",
          });
-         // No need to revert optimistic update here if parent handles it
      } finally {
         setIsDeleting(false);
      }
@@ -301,7 +301,7 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted, on
              {youtubeVideoId ? (
                 <iframe
                     className="w-full h-full aspect-video"
-                    src={`https://www.youtube.com/embed/${youtubeVideoId}?autoplay=0&modestbranding=1&rel=0`}
+                    src={`https://www.youtube.com/embed/${youtubeVideoId}?autoplay=0&controls=0&showinfo=0&rel=0&modestbranding=1`}
                     title={post.text ? `YouTube video: ${post.text.substring(0,30)}...` : "YouTube video"}
                     frameBorder="0"
                     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
@@ -332,7 +332,7 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted, on
              )}
             </div>
           )}
-           {!resolvedImageUrl && !resolvedVideoUrl && !post.text && (
+           {!resolvedImageUrl && !resolvedVideoUrl && !youtubeVideoId && !post.text && (
                <CardContent className="p-4 text-center text-muted-foreground italic">
                  [Empty post content]
                </CardContent>
@@ -364,7 +364,7 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted, on
                        <span className="sr-only">Comment</span>
                    </Button>
                    <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-primary h-8 w-8 sm:h-9 sm:w-9" onClick={handleShare}>
-                       <Send className="h-5 w-5 sm:h-6 sm:w-6" /> {/* Using Send for share, consistent with stories */}
+                       <Send className="h-5 w-5 sm:h-6 sm:w-6" />
                        <span className="sr-only">Share</span>
                    </Button>
                 </div>
@@ -402,7 +402,7 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted, on
                     View all {currentCommentCount} comments
                 </button>
             )}
-             {!showComments && user && currentCommentCount === 0 && ( // Show "Add a comment" only if no comments and not expanded
+             {!showComments && user && currentCommentCount === 0 && (
                  <p
                     className="px-1 text-sm text-muted-foreground cursor-pointer hover:text-card-foreground"
                     onClick={toggleCommentSection}
@@ -434,4 +434,3 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted, on
      </motion.div>
   );
 }
-
