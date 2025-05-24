@@ -25,6 +25,7 @@ export interface Message {
   replyToMessageId?: string | null;
   replyToMessageText?: string | null; // Can be text, 'Image', 'Voice note', 'Video', or 'File'
   replyToMessageAuthor?: string | null;
+  sharedPostId?: string | null; // ID of the post shared in this message
 }
 
 // UserProfile type remains unchanged
@@ -41,6 +42,9 @@ export interface UserProfile {
     // Flags for custom password change flow
     passwordChangeRequested?: boolean;
     passwordChangeApproved?: boolean;
+    following?: string[]; // Array of UIDs the user is following
+    followers?: string[]; // Array of UIDs following this user
+    displayName_lowercase?: string; // For case-insensitive searching/sorting
 }
 
 
@@ -210,4 +214,5 @@ export type UserProfileUpdateData = {
     createdAt?: never;
     isAdmin?: never; // Explicitly prevent isAdmin updates via this general function
 };
+
 

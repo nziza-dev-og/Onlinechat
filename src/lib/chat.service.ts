@@ -1,9 +1,10 @@
 
 'use server';
 
-import { doc, updateDoc, getFirestore, serverTimestamp as firestoreServerTimestamp } from 'firebase/firestore'; // Added serverTimestamp
-import { app } from '@/lib/firebase'; // Import the initialized app instance
+import { doc, updateDoc, getFirestore, serverTimestamp as firestoreServerTimestamp, collection, addDoc, Timestamp } from 'firebase/firestore'; // Added collection, addDoc, Timestamp
+import { app, db as firebaseDb } from '@/lib/firebase'; // Import the initialized app instance and firebaseDb
 import { isFirebaseError } from '@/lib/firebase-errors';
+import type { User, Message } from '@/types'; // Import User type
 
 /**
  * Updates the typing status of a user within a specific chat document in Firestore.
@@ -20,42 +21,29 @@ export const updateTypingStatus = async (
   isTyping: boolean
 ): Promise<void> => {
   if (!chatId || !userId) {
-    console.error("🔴 updateTypingStatus Error: Chat ID and User ID are required.");
-    // Consider not throwing, but logging, depending on how critical typing status is
+    console.warn("updateTypingStatus warning: Chat ID or User ID missing. Skipping update.");
     return;
-    // throw new Error("Chat ID and User ID are required.");
   }
 
-  // Get Firestore instance within the server action context
   let db;
   try {
-      // Validate Firebase app instance before getting Firestore
-      if (!app) {
-        throw new Error("Firebase app is not initialized.");
+      if (!firebaseDb) { // Use the imported firebaseDb instance
+        throw new Error("Firestore (firebaseDb) is not initialized.");
       }
-      db = getFirestore(app);
+      db = firebaseDb;
   } catch (initError: any) {
       const dbErrorMsg = `DB init error in updateTypingStatus: ${initError.message}`;
       console.error("🔴 updateTypingStatus Error:", dbErrorMsg, initError);
-      // Consider not throwing, but logging
       return;
-      // throw new Error(dbErrorMsg);
   }
 
   const chatRef = doc(db, 'chats', chatId);
-
-  // Use dot notation to update a specific field within the 'typing' map
-  // Also update a general lastModified field for the chat
   const updateData: Record<string, any> = {
     [`typing.${userId}`]: isTyping,
-    // Optionally update a lastModified timestamp for the chat document
-    // lastModified: firestoreServerTimestamp()
   };
 
   try {
-    // console.log(`Firestore: Updating typing status for user ${userId} in chat ${chatId} to ${isTyping}`);
     await updateDoc(chatRef, updateData);
-    // console.log(`Firestore: Typing status updated successfully for user ${userId} in chat ${chatId}.`);
   } catch (error: any) {
     const baseErrorMessage = `Failed to update typing status for user ${userId} in chat ${chatId}.`;
     let firestoreErrorDetails = 'Unknown Firestore error';
@@ -69,14 +57,70 @@ export const updateTypingStatus = async (
         firestoreErrorDetails = error.message || firestoreErrorDetails;
         console.error(`🔴 Generic Update Error for typing status in chat ${chatId}: ${firestoreErrorDetails}`, error);
      }
-
-     // Log the detailed error but avoid throwing for typing status updates
-     const attemptedDataString = JSON.stringify(updateData); // Stringify here for error message
+     const attemptedDataString = JSON.stringify(updateData);
      const detailedErrorMessage = `${baseErrorMessage} Error: ${firestoreErrorDetails} (Code: ${errorCode}). Data attempted: ${attemptedDataString}`;
      console.error("🔴 Detailed Firestore Typing Update Error Log:", detailedErrorMessage);
+  }
+};
 
-     // Do NOT throw - typing status failure shouldn't break the app flow
-     // throw new Error(`${baseErrorMessage} Please check connection or try again.`);
+
+/**
+ * Sends a message indicating a post has been shared to a specific chat.
+ *
+ * @param chatId - The ID of the chat to send the message to.
+ * @param sender - The User object of the user sending the share.
+ * @param sharedPostId - The ID of the post being shared.
+ * @param originalPostAuthorName - The display name of the author of the original post.
+ * @param postPreviewText - A snippet or description of the shared post.
+ * @returns Promise<string> - The ID of the newly created message document.
+ * @throws Error if Firestore is not available, or if adding the document fails.
+ */
+export const sendSharedPostMessageToChat = async (
+  chatId: string,
+  sender: User,
+  sharedPostId: string,
+  originalPostAuthorName: string | null,
+  postPreviewText: string
+): Promise<string> => {
+  if (!firebaseDb) {
+    console.error("🔴 sendSharedPostMessageToChat Error: Firestore (firebaseDb) not available.");
+    throw new Error("Database service not available.");
+  }
+  if (!chatId || !sender?.uid || !sharedPostId) {
+    throw new Error("Chat ID, sender information, and shared Post ID are required.");
+  }
+
+  const messagesRef = collection(firebaseDb, 'chats', chatId, 'messages');
+  const messageText = `${sender.displayName || 'A user'} shared a post${originalPostAuthorName ? ` by ${originalPostAuthorName}` : ''}: ${postPreviewText.substring(0, 100)}${postPreviewText.length > 100 ? '...' : ''}`;
+
+  const messageData: Omit<Message, 'id' | 'timestamp'> & { timestamp: any } = {
+    text: messageText,
+    uid: sender.uid,
+    displayName: sender.displayName,
+    photoURL: sender.photoURL,
+    timestamp: firestoreServerTimestamp(),
+    sharedPostId: sharedPostId,
+    // Ensure other media fields are null for a shared post message
+    imageUrl: null,
+    audioUrl: null,
+    videoUrl: null,
+    fileUrl: null,
+    fileName: null,
+    fileType: null,
+    fileSize: null,
+    replyToMessageId: null,
+    replyToMessageText: null,
+    replyToMessageAuthor: null,
+  };
+
+  try {
+    const docRef = await addDoc(messagesRef, messageData);
+    console.log(`Firestore: Shared post message sent to chat ${chatId} by ${sender.uid}. Post ID: ${sharedPostId}. Message ID: ${docRef.id}`);
+    return docRef.id;
+  } catch (error: any) {
+    const detailedErrorMessage = `Failed to send shared post message to chat ${chatId}. Error: ${error.message || 'Unknown Firestore error'}`;
+    console.error("🔴 Shared Post Message Error:", detailedErrorMessage, error);
+    throw new Error(detailedErrorMessage);
   }
 };
 

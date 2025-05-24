@@ -2,52 +2,53 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { app, db as firebaseDb } from '@/lib/firebase'; // Import app and renamed db
-import { collection, query, orderBy, onSnapshot, limit, where, addDoc, serverTimestamp, doc, getDoc, setDoc, Timestamp, updateDoc, type Unsubscribe, type FirestoreError, getFirestore, type Firestore } from 'firebase/firestore'; // Keep full imports here
-import type { Message, UserProfile, Chat } from '@/types';
+import { app, db as firebaseDb } from '@/lib/firebase';
+import { collection, query, orderBy, onSnapshot, limit, where, addDoc, serverTimestamp, doc, getDoc, setDoc, Timestamp, updateDoc, type Unsubscribe, type FirestoreError, getFirestore, type Firestore } from 'firebase/firestore';
+import type { Message, UserProfile, Chat, User } from '@/types'; // Added User
 import { ChatMessage } from './chat-message';
 import { ChatInput } from './chat-input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useAuth } from '@/hooks/use-auth'; // Import useAuth hook
+import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
-import { LogOut, Users, MessageSquare, Search, CircleDot, Video as VideoIcon, Circle, Menu, Edit3, Camera } from 'lucide-react'; // Added Circle, Menu, Edit3, Camera
+import { LogOut, Users, MessageSquare, Search, CircleDot, Video as VideoIcon, Circle, Menu, Edit3, Camera } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import { useToast } from "@/hooks/use-toast";
-import { updateUserProfileDocument } from '@/lib/user-profile.service';
+import { updateUserProfileDocument, getFriends } from '@/lib/user-profile.service'; // Added getFriends
 import { isFirebaseError } from '@/lib/firebase-errors';
 import { formatDistanceToNowStrict } from 'date-fns';
 import { updateTypingStatus } from '@/lib/chat.service';
 import { VideoCallModal } from '@/components/chat/video-call-modal';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
+import Link from 'next/link'; // Import Link
 
 
 // Helper function to create a unique chat ID between two users
-const getChatId = (uid1: string, uid2: string): string => {
+export const getChatId = (uid1: string, uid2: string): string => { // Export for use in PostCard
   return uid1 < uid2 ? `${uid1}_${uid2}` : `${uid2}_${uid1}`;
 };
 
 // Consistent Helper function to get initials
 const getInitials = (name: string | null | undefined): string => {
-    if (!name) return '?'; // Default to '?' if no name
+    if (!name) return '?';
     const nameParts = name.trim().split(' ').filter(part => part.length > 0);
     if (nameParts.length > 1) {
       return `${nameParts[0][0]}${nameParts[nameParts.length - 1][0]}`.toUpperCase();
     } else if (nameParts.length === 1 && nameParts[0].length > 0) {
       return nameParts[0][0].toUpperCase();
     }
-    return '?'; // Fallback if name is just whitespace or unusual format
+    return '?';
 };
 
 // Helper to determine online status based on lastSeen timestamp
 const isOnline = (lastSeen: Timestamp | Date | undefined): boolean => {
     if (!lastSeen) return false;
     const lastSeenDate = lastSeen instanceof Timestamp ? lastSeen.toDate() : lastSeen;
-    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000); // 5 minutes tolerance
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
     return lastSeenDate > fiveMinutesAgo;
 };
 
@@ -56,9 +57,8 @@ const formatLastSeen = (lastSeen: Timestamp | Date | undefined): string => {
     if (isOnline(lastSeen)) {
         return 'Online';
     }
-    if (!lastSeen) return 'Offline'; // No data
+    if (!lastSeen) return 'Offline';
     const lastSeenDate = lastSeen instanceof Timestamp ? lastSeen.toDate() : lastSeen;
-    // Use strict formatting for brevity, e.g., "5m", "2h", "3d"
     return formatDistanceToNowStrict(lastSeenDate, { addSuffix: true });
 };
 
@@ -66,39 +66,37 @@ const formatLastSeen = (lastSeen: Timestamp | Date | undefined): string => {
 export function ChatWindow() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
-  const [users, setUsers] = useState<UserProfile[]>([]);
-  const [loadingUsers, setLoadingUsers] = useState(true);
+  const [friends, setFriends] = useState<UserProfile[]>([]); // Changed from 'users' to 'friends'
+  const [loadingFriends, setLoadingFriends] = useState(true); // Changed from 'loadingUsers'
   const [selectedChatPartner, setSelectedChatPartner] = useState<UserProfile | null>(null);
   const [chatId, setChatId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [isPartnerTyping, setIsPartnerTyping] = useState(false);
-  const [replyingToMessage, setReplyingToMessage] = useState<Message | null>(null); // State for replying
-  const [isVideoButtonDisabled, setIsVideoButtonDisabled] = useState(true); // Disable video button initially
-  const [isVideoModalOpen, setIsVideoModalOpen] = useState(false); // State for video call modal
-  const [dbInstance, setDbInstance] = useState<Firestore | null>(null); // Hold Firestore instance
-  const [hasUnreadMap, setHasUnreadMap] = useState<Map<string, boolean>>(new Map()); // Track unread status per user UID
-  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false); // State for mobile sidebar sheet
+  const [replyingToMessage, setReplyingToMessage] = useState<Message | null>(null);
+  const [isVideoButtonDisabled, setIsVideoButtonDisabled] = useState(true);
+  const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
+  const [dbInstance, setDbInstance] = useState<Firestore | null>(null);
+  const [hasUnreadMap, setHasUnreadMap] = useState<Map<string, boolean>>(new Map());
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [activeFilter, setActiveFilter] = useState<'messages' | 'channels' | 'requests'>('messages');
 
 
   const { toast } = useToast();
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
-  const { user, signOut } = useAuth(); // Get signOut function from useAuth
+  const { user, signOut } = useAuth();
   const isInitialMessagesLoadForScroll = useRef(true);
   const messageListenerUnsubscribe = useRef<Unsubscribe | null>(null);
-  const userListenerUnsubscribe = useRef<Unsubscribe | null>(null);
+  const userListenerUnsubscribe = useRef<Unsubscribe | null>(null); // Will now listen to friends' profiles if needed, or removed if getFriends is on-demand
   const chatDocListenerUnsubscribe = useRef<Unsubscribe | null>(null);
 
 
-  // Initialize Firestore instance on mount
   useEffect(() => {
     try {
         if (!firebaseDb) {
              throw new Error("Firestore service (db) is not available from firebase.ts");
         }
         setDbInstance(firebaseDb);
-        console.log("Firestore instance obtained successfully from firebase.ts.");
     } catch (error: any) {
         console.error("🔴 Failed to get Firestore instance in ChatWindow:", error.message, error);
         toast({
@@ -146,7 +144,7 @@ export function ChatWindow() {
                  });
              } catch (error: any) {
                  console.error(`🔴 Error updating user presence for ${user.uid} (${reason}):`, error.message, error);
-                 if (!error.message?.includes("Network Error") && !error.message?.includes("temporarily unavailable")) {
+                 if (!error.message?.includes("Network Error") && !error.message?.includes("temporarily unavailable") && !error.message?.includes("Cannot access _delegate on the server")) {
                     toast({
                         title: "Presence Error",
                         description: `Could not update online status.`,
@@ -209,13 +207,14 @@ export function ChatWindow() {
     const unsubscribe = userListenerUnsubscribe.current;
     return () => {
       if (unsubscribe) {
-         console.log("Cleaning up Firestore 'users' listener.");
+         console.log("Cleaning up Firestore 'friends' listener (if any was active).");
          unsubscribe();
          userListenerUnsubscribe.current = null;
       }
     };
   }, []);
 
+  // Fetch mutual friends for the sidebar
   useEffect(() => {
     if (userListenerUnsubscribe.current) {
         userListenerUnsubscribe.current();
@@ -223,84 +222,55 @@ export function ChatWindow() {
     }
 
     if (!user || !dbInstance) {
-      setUsers([]);
-      setLoadingUsers(!user || !dbInstance);
+      setFriends([]);
+      setLoadingFriends(!user || !dbInstance);
       return;
     }
 
-    setLoadingUsers(true);
-    const usersQuery = query(collection(dbInstance, 'users'));
+    setLoadingFriends(true);
+    const fetchFriends = async () => {
+      try {
+        const fetchedFriends = await getFriends(user.uid);
+        // Sort friends: online first, then by display name
+        fetchedFriends.sort((a, b) => {
+            const onlineA = isOnline(a.lastSeen);
+            const onlineB = isOnline(b.lastSeen);
+            if (onlineA && !onlineB) return -1;
+            if (!onlineA && onlineB) return 1;
+            const nameA = (a.displayName || a.email || '').toLowerCase();
+            const nameB = (b.displayName || b.email || '').toLowerCase();
+            return nameA.localeCompare(nameB);
+        });
+        setFriends(fetchedFriends);
 
-    userListenerUnsubscribe.current = onSnapshot(usersQuery, (snapshot) => {
-      const fetchedUsers: UserProfile[] = snapshot.docs
-        .map(doc => {
-          const data = doc.data();
-          const uid = data.uid;
-          if (!uid || typeof uid !== 'string') {
-            return null;
-          }
-
-           const convertTimestamp = (ts: any): Timestamp | undefined => {
-               if (ts instanceof Timestamp) return ts;
-               if (ts && typeof ts.toDate === 'function') {
-                   try { return Timestamp.fromDate(ts.toDate()); } catch { /* ignore */ }
-               }
-               return undefined;
-           };
-
-          return {
-            uid: uid,
-            displayName: data.displayName ?? null,
-            email: data.email ?? null,
-            photoURL: data.photoURL ?? null,
-            status: data.status ?? null,
-            lastSeen: convertTimestamp(data.lastSeen),
-            createdAt: convertTimestamp(data.createdAt),
-            isAdmin: data.isAdmin ?? false,
-            passwordChangeRequested: data.passwordChangeRequested ?? false,
-            passwordChangeApproved: data.passwordChangeApproved ?? false,
-          };
-        })
-        .filter((u): u is UserProfile => u !== null && u.uid !== user.uid);
-
-      fetchedUsers.sort((a, b) => {
-          const onlineA = isOnline(a.lastSeen);
-          const onlineB = isOnline(b.lastSeen);
-          if (onlineA && !onlineB) return -1;
-          if (!onlineA && onlineB) return 1;
-          // Fallback to lastSeen if both online or both offline
-          const timeA = a.lastSeen instanceof Timestamp ? a.lastSeen.toMillis() : (a.lastSeen ? new Date(a.lastSeen).getTime() : 0);
-          const timeB = b.lastSeen instanceof Timestamp ? b.lastSeen.toMillis() : (b.lastSeen ? new Date(b.lastSeen).getTime() : 0);
-          if (timeA !== timeB) return timeB - timeA; // Newest first
-
-          const nameA = (a.displayName || a.email || '').toLowerCase();
-          const nameB = (b.displayName || b.email || '').toLowerCase();
-          return nameA.localeCompare(nameB);
-      });
-
-      setUsers(fetchedUsers);
-      setLoadingUsers(false);
-
-      if (selectedChatPartner) {
-          const updatedPartner = fetchedUsers.find(u => u.uid === selectedChatPartner.uid);
-          setSelectedChatPartner(updatedPartner || null);
-          if (!updatedPartner) {
-              setChatId(null);
-              setReplyingToMessage(null);
-          }
+        // If a chat partner was selected, update their info from the new friends list
+        if (selectedChatPartner) {
+            const updatedPartner = fetchedFriends.find(f => f.uid === selectedChatPartner.uid);
+            setSelectedChatPartner(updatedPartner || null);
+             if (!updatedPartner) { // If the selected partner is no longer a friend
+                setChatId(null);
+                setMessages([]);
+                setReplyingToMessage(null);
+             }
+        }
+      } catch (error: any) {
+        console.error("🔴 Error fetching friends list:", error.message, error);
+        toast({
+          title: "Error Fetching Friends",
+          description: `Could not load your friends list: ${error.message}`,
+          variant: "destructive",
+        });
+      } finally {
+        setLoadingFriends(false);
       }
+    };
 
-    }, (error: FirestoreError) => {
-      console.error("🔴 Error fetching users from Firestore:", error.code, error.message, error);
-      setLoadingUsers(false);
-      userListenerUnsubscribe.current = null;
-      toast({
-        title: "Error Fetching Users",
-        description: `Could not load user list: ${error.message} (${error.code})`,
-        variant: "destructive",
-      });
-    });
-  }, [user, dbInstance, toast, selectedChatPartner?.uid]);
+    fetchFriends();
+    // Optionally, set up a listener on the current user's profile to refetch friends if their `following` list changes.
+    // This is more complex and might be overkill if follow/unfollow actions trigger a manual refetch or page reload.
+    // For simplicity, we'll rely on manual refresh or re-navigation for now.
+
+  }, [user, dbInstance, toast, selectedChatPartner?.uid]); // Re-fetch if user changes
 
 
    useEffect(() => {
@@ -376,7 +346,7 @@ export function ChatWindow() {
                   console.warn("Skipping invalid message (missing timestamp or uid):", change.doc.id, data);
                   return;
                }
-               if (!data.text && !data.imageUrl && !data.audioUrl && !data.videoUrl && !data.fileUrl) {
+               if (!data.text && !data.imageUrl && !data.audioUrl && !data.videoUrl && !data.fileUrl && !data.sharedPostId) { // Added sharedPostId check
                     console.warn("Skipping empty message:", change.doc.id, data);
                     return;
                }
@@ -398,6 +368,7 @@ export function ChatWindow() {
                   replyToMessageId: data.replyToMessageId ?? null,
                   replyToMessageText: data.replyToMessageText ?? null,
                   replyToMessageAuthor: data.replyToMessageAuthor ?? null,
+                  sharedPostId: data.sharedPostId ?? null, // Include sharedPostId
                };
                newMessagesBatch.push(message);
                newMessagesAdded = true;
@@ -423,6 +394,7 @@ export function ChatWindow() {
                                             : message.audioUrl ? 'Sent a voice note'
                                             : message.videoUrl ? 'Sent a video'
                                             : message.fileUrl ? 'Sent a file'
+                                            : message.sharedPostId ? 'Shared a post with you' // Notification for shared post
                                             : 'Sent a message';
                      const titlePrefix = '(*) ';
                      if (typeof document !== 'undefined' && !document.title.startsWith(titlePrefix)) {
@@ -538,6 +510,22 @@ export function ChatWindow() {
         return;
      }
 
+     // Ensure mutual follow before proceeding (already filtered by getFriends, but good double check)
+     const isMutual = user.following?.includes(partner.uid) && partner.followers?.includes(user.uid);
+     if (!isMutual) {
+        setSelectedChatPartner(partner); // Select to show the "Follow back to chat" message
+        setChatId(null);
+        setMessages([]);
+        setLoadingMessages(false);
+        setIsPartnerTyping(false);
+        setReplyingToMessage(null);
+        setIsVideoButtonDisabled(true);
+        isInitialMessagesLoadForScroll.current = true;
+        setIsMobileSidebarOpen(false);
+        return;
+     }
+
+
      if (chatId) {
         try {
             await updateTypingStatus(chatId, user.uid, false);
@@ -590,15 +578,15 @@ export function ChatWindow() {
         });
         setIsVideoButtonDisabled(true);
      }
-  }, [selectedChatPartner?.uid, user?.uid, chatId, toast, dbInstance]);
+  }, [selectedChatPartner?.uid, user, chatId, toast, dbInstance]); // Added user to dependencies
 
 
-   const filteredUsers = users.filter(u =>
-    (u.displayName && u.displayName.toLowerCase().includes(searchTerm.toLowerCase())) ||
-    (u.email && u.email.toLowerCase().includes(searchTerm.toLowerCase()))
+   const filteredFriends = friends.filter(f => // Changed from filteredUsers and users
+    (f.displayName && f.displayName.toLowerCase().includes(searchTerm.toLowerCase())) ||
+    (f.email && f.email.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
-   if (dbInstance === null && !loadingUsers) {
+   if (dbInstance === null && !loadingFriends) { // Changed from loadingUsers
        return (
             <div className="flex h-[calc(100vh-theme(spacing.14))] bg-secondary items-center justify-center p-4 text-center">
                 <Card className="max-w-md p-6">
@@ -617,15 +605,21 @@ export function ChatWindow() {
    const SidebarContent = () => (
      <>
          <header className="flex items-center justify-between p-4 border-b min-h-[65px] bg-background">
-             <h1 className="text-lg font-semibold text-foreground truncate">
-                {user?.displayName || "Messages"}
-             </h1>
+            <div className="flex items-center gap-2 min-w-0">
+                 <Link href="/profile" className="flex-shrink-0">
+                    <Avatar className="h-8 w-8 cursor-pointer hover:opacity-80 transition-opacity">
+                        <AvatarImage src={user?.photoURL || undefined} alt={user?.displayName || 'My Avatar'} />
+                        <AvatarFallback>{getInitials(user?.displayName || user?.email)}</AvatarFallback>
+                    </Avatar>
+                 </Link>
+                 <span className="font-semibold text-foreground truncate flex-1 min-w-0 text-sm">{user?.displayName || user?.email || 'User'}</span>
+            </div>
              <div className="flex items-center gap-1">
                 <Button variant="ghost" size="icon" onClick={() => toast({ title: "New message action placeholder" })} aria-label="New message" className="text-muted-foreground hover:text-primary h-8 w-8">
-                    <Edit3 className="h-5 w-5" />
+                    <Edit3 className="h-4 w-4" />
                 </Button>
                 <Button variant="ghost" size="icon" onClick={signOut} aria-label="Sign out" className="text-muted-foreground hover:text-destructive h-8 w-8">
-                    <LogOut className="h-5 w-5" />
+                    <LogOut className="h-4 w-4" />
                 </Button>
             </div>
          </header>
@@ -665,18 +659,18 @@ export function ChatWindow() {
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                     type="search"
-                    placeholder="Search messages..."
+                    placeholder="Search friends..." // Updated placeholder
                     className="pl-8 h-9 bg-muted/50 focus:bg-background text-sm"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    aria-label="Search for users or messages"
+                    aria-label="Search for friends"
                 />
             </div>
          </div>
 
          <ScrollArea className="flex-1">
             <div className="p-2 space-y-0.5">
-                 {loadingUsers && (
+                 {loadingFriends && ( // Changed from loadingUsers
                      <div className="space-y-1 p-2">
                         {[...Array(8)].map((_, i) => (
                             <div key={i} className="flex items-center space-x-3 p-2.5 h-[60px]">
@@ -690,50 +684,47 @@ export function ChatWindow() {
                         ))}
                      </div>
                  )}
-                 {!loadingUsers && filteredUsers.length === 0 && (
+                 {!loadingFriends && filteredFriends.length === 0 && ( // Changed from loadingUsers and filteredUsers
                     <div className="flex flex-col items-center justify-center p-6 text-center text-muted-foreground">
                          <Users className="h-10 w-10 mb-3 text-primary/70" />
                         <p className="text-sm font-medium">
-                            {searchTerm ? "No users found" : (users.length === 0 ? "No other users available" : "No users found matching search")}
+                            {searchTerm ? "No friends found" : (friends.length === 0 ? "No friends yet" : "No friends found matching search")}
                         </p>
                          {searchTerm && <p className="text-xs mt-1">Try a different name or email.</p>}
-                         {!searchTerm && users.length === 0 && <p className="text-xs mt-1">Invite others or wait for them to join!</p>}
+                         {!searchTerm && friends.length === 0 && <p className="text-xs mt-1">Go to "Discover" to find and follow users!</p>}
                     </div>
                  )}
-                 {!loadingUsers && filteredUsers.map((u) => {
-                     const hasUnread = hasUnreadMap.get(u.uid) ?? false;
-                     const lastActivityText = isPartnerTyping && selectedChatPartner?.uid === u.uid
-                                            ? "typing..."
-                                            : (u.status || formatLastSeen(u.lastSeen)); // Show status or last seen
+                 {!loadingFriends && filteredFriends.map((f) => { // Changed u to f, iterating over filteredFriends
+                     const hasUnread = hasUnreadMap.get(f.uid) ?? false;
                      // Placeholder for last message - this would require fetching last message for each chat
-                     const lastMessagePreview = "Last message placeholder...";
-                     const lastMessageTime = formatLastSeen(u.lastSeen); // Use lastSeen for now
+                     const lastMessagePreview = "Start chatting..."; // Updated placeholder
+                     const lastMessageTime = formatLastSeen(f.lastSeen);
 
                      return (
                          <Button
-                            key={u.uid}
+                            key={f.uid}
                             variant="ghost"
                             className={cn(
                                 "w-full justify-start h-auto py-2.5 px-3 text-left rounded-md",
                                 "gap-3 items-center relative",
-                                selectedChatPartner?.uid === u.uid ? "bg-accent text-accent-foreground hover:bg-accent/90" : "hover:bg-muted/50",
+                                selectedChatPartner?.uid === f.uid ? "bg-accent text-accent-foreground hover:bg-accent/90" : "hover:bg-muted/50",
                             )}
-                            onClick={() => handleSelectUser(u)}
-                            aria-pressed={selectedChatPartner?.uid === u.uid}
+                            onClick={() => handleSelectUser(f)}
+                            aria-pressed={selectedChatPartner?.uid === f.uid}
                         >
                             <div className="relative shrink-0">
                                 <Avatar className="h-10 w-10">
-                                    <AvatarImage src={u.photoURL || undefined} alt={u.displayName || 'User Avatar'} data-ai-hint="user chat list avatar"/>
-                                    <AvatarFallback>{getInitials(u.displayName || u.email)}</AvatarFallback>
+                                    <AvatarImage src={f.photoURL || undefined} alt={f.displayName || 'User Avatar'} data-ai-hint="user chat list avatar"/>
+                                    <AvatarFallback>{getInitials(f.displayName || f.email)}</AvatarFallback>
                                 </Avatar>
-                                {isOnline(u.lastSeen) && (
+                                {isOnline(f.lastSeen) && (
                                     <span className="absolute bottom-0 right-0 block h-3 w-3 rounded-full bg-green-500 ring-2 ring-background" aria-label="Online"/>
                                 )}
                             </div>
                             <div className="flex flex-col flex-1 min-w-0">
                                 <div className="flex justify-between items-center">
                                     <span className={cn("font-medium truncate text-sm", hasUnread && "font-bold text-foreground")}>
-                                        {u.displayName || u.email || 'Unnamed User'}
+                                        {f.displayName || f.email || 'Unnamed User'}
                                     </span>
                                     <span className={cn("text-xs text-muted-foreground ml-2 shrink-0", hasUnread && "text-primary font-semibold")}>
                                         {lastMessageTime}
@@ -741,15 +732,14 @@ export function ChatWindow() {
                                 </div>
                                 <div className="flex justify-between items-center">
                                     <span className={cn("text-xs text-muted-foreground truncate", hasUnread && "text-foreground")}>
-                                        {/* Replace with actual last message logic if available */}
-                                        {isPartnerTyping && selectedChatPartner?.uid === u.uid ? <span className="text-primary italic">typing...</span> : lastMessagePreview}
+                                        {isPartnerTyping && selectedChatPartner?.uid === f.uid ? <span className="text-primary italic">typing...</span> : lastMessagePreview}
                                     </span>
                                     {hasUnread && (
                                          <CircleDot className="h-2.5 w-2.5 text-primary shrink-0" />
                                     )}
                                 </div>
                             </div>
-                             <Camera className="h-5 w-5 text-muted-foreground shrink-0 ml-1 opacity-70 group-hover:opacity-100" />
+                             {/* Removed Camera Icon for now, can be re-added if quick story view from chat list is desired */}
                         </Button>
                      );
                  })}
@@ -762,7 +752,7 @@ export function ChatWindow() {
   return (
     <>
     <div className="flex h-[calc(100vh-theme(spacing.14))] bg-secondary">
-       <aside className="w-80 flex-col border-r bg-background shadow-md hidden md:flex"> {/* Wider sidebar */}
+       <aside className="w-80 flex-col border-r bg-background shadow-md hidden md:flex">
          <SidebarContent />
        </aside>
 
@@ -877,7 +867,10 @@ export function ChatWindow() {
 
                     <MessageSquare className="h-16 w-16 mb-4 text-primary opacity-70" />
                     <h2 className="text-xl font-semibold text-foreground mb-1">Your Messages</h2>
-                    <p className="text-base mb-4 max-w-xs">Select a conversation or start a new one.</p>
+                    <p className="text-base mb-4 max-w-xs">Select a friend to start chatting, or find new people in "Discover".</p> {/* Updated message */}
+                    <Button asChild variant="default" size="sm">
+                         <Link href="/search">Discover People</Link>
+                    </Button>
                 </div>
             )}
        </main>

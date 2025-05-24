@@ -2,16 +2,16 @@
 'use client';
 
 import * as React from 'react';
-import type { PostSerializable } from '@/types';
+import type { PostSerializable, User, UserProfile } from '@/types'; // Added UserProfile
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import Image from 'next/image';
 import { cn, resolveMediaUrl, getInitials, getYouTubeVideoId } from '@/lib/utils';
-import { Heart, MessageCircle, Send, Bookmark, Trash2, AlertTriangle, Loader2, MoreHorizontal } from 'lucide-react';
+import { Heart, MessageCircle, Send, Bookmark, Trash2, AlertTriangle, Loader2, MoreHorizontal, Users } from 'lucide-react'; // Added Users icon
 import { Button, buttonVariants } from '@/components/ui/button';
 import { useAuth } from '@/hooks/use-auth';
-import { likePost, unlikePost, deletePost, savePost, unsavePost } from '@/lib/posts.service';
+import { likePost, unlikePost, deletePost, savePost, unsavePost, fetchPostById } from '@/lib/posts.service'; // Added fetchPostById
 import { useToast } from '@/hooks/use-toast';
 import { motion, AnimatePresence } from "framer-motion";
 import { CommentSection } from './comment-section';
@@ -27,6 +27,11 @@ import {
     AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Separator } from '../ui/separator';
+import { Dialog, DialogContent as ShareDialogContent, DialogHeader as ShareDialogHeader, DialogTitle as ShareDialogTitle, DialogDescription as ShareDialogDescription, DialogTrigger, DialogClose } from "@/components/ui/dialog"; // Renamed for clarity
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { getFriends } from '@/lib/user-profile.service';
+import { sendSharedPostMessageToChat } from '@/lib/chat.service';
+import { getChatId } from '@/components/chat/chat-window'; // Assuming getChatId is exported
 
 interface PostCardProps {
   post: PostSerializable;
@@ -86,6 +91,13 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted, on
   const [isDeleting, setIsDeleting] = React.useState(false);
   const [showComments, setShowComments] = React.useState(false);
   const [currentCommentCount, setCurrentCommentCount] = React.useState(post.commentCount ?? 0);
+
+  // For Share Modal
+  const [isShareModalOpen, setIsShareModalOpen] = React.useState(false);
+  const [friendsForShare, setFriendsForShare] = React.useState<UserProfile[]>([]);
+  const [loadingFriends, setLoadingFriends] = React.useState(false);
+  const [sendingToFriend, setSendingToFriend] = React.useState<string | null>(null);
+
 
   const isOwner = user?.uid === post.uid;
 
@@ -167,41 +179,45 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted, on
     }
   };
 
-  const handleShare = async () => {
-    const postUrl = typeof window !== "undefined" ? `${window.location.origin}/posts/${post.id}` : `/posts/${post.id}`;
-    const shareData = {
-      title: `Check out this post by ${post.displayName || 'a user'}!`,
-      text: post.text ? `${post.text.substring(0, 100)}...` : `Post by ${post.displayName || 'a user'}`,
-      url: postUrl,
-    };
+  const handleShareClick = async () => {
+    if (!user) {
+      toast({ title: "Login Required", description: "Please log in to share posts.", variant: "destructive" });
+      return;
+    }
+    setIsShareModalOpen(true);
+    setLoadingFriends(true);
+    try {
+      const fetchedFriends = await getFriends(user.uid);
+      setFriendsForShare(fetchedFriends);
+    } catch (error: any) {
+      console.error("Error fetching friends for share:", error);
+      toast({ title: "Error", description: "Could not load friends list.", variant: "destructive" });
+      setIsShareModalOpen(false); // Close modal on error
+    } finally {
+      setLoadingFriends(false);
+    }
+  };
 
-    if (navigator.share) {
-      try {
-        await navigator.share(shareData);
-        toast({ title: "Shared successfully!" });
-      } catch (error: any) {
-        console.error("Error sharing using Web Share API:", error);
-        if (error.name === 'NotAllowedError') {
-          toast({ title: "Share Canceled or Failed", description: "Could not share. Link copied to clipboard.", variant: "default" });
-        } else {
-          toast({ title: "Share Failed", description: `Could not share: ${error.message}. Link copied to clipboard.`, variant: "default" });
-        }
-        // Fallback to copying the link
-        navigator.clipboard.writeText(postUrl)
-          .then(() => { /* Already handled in the toast above or no additional toast needed */ })
-          .catch(() => toast({ title: "Copy Failed", description: "Could not copy post link.", variant: "destructive" }));
-      }
-    } else {
-      // Fallback for browsers that don't support Web Share API
-      navigator.clipboard.writeText(postUrl)
-        .then(() => toast({ title: "Link Copied!", description: "Post link copied to clipboard." }))
-        .catch(() => toast({ title: "Copy Failed", description: "Could not copy post link.", variant: "destructive" }));
+  const handleSendSharedPostToFriend = async (friend: UserProfile) => {
+    if (!user || !post) return;
+    setSendingToFriend(friend.uid);
+    try {
+      const chatId = getChatId(user.uid, friend.uid);
+      const postPreviewText = post.text?.substring(0, 50) || (post.imageUrl ? "Image" : post.videoUrl ? "Video" : "Post");
+      await sendSharedPostMessageToChat(chatId, user, post.id, post.displayName, postPreviewText);
+      toast({ title: "Post Shared!", description: `Shared with ${friend.displayName || friend.email}.` });
+      setIsShareModalOpen(false); // Close modal after sending
+    } catch (error: any) {
+      console.error("Error sending shared post to friend:", error);
+      toast({ title: "Share Failed", description: `Could not share post with ${friend.displayName || friend.email}.`, variant: "destructive" });
+    } finally {
+      setSendingToFriend(null);
     }
   };
 
 
   const handleDelete = async () => {
-     if (!isOwner || isDeleting) return;
+     if (!isOwner || isDeleting || !user) return;
      setIsDeleting(true);
      try {
          await deletePost(post.id, user.uid);
@@ -301,7 +317,7 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted, on
              {youtubeVideoId ? (
                 <iframe
                     className="w-full h-full aspect-video"
-                    src={`https://www.youtube.com/embed/${youtubeVideoId}?autoplay=0&controls=0&showinfo=0&rel=0&modestbranding=1`}
+                    src={`https://www.youtube.com/embed/${youtubeVideoId}?controls=0&showinfo=0&rel=0&modestbranding=1`}
                     title={post.text ? `YouTube video: ${post.text.substring(0,30)}...` : "YouTube video"}
                     frameBorder="0"
                     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
@@ -363,10 +379,57 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted, on
                        <MessageCircle className="h-5 w-5 sm:h-6 sm:w-6" />
                        <span className="sr-only">Comment</span>
                    </Button>
-                   <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-primary h-8 w-8 sm:h-9 sm:w-9" onClick={handleShare}>
-                       <Send className="h-5 w-5 sm:h-6 sm:w-6" />
-                       <span className="sr-only">Share</span>
-                   </Button>
+                   <Dialog open={isShareModalOpen} onOpenChange={setIsShareModalOpen}>
+                        <DialogTrigger asChild>
+                           <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-primary h-8 w-8 sm:h-9 sm:w-9" onClick={handleShareClick}>
+                               <Send className="h-5 w-5 sm:h-6 sm:w-6" />
+                               <span className="sr-only">Share</span>
+                           </Button>
+                        </DialogTrigger>
+                        <ShareDialogContent className="sm:max-w-md">
+                            <ShareDialogHeader>
+                                <ShareDialogTitle>Share Post with Friends</ShareDialogTitle>
+                                <ShareDialogDescription>Select a friend to send this post to in a direct message.</ShareDialogDescription>
+                            </ShareDialogHeader>
+                            {loadingFriends ? (
+                                <div className="flex justify-center items-center h-32">
+                                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                                </div>
+                            ) : friendsForShare.length === 0 ? (
+                                <div className="text-center text-muted-foreground py-6">
+                                    <Users className="h-10 w-10 mx-auto mb-2 text-primary/70"/>
+                                    <p>No mutual friends to share with yet.</p>
+                                    <p className="text-xs">Follow users and have them follow you back.</p>
+                                </div>
+                            ) : (
+                                <ScrollArea className="max-h-[60vh] -mx-6">
+                                  <div className="px-6 py-2 space-y-2">
+                                    {friendsForShare.map((friend) => (
+                                        <div key={friend.uid} className="flex items-center justify-between p-2 hover:bg-muted/50 rounded-md">
+                                            <div className="flex items-center gap-3">
+                                                <Avatar className="h-9 w-9">
+                                                    <AvatarImage src={friend.photoURL || undefined} alt={friend.displayName || 'Friend'} />
+                                                    <AvatarFallback>{getInitials(friend.displayName || friend.email)}</AvatarFallback>
+                                                </Avatar>
+                                                <span className="text-sm font-medium truncate">{friend.displayName || friend.email}</span>
+                                            </div>
+                                            <Button
+                                                size="sm"
+                                                onClick={() => handleSendSharedPostToFriend(friend)}
+                                                disabled={sendingToFriend === friend.uid}
+                                            >
+                                                {sendingToFriend === friend.uid ? <Loader2 className="h-4 w-4 animate-spin" /> : "Send"}
+                                            </Button>
+                                        </div>
+                                    ))}
+                                  </div>
+                                </ScrollArea>
+                            )}
+                             <DialogClose asChild>
+                                <Button type="button" variant="outline" className="mt-4 w-full">Close</Button>
+                            </DialogClose>
+                        </ShareDialogContent>
+                    </Dialog>
                 </div>
                 <Button
                     variant="ghost"
@@ -434,3 +497,4 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted, on
      </motion.div>
   );
 }
+

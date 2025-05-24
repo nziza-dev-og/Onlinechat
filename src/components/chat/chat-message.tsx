@@ -1,16 +1,18 @@
 
-import type { Message } from '@/types';
+import type { Message, PostSerializable } from '@/types'; // Added PostSerializable
 import { useAuth } from '@/hooks/use-auth';
-import { cn, resolveMediaUrl, getInitials } from '@/lib/utils'; // Import resolveMediaUrl and getInitials
+import { cn, resolveMediaUrl, getInitials, getYouTubeVideoId } from '@/lib/utils';
 import { format, formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import Image from 'next/image';
-import { Reply, Mic, Play, Pause, Video as VideoIcon, FileText, Download, Copy, Check } from 'lucide-react'; // Added Copy, Check
+import { Reply, Mic, Play, Pause, Video as VideoIcon, FileText, Download, Copy, Check, Loader2, AlertTriangle, Image as ImageIconLucide, Film } from 'lucide-react'; // Added Film for video posts
 import { Button } from '@/components/ui/button';
 import * as React from 'react';
 import { FullScreenImageViewer } from './full-screen-image-viewer';
-import { useToast } from '@/hooks/use-toast'; // Import useToast
+import { useToast } from '@/hooks/use-toast';
+import { fetchPostById } from '@/lib/posts.service'; // Import fetchPostById
+import { Card, CardHeader, CardContent, CardFooter } from '@/components/ui/card'; // Import Card components for preview
 
 interface ChatMessageProps {
   message: Message;
@@ -59,8 +61,113 @@ const formatShortTimestamp = (timestamp: any): string => formatTimestamp(timesta
 const formatFullTimestamp = (timestamp: any): string => formatTimestamp(timestamp, 'PPpp'); // Format like 'Jun 15th, 2024 at 1:23:45 PM'
 
 // Regex to detect Markdown code blocks (```language\ncode\n```)
-// Handles optional language and captures content including newlines
 const codeBlockRegex = /```(\w+)?\s*?\n([\s\S]*?)\n```/;
+
+// New component for shared post preview
+const CompactPostPreview = ({ postId }: { postId: string }) => {
+  const [post, setPost] = React.useState<PostSerializable | null>(null);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const { toast } = useToast();
+
+  React.useEffect(() => {
+    let isMounted = true;
+    const loadPost = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const fetchedPost = await fetchPostById(postId);
+        if (isMounted) {
+          if (fetchedPost) {
+            setPost(fetchedPost);
+          } else {
+            setError("Post not found or has been deleted.");
+          }
+        }
+      } catch (err: any) {
+        console.error(`Error fetching shared post ${postId}:`, err);
+        if (isMounted) setError("Could not load shared post.");
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+    loadPost();
+    return () => { isMounted = false; };
+  }, [postId]);
+
+  if (loading) {
+    return (
+      <div className="my-2 p-2 border rounded-md bg-muted/30 flex items-center gap-2 animate-pulse">
+        <Skeleton className="h-10 w-10 rounded" />
+        <div className="flex-1 space-y-1">
+          <Skeleton className="h-3 w-2/3" />
+          <Skeleton className="h-3 w-1/2" />
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !post) {
+    return (
+      <div className="my-2 p-2 border border-destructive/50 rounded-md bg-destructive/10 text-destructive-foreground flex items-center gap-2 text-xs">
+        <AlertTriangle className="h-4 w-4" />
+        <span>{error || "Shared post is unavailable."}</span>
+      </div>
+    );
+  }
+
+  const resolvedPostImageUrl = resolveMediaUrl(post.imageUrl);
+  const resolvedPostVideoUrl = resolveMediaUrl(post.videoUrl);
+  const postYoutubeVideoId = getYouTubeVideoId(resolvedPostVideoUrl);
+
+
+  return (
+    <Card className="my-2 border-border/50 bg-muted/30 shadow-sm hover:shadow-md transition-shadow duration-150 rounded-lg overflow-hidden">
+      <CardHeader className="flex flex-row items-center gap-2 p-2 border-b">
+        <Avatar className="h-6 w-6">
+          <AvatarImage src={post.photoURL || undefined} alt={post.displayName || 'Author'} />
+          <AvatarFallback className="text-xs">{getInitials(post.displayName)}</AvatarFallback>
+        </Avatar>
+        <span className="text-xs font-medium text-muted-foreground truncate">{post.displayName || 'User'}</span>
+      </CardHeader>
+      <CardContent className="p-0 relative">
+        {postYoutubeVideoId ? (
+             <div className="aspect-video w-full bg-black relative">
+                 <ImageIconLucide className="absolute inset-0 m-auto h-8 w-8 text-muted-foreground/50 z-0" />
+                 <iframe
+                    className="w-full h-full aspect-video z-10"
+                    src={`https://www.youtube.com/embed/${postYoutubeVideoId}?controls=0&showinfo=0&rel=0&modestbranding=1&playsinline=1`}
+                    title="Shared YouTube Post"
+                    frameBorder="0"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen={false} // Usually false for small previews
+                 ></iframe>
+             </div>
+        ) : resolvedPostVideoUrl ? (
+            <div className="aspect-video w-full bg-black relative">
+                <Film className="absolute inset-0 m-auto h-8 w-8 text-muted-foreground/50" />
+                 {/* Consider a static thumbnail or a very short muted preview for direct videos if performance is an issue */}
+                 <video src={resolvedPostVideoUrl} className="w-full h-full object-cover pointer-events-none" preload="metadata" muted loop playsInline />
+            </div>
+        ) : resolvedPostImageUrl ? (
+          <div className="aspect-video w-full relative">
+            <Image src={resolvedPostImageUrl} alt="Shared post media" layout="fill" objectFit="cover" className="bg-muted" />
+          </div>
+        ) : (
+          <div className="p-2 text-xs text-muted-foreground italic h-16 flex items-center justify-center">
+            {post.text ? `${post.text.substring(0,60)}...` : "Text Post"}
+          </div>
+        )}
+      </CardContent>
+      <CardFooter className="p-2">
+        <Button variant="link" size="sm" className="text-xs h-auto p-0" onClick={() => toast({ title: "Navigate to Post (WIP)", description: `Would navigate to post ID: ${post.id}` })}>
+          View Post
+        </Button>
+      </CardFooter>
+    </Card>
+  );
+};
+
 
 export function ChatMessage({ message, onReply }: ChatMessageProps) {
   const { user } = useAuth();
@@ -80,12 +187,12 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
   const resolvedFileUrl = resolveMediaUrl(message.fileUrl);
 
   const handleReplyClick = (e: React.MouseEvent) => {
-      e.stopPropagation(); // Prevent triggering other click events if needed
+      e.stopPropagation();
       onReply(message);
   };
 
   const handleImageClick = (e: React.MouseEvent) => {
-      e.stopPropagation(); // Prevent triggering reply etc.
+      e.stopPropagation(); 
       if (resolvedImageUrl) {
           setIsImageViewerOpen(true);
       }
@@ -104,57 +211,50 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
     } else {
       audioElement.play().catch(err => {
           console.error("Error playing audio:", err);
-          setIsPlaying(false); // Reset state on play error
+          setIsPlaying(false); 
       });
     }
-    // Note: isPlaying state is primarily controlled by the event listeners now
   };
 
-   // Format time in MM:SS
    const formatAudioTime = (timeInSeconds: number): string => {
-     if (isNaN(timeInSeconds) || !isFinite(timeInSeconds)) return '0:00'; // Handle invalid duration
+     if (isNaN(timeInSeconds) || !isFinite(timeInSeconds)) return '0:00';
     const minutes = Math.floor(timeInSeconds / 60);
     const seconds = Math.floor(timeInSeconds % 60);
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
 
-  // Event listeners for audio state changes
   React.useEffect(() => {
     const audioElement = audioRef.current;
-    if (!audioElement || !resolvedAudioUrl) return; // Only run if audio exists
+    if (!audioElement || !resolvedAudioUrl) return; 
 
-    // Update src if it changed
     if (audioElement.currentSrc !== resolvedAudioUrl) {
-        console.log(`Setting new audio src: ${resolvedAudioUrl}`);
         audioElement.src = resolvedAudioUrl;
-        audioElement.load(); // Load new source
+        audioElement.load(); 
     }
 
     const handlePlay = () => setIsPlaying(true);
     const handlePause = () => setIsPlaying(false);
     const handleEnded = () => {
         setIsPlaying(false);
-        setCurrentTime(0); // Reset time on end
+        setCurrentTime(0); 
     };
     const handleLoadedMetadata = () => {
-        console.log("Audio metadata loaded. Duration:", audioElement.duration);
-        if (isFinite(audioElement.duration)) { // Check if duration is a valid number
+        if (isFinite(audioElement.duration)) { 
             setAudioDuration(audioElement.duration);
         } else {
-            console.warn("Audio duration is infinite or NaN.");
-            setAudioDuration(null); // Set to null if invalid
+            setAudioDuration(null); 
         }
-        setCurrentTime(0); // Reset time when metadata loads
+        setCurrentTime(0); 
     };
      const handleTimeUpdate = () => {
-         if (!isNaN(audioElement.currentTime)) { // Ensure currentTime is valid
+         if (!isNaN(audioElement.currentTime)) { 
             setCurrentTime(audioElement.currentTime);
          }
      };
      const handleError = (e: Event) => {
          console.error("Audio playback error:", (e.target as HTMLAudioElement).error);
-         setIsPlaying(false); // Ensure playing state is false on error
+         setIsPlaying(false); 
          setAudioDuration(null);
          setCurrentTime(0);
      };
@@ -167,35 +267,28 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
     audioElement.addEventListener('timeupdate', handleTimeUpdate);
     audioElement.addEventListener('error', handleError);
 
-
-    console.log(`Audio listeners attached for message ${message.id}`);
-
     return () => {
-        console.log(`Cleaning up audio listeners for message ${message.id}`);
         audioElement.removeEventListener('play', handlePlay);
         audioElement.removeEventListener('pause', handlePause);
         audioElement.removeEventListener('ended', handleEnded);
         audioElement.removeEventListener('loadedmetadata', handleLoadedMetadata);
         audioElement.removeEventListener('timeupdate', handleTimeUpdate);
         audioElement.removeEventListener('error', handleError);
-        // Pause audio if unmounting while playing
         if (audioElement && !audioElement.paused) {
             audioElement.pause();
         }
-        // Reset state on cleanup related to this specific message/audioUrl
         setIsPlaying(false);
         setAudioDuration(null);
         setCurrentTime(0);
     };
-  }, [message.id, resolvedAudioUrl]); // Re-run effect if message ID or resolved audio URL changes
+  }, [message.id, resolvedAudioUrl]);
   // --- End Audio Playback Handling ---
 
   // --- Code Block Handling ---
   const codeMatch = message.text?.match(codeBlockRegex);
-  const codeContent = codeMatch ? codeMatch[2].trim() : null; // Trim whitespace from captured code
+  const codeContent = codeMatch ? codeMatch[2].trim() : null;
   const codeLanguage = codeMatch ? codeMatch[1] : null;
-  // Text excluding the code block (if any)
-  const nonCodeText = message.text && codeMatch ? message.text.replace(codeBlockRegex, '').trim() : (message.text && !codeMatch ? message.text.trim() : null);
+  const nonCodeText = message.text && message.sharedPostId ? null : (message.text && codeMatch ? message.text.replace(codeBlockRegex, '').trim() : (message.text && !codeMatch ? message.text.trim() : null));
 
 
   const handleCopyToClipboard = async (textToCopy: string) => {
@@ -203,7 +296,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
       await navigator.clipboard.writeText(textToCopy);
       setIsCopied(true);
       toast({ title: "Copied to clipboard!" });
-      setTimeout(() => setIsCopied(false), 2000); // Reset after 2 seconds
+      setTimeout(() => setIsCopied(false), 2000); 
     } catch (err) {
       console.error("Failed to copy text: ", err);
       toast({ title: "Copy Failed", description: "Could not copy code to clipboard.", variant: "destructive" });
@@ -211,20 +304,20 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
   };
   // --- End Code Block Handling ---
 
-  // Determine reply context text
   const getReplyTextPreview = (msg: Message): string => {
+      if (msg.sharedPostId) return 'Shared a post';
       if (msg.text) return msg.text;
       if (msg.imageUrl) return 'Image';
       if (msg.audioUrl) return 'Voice note';
       if (msg.videoUrl) return 'Video';
-      if (msg.fileUrl) return msg.fileName || 'File'; // Use filename if available for files
+      if (msg.fileUrl) return msg.fileName || 'File'; 
       return 'Original message';
   }
 
   return (
     <>
     <div className={cn(
-        "group flex items-end gap-2 my-2 w-full relative", // Added group and relative for reply button positioning
+        "group flex items-end gap-2 my-2 w-full relative", 
         isSender ? "justify-end" : "justify-start"
     )}>
       {!isSender && (
@@ -236,89 +329,86 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
 
       <div
         className={cn(
-          "max-w-[75%] sm:max-w-[70%] rounded-xl shadow-sm break-words", // Base styles without padding
+          "max-w-[75%] sm:max-w-[70%] rounded-xl shadow-sm break-words", 
           isSender
             ? "bg-accent text-accent-foreground rounded-br-sm"
             : "bg-card text-card-foreground rounded-bl-sm",
-           // Apply padding only if it's NOT just a code block without other content
-           !(codeContent && !nonCodeText && !resolvedImageUrl && !resolvedAudioUrl && !resolvedVideoUrl && !resolvedFileUrl)
+           !(codeContent && !nonCodeText && !resolvedImageUrl && !resolvedAudioUrl && !resolvedVideoUrl && !resolvedFileUrl && !message.sharedPostId)
              ? 'px-3 py-2 sm:px-3.5 sm:py-2.5'
-             : 'p-0 overflow-hidden' // Remove padding if it's only a code block
+             : 'p-0 overflow-hidden' 
         )}
       >
-        {/* Show sender name only if not sender and NOT just a code block */}
-        {!isSender && message.displayName && !(codeContent && !nonCodeText && !resolvedImageUrl && !resolvedAudioUrl && !resolvedVideoUrl && !resolvedFileUrl) && (
+        {!isSender && message.displayName && !(codeContent && !nonCodeText && !resolvedImageUrl && !resolvedAudioUrl && !resolvedVideoUrl && !resolvedFileUrl && !message.sharedPostId) && (
            <p className="text-xs font-medium text-muted-foreground mb-1">{message.displayName}</p>
         )}
 
-         {/* Display Reply Context */}
          {message.replyToMessageId && (
             <div className="mb-2 p-2 border-l-2 border-primary/50 bg-primary/10 rounded-r-md text-xs opacity-80">
                  <p className="font-medium text-primary-foreground/80 truncate">
                     Replying to {message.replyToMessageAuthor || 'Unknown'}
                  </p>
                  <p className="text-muted-foreground truncate italic">
-                     {getReplyTextPreview(message)} {/* Use updated preview function */}
+                     {getReplyTextPreview(message)}
                  </p>
             </div>
          )}
 
-         {/* Display Audio Player if resolvedAudioUrl exists */}
-         {resolvedAudioUrl && (
+        {message.sharedPostId && (
+          <div className="space-y-1">
+             {message.text && <p className="text-sm text-muted-foreground mb-1">{message.text}</p>}
+             <CompactPostPreview postId={message.sharedPostId} />
+          </div>
+        )}
+
+         {resolvedAudioUrl && !message.sharedPostId && (
              <div className={cn(
-                 "my-2 p-2 rounded-md flex items-center gap-2 sm:gap-3", // Responsive gap
-                 isSender ? "bg-accent/80" : "bg-muted/60" // Slightly different background
+                 "my-2 p-2 rounded-md flex items-center gap-2 sm:gap-3", 
+                 isSender ? "bg-accent/80" : "bg-muted/60" 
              )}>
                  <Button
                      variant="ghost"
                      size="icon"
                      onClick={togglePlay}
-                     className="h-8 w-8 sm:h-9 sm:w-9 text-foreground/80 hover:text-foreground flex-shrink-0" // Responsive button size
+                     className="h-8 w-8 sm:h-9 sm:w-9 text-foreground/80 hover:text-foreground flex-shrink-0" 
                      aria-label={isPlaying ? "Pause voice note" : "Play voice note"}
-                     disabled={!resolvedAudioUrl} // Disable only if URL is missing
+                     disabled={!resolvedAudioUrl} 
                  >
-                      {/* Show loading state? */}
                      {isPlaying ? <Pause className="h-4 w-4 sm:h-5 sm:w-5" /> : <Play className="h-4 w-4 sm:h-5 sm:w-5" />}
                  </Button>
-                 {/* Hidden audio element */}
-                 {/* Key added to force re-render when src changes significantly */}
                  <audio key={resolvedAudioUrl} ref={audioRef} src={resolvedAudioUrl} preload="metadata" className="hidden">
                      Your browser does not support the audio element.
                  </audio>
-                 {/* Display Time */}
-                 <span className="text-xs text-muted-foreground font-mono w-14 sm:w-16 text-right flex-shrink-0"> {/* Responsive width */}
-                      {formatAudioTime(currentTime)} / {audioDuration !== null ? formatAudioTime(audioDuration) : '?:??'} {/* Show duration or placeholder */}
+                 <span className="text-xs text-muted-foreground font-mono w-14 sm:w-16 text-right flex-shrink-0"> 
+                      {formatAudioTime(currentTime)} / {audioDuration !== null ? formatAudioTime(audioDuration) : '?:??'} 
                  </span>
              </div>
          )}
 
-        {/* Display Image - Wrapped in Button */}
-         {resolvedImageUrl && (
+         {resolvedImageUrl && !message.sharedPostId && (
           <Button
               variant="ghost"
-              className="relative aspect-video w-40 sm:w-48 max-w-full my-2 p-0 h-auto rounded-md overflow-hidden border block cursor-pointer" // Responsive width
+              className="relative aspect-video w-40 sm:w-48 max-w-full my-2 p-0 h-auto rounded-md overflow-hidden border block cursor-pointer" 
               onClick={handleImageClick}
           >
              <Image
-                 src={resolvedImageUrl} // Use resolved URL
+                 src={resolvedImageUrl} 
                  alt="Chat image"
                  fill
                  style={{ objectFit: 'cover' }}
                  className="bg-muted"
                  data-ai-hint="chat message image"
-                 sizes="(max-width: 640px) 75vw, (max-width: 1024px) 50vw, 30vw" // Adjusted sizes for better performance
+                 sizes="(max-width: 640px) 75vw, (max-width: 1024px) 50vw, 30vw" 
              />
           </Button>
          )}
 
-         {/* Display Video */}
-          {resolvedVideoUrl && (
-             <div className="relative aspect-video w-full max-w-sm sm:max-w-md my-2 rounded-lg overflow-hidden border shadow-inner"> {/* Responsive max-width */}
+          {resolvedVideoUrl && !message.sharedPostId && (
+             <div className="relative aspect-video w-full max-w-sm sm:max-w-md my-2 rounded-lg overflow-hidden border shadow-inner"> 
                  <video
-                     src={resolvedVideoUrl} // Use resolved URL
+                     src={resolvedVideoUrl} 
                      controls
-                     preload="metadata" // Load metadata to get duration/dimensions if possible
-                     className="w-full h-full object-contain bg-black" // contain ensures the whole video fits
+                     preload="metadata" 
+                     className="w-full h-full object-contain bg-black" 
                      data-ai-hint="chat message video"
                      title={message.text ? `Video: ${message.text.substring(0, 30)}...` : "Chat video"}
                  >
@@ -330,18 +420,16 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
              </div>
           )}
 
-          {/* Display Generic File */}
-           {resolvedFileUrl && (
+           {resolvedFileUrl && !message.sharedPostId && (
                 <div className={cn(
-                    "my-2 p-3 rounded-md flex items-center gap-2 sm:gap-3 border", // Responsive gap
+                    "my-2 p-3 rounded-md flex items-center gap-2 sm:gap-3 border", 
                     isSender ? "bg-accent/70 border-accent/80" : "bg-muted/50 border-muted/60"
                 )}>
-                    <FileText className="h-5 w-5 sm:h-6 sm:w-6 text-foreground/70 flex-shrink-0" /> {/* Responsive icon */}
+                    <FileText className="h-5 w-5 sm:h-6 sm:w-6 text-foreground/70 flex-shrink-0" /> 
                     <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-foreground truncate" title={message.fileName || 'Attached file'}>
                             {message.fileName || 'Attached file'}
                         </p>
-                         {/* Display file size and type if available */}
                         <p className="text-xs text-muted-foreground truncate">
                             {formatFileSize(message.fileSize)} {message.fileType ? `(${message.fileType.split('/')[1]})` : ''}
                         </p>
@@ -349,7 +437,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
                      <Button
                          variant="ghost"
                          size="icon"
-                         asChild // Use asChild to make it a link
+                         asChild 
                          className="h-8 w-8 text-primary flex-shrink-0"
                      >
                          <a href={resolvedFileUrl} target="_blank" rel="noopener noreferrer" download={message.fileName || true} aria-label="Download file">
@@ -359,13 +447,11 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
                 </div>
            )}
 
-        {/* Display Text (if any exists outside the code block) */}
-        {nonCodeText && (
+        {nonCodeText && !message.sharedPostId && (
           <p className="text-sm sm:text-base whitespace-pre-wrap break-words">{nonCodeText}</p>
         )}
 
-        {/* Display Code Block */}
-         {codeContent && (
+         {codeContent && !message.sharedPostId && (
            <div className="relative group/codeblock my-1 bg-gray-900 dark:bg-gray-800 rounded-md overflow-hidden font-mono text-sm">
                <div className="flex items-center justify-between px-3 py-1.5 bg-gray-800 dark:bg-gray-700 text-gray-400">
                    <span className="text-xs">{codeLanguage || 'code'}</span>
@@ -387,8 +473,7 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
            </div>
          )}
 
-         {/* Show timestamp only if it's NOT just a code block without other content */}
-         {!(codeContent && !nonCodeText && !resolvedImageUrl && !resolvedAudioUrl && !resolvedVideoUrl && !resolvedFileUrl) && (
+         {!(codeContent && !nonCodeText && !resolvedImageUrl && !resolvedAudioUrl && !resolvedVideoUrl && !resolvedFileUrl && !message.sharedPostId) && (
            <TooltipProvider delayDuration={300}>
               <Tooltip>
                   <TooltipTrigger asChild>
@@ -414,13 +499,12 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
         </Avatar>
       )}
 
-       {/* Reply Button - Show on hover */}
        <Button
            variant="ghost"
            size="icon"
            className={cn(
                "absolute -top-2 h-6 w-6 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity duration-150",
-               isSender ? "-left-1" : "-right-1" // Position based on sender/receiver
+               isSender ? "-left-1" : "-right-1" 
            )}
            onClick={handleReplyClick}
            aria-label="Reply to message"
@@ -429,10 +513,9 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
        </Button>
 
     </div>
-    {/* Full Screen Image Viewer Modal */}
      {isImageViewerOpen && resolvedImageUrl && (
          <FullScreenImageViewer
-             imageUrl={resolvedImageUrl} // Use resolved URL
+             imageUrl={resolvedImageUrl} 
              altText={message.text || 'Chat image'}
              onClose={() => setIsImageViewerOpen(false)}
          />
@@ -440,3 +523,4 @@ export function ChatMessage({ message, onReply }: ChatMessageProps) {
     </>
   );
 }
+
