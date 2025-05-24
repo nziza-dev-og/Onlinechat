@@ -126,11 +126,8 @@ export const addPost = async (postData: PostInput): Promise<string> => {
 };
 
 /**
- * Fetches recent posts from the 'posts' collection created within the last 8 hours,
- * ordered by timestamp, and converts Timestamps to serializable format.
- * NOTE: This filters posts older than 8 hours but does not delete them.
- * Actual deletion requires setting up a TTL (Time-To-Live) policy on the 'timestamp'
- * field in the 'posts' collection via the Firebase console or gcloud CLI.
+ * Fetches recent posts from the 'posts' collection, ordered by timestamp.
+ * Posts are now fetched without a time limit, effectively making them permanent unless deleted.
  *
  * @param count - The maximum number of posts to fetch (default: 50).
  * @returns Promise<PostSerializable[]> - An array of post objects with serializable timestamps.
@@ -142,15 +139,10 @@ export const fetchPosts = async (count: number = 50): Promise<PostSerializable[]
      throw new Error("Database service not available.");
   }
 
-  // Calculate the timestamp 8 hours ago
-  const eightHoursAgo = new Date(Date.now() - 8 * 60 * 60 * 1000);
-  const eightHoursAgoTimestamp = Timestamp.fromDate(eightHoursAgo);
-
   try {
     const postsQuery = query(
       collection(db, 'posts'),
-      where('timestamp', '>=', eightHoursAgoTimestamp), // Filter posts >= 8 hours ago
-      orderBy('timestamp', 'desc'), // Get newest posts first within the timeframe
+      orderBy('timestamp', 'desc'), // Get newest posts first
       limit(count)
     );
 
@@ -184,7 +176,7 @@ export const fetchPosts = async (count: number = 50): Promise<PostSerializable[]
       };
     }).filter((post): post is PostSerializable => post !== null); // Filter out invalid documents
 
-    console.log(`Firestore: Fetched ${posts.length} posts from the last 8 hours.`);
+    console.log(`Firestore: Fetched ${posts.length} posts.`);
     return posts;
 
   } catch (error: any) {

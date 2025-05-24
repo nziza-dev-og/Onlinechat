@@ -98,7 +98,7 @@ export default function PostsPage() {
 
         <div className="mb-8 text-center">
           <h1 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl">Community Feed</h1>
-          <p className="text-muted-foreground mt-2">See what others are sharing (posts older than 8 hours are automatically removed)</p>
+          <p className="text-muted-foreground mt-2">See what others are sharing. Posts are permanent unless deleted by the author.</p>
         </div>
 
         {/* Post Form (Only show if logged in) */}
@@ -203,5 +203,3 @@ export default function PostsPage() {
     </div>
   );
 }
-
-    
