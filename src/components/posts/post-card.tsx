@@ -5,10 +5,10 @@ import * as React from 'react';
 import type { PostSerializable } from '@/types';
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"; // Added CardTitle
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import Image from 'next/image';
-import { cn, resolveMediaUrl, getInitials } from '@/lib/utils';
-import { Heart, MessageCircle, Send, Bookmark, Trash2, AlertTriangle, Loader2, MoreHorizontal } from 'lucide-react'; // Added Send, Bookmark, MoreHorizontal
+import { cn, resolveMediaUrl, getInitials, getYouTubeVideoId } from '@/lib/utils'; // Added getYouTubeVideoId
+import { Heart, MessageCircle, Send, Bookmark, Trash2, AlertTriangle, Loader2, MoreHorizontal } from 'lucide-react';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { useAuth } from '@/hooks/use-auth';
 import { likePost, unlikePost, deletePost } from '@/lib/posts.service';
@@ -23,7 +23,7 @@ import {
     AlertDialogDescription,
     AlertDialogFooter,
     AlertDialogHeader,
-    AlertDialogTitle as AlertDialogTitleComponent, // Renamed to avoid conflict with CardTitle
+    AlertDialogTitle as AlertDialogTitleComponent,
     AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Separator } from '../ui/separator';
@@ -37,11 +37,10 @@ interface PostCardProps {
 
 const formatTimestampForPost = (timestampISO: string | null | undefined): string => {
     if (!timestampISO) {
-        return 'JUST NOW'; // Fallback if no timestamp string
+        return 'JUST NOW'; 
     }
     try {
         const date = parseISO(timestampISO);
-        // Format like "16 MINUTES AGO" or "2 HOURS AGO" etc.
         return formatDistanceToNowStrict(date, { addSuffix: true }).toUpperCase();
     } catch (error) {
         console.error("Error formatting ISO timestamp:", error, timestampISO);
@@ -52,12 +51,7 @@ const formatTimestampForPost = (timestampISO: string | null | undefined): string
 
 const renderTextWithTags = (text: string | null | undefined) => {
     if (!text) return null;
-
-    // Regex to find hashtags (#tag) and mentions (@username)
-    // It captures the symbol (# or @) and the word following it.
-    // It handles cases where tags/mentions might be at the start/end of words or have punctuation.
     const tagMentionRegex = /(#\w+)|(@\w+)/g;
-
     const parts = text.split(tagMentionRegex).filter(part => part !== undefined);
 
     return parts.map((part, index) => {
@@ -93,6 +87,7 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
 
   const resolvedImageUrl = resolveMediaUrl(post.imageUrl);
   const resolvedVideoUrl = resolveMediaUrl(post.videoUrl);
+  const youtubeVideoId = getYouTubeVideoId(resolvedVideoUrl); // Get YouTube ID
 
   React.useEffect(() => {
      setIsLiked(post.likedBy?.includes(user?.uid ?? '') ?? false);
@@ -135,13 +130,11 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
   const handleDelete = async () => {
      if (!isOwner || isDeleting) return;
      setIsDeleting(true);
-     // Optimistically call onPostDeleted before awaiting the actual deletion
      onPostDeleted?.(post.id);
 
      try {
          await deletePost(post.id, user.uid);
          toast({ title: "Post Deleted", description: "Your post has been successfully removed." });
-         // No need to call onPostDeleted again here if already called optimistically
      } catch (error: any) {
          console.error("Error deleting post:", error);
          toast({
@@ -149,15 +142,8 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
              description: error.message || "Could not delete the post. Please try again.",
              variant: "destructive",
          });
-         // If optimistic deletion happened, we might need a way to revert it in the UI,
-         // or simply rely on the parent component re-fetching/re-filtering.
-         // For now, we just set isDeleting to false.
          setIsDeleting(false);
      }
-      // setIsDeleting is set to false in the finally block of the try-catch-finally if an error occurs.
-      // If successful, the component might unmount, so setting it might not be necessary.
-      // However, if it doesn't unmount for some reason, ensure it's reset.
-      // This is usually handled by the parent component re-rendering without this post.
   };
 
 
@@ -166,8 +152,8 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
   };
 
   const handleCommentAddedInternal = (postId: string, newTotalComments: number) => {
-      setCurrentCommentCount(newTotalComments); // Update local comment count
-      onCommentAdded?.(postId, newTotalComments); // Bubble up to parent
+      setCurrentCommentCount(newTotalComments); 
+      onCommentAdded?.(postId, newTotalComments); 
   };
 
 
@@ -180,7 +166,6 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
          layout
      >
         <Card className="w-full shadow-md rounded-none sm:rounded-lg overflow-hidden border-x-0 sm:border-x sm:border-y border-border/50 bg-card">
-          {/* Post Header */}
           <CardHeader className="flex flex-row items-center justify-between gap-3 p-3 sm:p-4">
             <div className="flex items-center gap-3">
                 <Avatar className="h-8 w-8 sm:h-9 sm:w-9 border">
@@ -193,7 +178,6 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
                     {post.displayName || 'Anonymous User'}
                 </span>
             </div>
-            {/* More Options / Delete Button */}
             {isOwner && (
                  <AlertDialog>
                     <AlertDialogTrigger asChild>
@@ -230,28 +214,36 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
                     </AlertDialogContent>
                  </AlertDialog>
              )}
-             {!isOwner && ( /* Placeholder for non-owner options if any needed later */
+             {!isOwner && ( 
                 <Button variant="ghost" size="icon" className="text-muted-foreground h-7 w-7 sm:h-8 sm:w-8 invisible">
                     <MoreHorizontal className="h-4 w-4 sm:h-5 sm:w-5" />
                 </Button>
              )}
           </CardHeader>
 
-          {/* Post Media (Image or Video) */}
           { (resolvedImageUrl || resolvedVideoUrl) && (
             <div className="relative w-full bg-black aspect-square sm:aspect-auto sm:min-h-[300px] max-h-[75vh] overflow-hidden">
-             {resolvedImageUrl && (
+             {youtubeVideoId ? (
+                <iframe
+                    className="w-full h-full aspect-video"
+                    src={`https://www.youtube.com/embed/${youtubeVideoId}?autoplay=0&modestbranding=1&rel=0`}
+                    title={post.text ? `YouTube video: ${post.text.substring(0,30)}...` : "YouTube video"}
+                    frameBorder="0"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                    allowFullScreen
+                    data-ai-hint="youtube video embed"
+                ></iframe>
+             ) : resolvedImageUrl ? (
                  <Image
                    src={resolvedImageUrl}
                    alt={post.text ? `Image for post: ${post.text.substring(0,30)}...` : "Post image"}
                    fill
-                   style={{ objectFit: 'contain' }} // Changed to contain to show full image
-                   className="bg-black" // Ensure background is black for letterboxing
+                   style={{ objectFit: 'contain' }} 
+                   className="bg-black" 
                    data-ai-hint="user post image"
-                   sizes="(max-width: 640px) 100vw, 50vw" // Adjusted sizes
+                   sizes="(max-width: 640px) 100vw, 50vw" 
                  />
-             )}
-             {resolvedVideoUrl && (
+             ) : resolvedVideoUrl && ( // Standard video, not YouTube
                  <video
                     src={resolvedVideoUrl}
                     controls
@@ -265,7 +257,6 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
              )}
             </div>
           )}
-           {/* If no media and no text, show a placeholder */}
            {!resolvedImageUrl && !resolvedVideoUrl && !post.text && (
                <CardContent className="p-4 text-center text-muted-foreground italic">
                  [Empty post content]
@@ -273,9 +264,7 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
            )}
 
 
-          {/* Post Actions & Details Section */}
           <div className="p-3 sm:p-4 space-y-2">
-            {/* Action Buttons */}
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1 sm:gap-2">
                     <Button
@@ -310,14 +299,12 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
                 </Button>
             </div>
 
-            {/* Like Count */}
             {likeCount > 0 && (
                 <p className="text-sm font-semibold text-card-foreground px-1">
                     {likeCount} {likeCount === 1 ? 'like' : 'likes'}
                 </p>
             )}
 
-            {/* Caption */}
             {post.text && (
               <div className="px-1 text-sm text-card-foreground">
                 <span className="font-semibold hover:underline cursor-pointer">{post.displayName || 'User'}</span>
@@ -325,7 +312,6 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
               </div>
             )}
 
-            {/* View Comments / Add Comment */}
             {currentCommentCount > 0 && !showComments && (
                 <button
                     onClick={toggleCommentSection}
@@ -343,14 +329,11 @@ export function PostCard({ post, onLikeChange, onCommentAdded, onPostDeleted }: 
                  </p>
              )}
 
-            {/* Timestamp */}
             <p className="px-1 text-xs text-muted-foreground uppercase tracking-wide">
                 {formatTimestampForPost(post.timestamp)}
             </p>
           </div>
 
-
-           {/* Comment Section (Conditionally Rendered with Animation) */}
           <AnimatePresence>
              {showComments && (
                  <motion.div

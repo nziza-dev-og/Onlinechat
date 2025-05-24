@@ -85,10 +85,9 @@ export const isDirectAudioUrl = (url: string | null | undefined): boolean => {
             'firebasestorage.googleapis.com',
             'storage.googleapis.com', // Google Cloud Storage
             // Add specific CDN hostnames known to serve direct audio files
-            // Example: 'cdn.example-audio.com'
+            // Example: 'cdn.example-audio.com', 'files.fm' (if direct links are consistently available)
         ];
-        if (hostname === 'localhost' || hostname === '127.0.0.1' || knownDirectHosts.some(host => hostname.endsWith(host))) {
-             // console.log("URL identified as known direct host or localhost:", hostname);
+         if (hostname === 'localhost' || hostname === '127.0.0.1' || knownDirectHosts.some(host => hostname.endsWith(host)) || hostname.endsWith('files.fm')) { // Added files.fm
             return true;
         }
 
@@ -96,18 +95,40 @@ export const isDirectAudioUrl = (url: string | null | undefined): boolean => {
         // This is less reliable but a good indicator for direct files.
         const hasAudioExtension = /\.(mp3|wav|ogg|aac|m4a|opus|webm)$/i.test(pathname);
         if (hasAudioExtension) {
-            // console.log("URL has direct audio file extension:", pathname);
             return true;
         }
+        
+        // 5. Check for known indirect audio platform patterns that might not be direct files
+        const indirectPlatformPatterns = [
+            /soundcloud\.com/i,
+            /audiomack\.com/i,
+            /mdundo\.com/i,
+            // Add other platforms that don't offer direct file links easily
+        ];
+        if (indirectPlatformPatterns.some(pattern => pattern.test(url))) {
+            // For these platforms, direct playback via <audio> is unlikely without specific API/embeds
+            return false;
+        }
 
-        // 5. If none of the above, assume it's likely not a direct audio link
-        // This will exclude SoundCloud, Files.fm, Mdundo, Audiomack, YouTube page URLs etc.
-        // console.log("URL did not match known direct patterns:", url);
+
+        // If none of the above, assume it's likely not a direct audio link
         return false;
 
     } catch (e) {
         // Invalid URL format
-        // console.warn(`Could not parse URL for direct audio check: ${url}`, e);
         return false;
     }
+};
+
+
+/**
+ * Extracts YouTube video ID from various URL formats.
+ * @param url - The YouTube URL string.
+ * @returns The video ID or null if not a valid YouTube URL.
+ */
+export const getYouTubeVideoId = (url: string | null | undefined): string | null => {
+  if (!url) return null;
+  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
+  const match = url.match(regExp);
+  return (match && match[2] && match[2].length === 11) ? match[2] : null;
 };
