@@ -53,7 +53,7 @@ const nextConfig: NextConfig = {
       },
       {
           protocol: 'https',
-          hostname: 'img.youtube.com', // Another possible domain
+          hostname: 'img.youtube.com', // Another possible domain for YouTube thumbnails
           port: '',
           pathname: '/vi/**',
       },
@@ -97,4 +97,3 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
-
