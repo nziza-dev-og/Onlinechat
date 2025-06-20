@@ -17,8 +17,8 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import * as z from 'zod';
 import { updateProfile as updateAuthProfile, updatePassword as updateAuthPassword } from 'firebase/auth';
-import { updateUserProfileDocument, requestPasswordChange, resetPasswordChangeApproval } from '@/lib/user-profile.service';
-import { Edit, Save, User, Mail, CalendarDays, Loader2, Image as ImageIcon, KeyRound, Send, Lock, Upload, Bookmark, BookOpen } from 'lucide-react'; // Added Bookmark, BookOpen
+import { updateUserProfileDocument, requestPasswordChange, resetPasswordChangeApproval, getFriends, followUser, unfollowUser } from '@/lib/user-profile.service';
+import { Edit, Save, User, Mail, CalendarDays, Loader2, Image as ImageIcon, KeyRound, Send, Lock, Upload, Bookmark, BookOpen, Users, UserCheck, UserPlus } from 'lucide-react';
 import { format } from 'date-fns';
 import { ref, uploadBytesResumable, getDownloadURL, type UploadTaskSnapshot, type StorageError } from 'firebase/storage';
 import { Progress } from '@/components/ui/progress';
@@ -33,9 +33,9 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"; // Added Tabs
-import { PostCard } from '@/components/posts/post-card'; // Added PostCard
-import { fetchSavedPosts } from '@/lib/posts.service'; // Added fetchSavedPosts
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PostCard } from '@/components/posts/post-card';
+import { fetchSavedPosts } from '@/lib/posts.service';
 
 const getInitials = (name: string | null | undefined): string => {
     if (!name) return '?';
@@ -84,6 +84,8 @@ export default function ProfilePage() {
   const [loadingSavedPosts, setLoadingSavedPosts] = React.useState(true);
   const [activeTab, setActiveTab] = React.useState("profile");
 
+  const [followingCount, setFollowingCount] = React.useState(0);
+
   const profileForm = useForm<ProfileFormData>({
     resolver: zodResolver(profileSchema),
     defaultValues: {
@@ -128,11 +130,12 @@ export default function ProfilePage() {
         setPhotoFile(null);
         setSavedPosts([]);
         setLoadingSavedPosts(true);
+        setFollowingCount(0);
         return;
     }
 
     setLoadingProfile(true);
-    const fetchProfileAndStatus = async () => {
+    const fetchProfileAndRelatedData = async () => {
       if (!db) {
           console.error("Firestore (db) not available in ProfilePage useEffect");
           setLoadingProfile(false);
@@ -151,30 +154,32 @@ export default function ProfilePage() {
             });
           setPhotoPreview(data.photoURL);
           setShowPasswordForm(data.passwordChangeApproved ?? false);
+          setFollowingCount(data.following?.length ?? 0);
         } else {
           console.log("No such profile document! Using auth data as fallback.");
-           const fallbackData = { uid: user.uid, email: user.email, displayName: user.displayName, photoURL: user.photoURL, passwordChangeApproved: false, passwordChangeRequested: false };
+           const fallbackData = { uid: user.uid, email: user.email, displayName: user.displayName, photoURL: user.photoURL, passwordChangeApproved: false, passwordChangeRequested: false, following: [] };
            setProfileData(fallbackData);
            profileForm.reset({ displayName: fallbackData.displayName || '', photoURL: fallbackData.photoURL || '' });
            setPhotoPreview(fallbackData.photoURL);
            setShowPasswordForm(false);
+           setFollowingCount(0);
         }
       } catch (error) {
         console.error("Error fetching user profile:", error);
         toast({ title: "Error", description: "Could not load profile data.", variant: "destructive" });
-        const fallbackData = { uid: user.uid, email: user.email, displayName: user.displayName, photoURL: user.photoURL, passwordChangeApproved: false, passwordChangeRequested: false };
+        const fallbackData = { uid: user.uid, email: user.email, displayName: user.displayName, photoURL: user.photoURL, passwordChangeApproved: false, passwordChangeRequested: false, following: [] };
         setProfileData(fallbackData);
         profileForm.reset({ displayName: fallbackData.displayName || '', photoURL: fallbackData.photoURL || '' });
         setPhotoPreview(fallbackData.photoURL);
         setShowPasswordForm(false);
+        setFollowingCount(0);
       } finally {
         setLoadingProfile(false);
       }
     };
 
-    fetchProfileAndStatus();
+    fetchProfileAndRelatedData();
 
-    // Fetch saved posts if user is available
     const loadSaved = async () => {
       setLoadingSavedPosts(true);
       try {
@@ -187,10 +192,10 @@ export default function ProfilePage() {
         setLoadingSavedPosts(false);
       }
     };
-    if (activeTab === "saved") { // Fetch only if tab is active or when user changes
+
+    if (activeTab === "saved") {
         loadSaved();
     }
-
 
   }, [user, authLoading, toast, profileForm, activeTab]);
 
@@ -228,7 +233,7 @@ export default function ProfilePage() {
            const fileExtension = file.name.split('.').pop();
            const filePath = `profilePictures/${uid}_${timestamp}.${fileExtension}`;
            const storageRef = ref(storage, filePath);
-           const uploadTask = uploadBytesResumable(storageRef, file);
+           const uploadTask = uploadBytesResumable(storageRef, file, { contentType: file.type });
 
            uploadTask.on('state_changed',
                (snapshot: UploadTaskSnapshot) => {
@@ -271,24 +276,25 @@ export default function ProfilePage() {
 
          const newDisplayName = data.displayName?.trim() || null;
          const authUpdateData: { displayName?: string | null; photoURL?: string | null } = {};
-         const firestoreUpdateData: Partial<UserProfile> = {};
+         const firestoreUpdateData: Partial<UserProfileUpdateData> = {};
 
          if (newDisplayName !== (profileData.displayName ?? user.displayName)) {
             authUpdateData.displayName = newDisplayName;
             firestoreUpdateData.displayName = newDisplayName;
+            firestoreUpdateData.displayName_lowercase = newDisplayName?.toLowerCase() || null;
          }
          if (finalPhotoURL !== (profileData.photoURL ?? user.photoURL)) {
              authUpdateData.photoURL = finalPhotoURL;
              firestoreUpdateData.photoURL = finalPhotoURL;
          }
 
-         if (Object.keys(authUpdateData).length > 0 && clientAuth.currentUser) { // Ensure currentUser exists for auth update
+         if (Object.keys(authUpdateData).length > 0 && clientAuth.currentUser) {
             await updateAuthProfile(clientAuth.currentUser, authUpdateData);
          }
 
          if (Object.keys(firestoreUpdateData).length > 0) {
-            await updateUserProfileDocument(user.uid, firestoreUpdateData as UserProfileUpdateData); // Cast if necessary
-            setProfileData(prev => prev ? { ...prev, ...firestoreUpdateData } : null);
+            await updateUserProfileDocument(user.uid, firestoreUpdateData);
+            setProfileData(prev => prev ? { ...prev, ...firestoreUpdateData, displayName: newDisplayName, photoURL: finalPhotoURL } : null);
          }
 
         toast({ title: 'Profile updated successfully!' });
@@ -367,19 +373,16 @@ export default function ProfilePage() {
           setSavedPosts(prevPosts => prevPosts.filter(p => p.id !== postId));
           toast({ title: "Post Unsaved", description: "Removed from your saved items."});
       }
-      // The PostCard itself handles updating its saveCount and icon state
   };
 
    const handlePostDeletedInProfile = (deletedPostId: string) => {
-       // If a post owned by the user is deleted (even from saved list), remove it
        setSavedPosts(prevPosts => prevPosts.filter(post => post.id !== deletedPostId));
-       // No specific toast here as PostCard's delete handles it.
    };
 
 
   if (authLoading || loadingProfile) {
     return (
-      <div className="flex justify-center items-center min-h-screen bg-secondary p-4">
+      <div className="flex justify-center items-center min-h-[calc(100vh-theme(spacing.14))] bg-secondary p-4">
         <Card className="w-full max-w-lg shadow-lg">
           <CardHeader className="items-center"> <Skeleton className="h-24 w-24 rounded-full mb-4" /> <Skeleton className="h-6 w-3/4 mb-2" /> <Skeleton className="h-4 w-1/2" /> </CardHeader>
           <CardContent className="space-y-4"> <Skeleton className="h-10 w-full" /> <Skeleton className="h-10 w-full" /> <Skeleton className="h-10 w-full" /> </CardContent>
@@ -391,7 +394,7 @@ export default function ProfilePage() {
 
   if (!user || !profileData) {
     return (
-      <div className="flex justify-center items-center min-h-screen bg-secondary p-4">
+      <div className="flex justify-center items-center min-h-[calc(100vh-theme(spacing.14))] bg-secondary p-4">
         <Card className="w-full max-w-lg shadow-lg">
             <CardHeader> <CardTitle>Access Denied</CardTitle> <CardDescription>Please log in to view your profile.</CardDescription> </CardHeader>
         </Card>
@@ -456,6 +459,12 @@ export default function ProfilePage() {
                             </div>
                         ) : ( <CardTitle className="text-2xl font-semibold">{profileData.displayName || 'User'}</CardTitle> )}
                         <CardDescription className="text-base text-muted-foreground flex items-center gap-1.5 mt-1"> <Mail className="h-4 w-4 opacity-80"/> {profileData.email || 'No email provided'} </CardDescription>
+                        <div className="flex items-center justify-center gap-4 mt-2">
+                            <div className="text-center">
+                                <p className="text-lg font-semibold">{followingCount}</p>
+                                <p className="text-xs text-muted-foreground">Following</p>
+                            </div>
+                        </div>
                         <CardDescription className="text-sm text-muted-foreground flex items-center gap-1.5 mt-1"> <CalendarDays className="h-4 w-4 opacity-80"/> Joined: {formatDate(profileData.createdAt)} </CardDescription>
                     </CardHeader>
                      <CardContent className="p-6 space-y-5">
@@ -538,14 +547,14 @@ export default function ProfilePage() {
                     </CardTitle>
                     <CardDescription>Posts you've saved for later.</CardDescription>
                 </CardHeader>
-                <CardContent className="p-0 sm:p-2 md:p-4 space-y-4">
+                <CardContent className="p-2 sm:p-3 md:p-4">
                     {loadingSavedPosts && (
-                        <div className="space-y-6 p-4">
-                            {[...Array(3)].map((_, i) => (
-                               <Card key={i} className="w-full shadow-md overflow-hidden border border-border/50 bg-card">
-                                   <CardHeader className="flex flex-row items-center gap-3 p-4 border-b"> <Skeleton className="h-10 w-10 rounded-full" /> <div className="flex-1 space-y-1.5"> <Skeleton className="h-4 w-1/2" /> <Skeleton className="h-3 w-1/3" /> </div> </CardHeader>
-                                   <CardContent className="p-4 space-y-3"> <Skeleton className="h-4 w-full" /> <Skeleton className="h-4 w-5/6 mb-4" /> <Skeleton className="aspect-video w-full rounded-lg bg-muted/50" /> </CardContent>
-                                   <CardFooter className="p-3 border-t flex justify-between items-center bg-muted/20"> <div className="flex gap-4"> <Skeleton className="h-8 w-16" /> <Skeleton className="h-8 w-16" /> </div> </CardFooter>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 sm:gap-3 md:gap-4">
+                            {[...Array(6)].map((_, i) => ( // Show 6 skeletons for a 3-col grid
+                               <Card key={i} className="w-full shadow-sm overflow-hidden border border-border/50 bg-card">
+                                   <CardHeader className="flex flex-row items-center gap-2 p-3 border-b"> <Skeleton className="h-8 w-8 rounded-full" /> <div className="flex-1 space-y-1.5"> <Skeleton className="h-3 w-3/4" /> <Skeleton className="h-2 w-1/2" /> </div> </CardHeader>
+                                   <CardContent className="p-0"> <Skeleton className="aspect-square w-full bg-muted/50" /> </CardContent>
+                                   <CardFooter className="p-2 border-t flex justify-between items-center bg-muted/20"> <div className="flex gap-2"> <Skeleton className="h-6 w-12" /> <Skeleton className="h-6 w-12" /> </div> </CardFooter>
                                </Card>
                             ))}
                         </div>
@@ -557,16 +566,20 @@ export default function ProfilePage() {
                             <p className="text-sm">Tap the bookmark icon on posts to save them here.</p>
                         </div>
                     )}
-                    {!loadingSavedPosts && savedPosts.map(post => (
-                        <PostCard
-                            key={post.id}
-                            post={post}
-                            onLikeChange={() => {}} // Likes handled within PostCard, no specific action needed here
-                            onCommentAdded={() => {}} // Comments handled within PostCard
-                            onPostDeleted={handlePostDeletedInProfile} // If the user deletes their own post from here
-                            onSaveChange={handleSaveChangeInProfile} // To remove from this list if unsaved
-                        />
-                    ))}
+                    {!loadingSavedPosts && savedPosts.length > 0 && (
+                         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 sm:gap-3 md:gap-4">
+                            {savedPosts.map(post => (
+                                <PostCard
+                                    key={post.id}
+                                    post={post}
+                                    onLikeChange={() => {}}
+                                    onCommentAdded={() => {}}
+                                    onPostDeleted={handlePostDeletedInProfile}
+                                    onSaveChange={handleSaveChangeInProfile}
+                                />
+                            ))}
+                        </div>
+                    )}
                 </CardContent>
             </Card>
          </TabsContent>
@@ -574,3 +587,4 @@ export default function ProfilePage() {
     </div>
   );
 }
+
