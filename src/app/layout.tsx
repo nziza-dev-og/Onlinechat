@@ -12,7 +12,7 @@ import { User, MessageSquareText, Home, Image as ImageIcon, MessageCircle, Shiel
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Jules Chatting Platform', // Updated title
+  title: 'L4 Chatting Platform', // Updated title
   description: 'A real-time chat application built with Next.js and Firebase.',
 };
 
@@ -35,7 +35,7 @@ export default function RootLayout({
                <div className="container flex h-14 items-center justify-between px-4 sm:px-6 lg:px-8"> 
                  <Link href="/feed" className="mr-4 flex items-center space-x-2"> 
                    <MessageCircle className="h-6 w-6 text-primary" />
-                   <span className="font-bold hidden sm:inline-block">Jules Chatting Platform</span> 
+                   <span className="font-bold hidden sm:inline-block">L4 Chatting Platform</span> 
                    <span className="font-bold sm:hidden inline-block">Jules</span> 
                  </Link>
                  <nav className="flex items-center gap-1 sm:gap-2">
